@@ -22,7 +22,7 @@ fn note(m: &mut Missing, key: String, p: Pos) {
 fn scan_level(gfx: &Gfx, world: &World, z: i16, missing: &mut Missing, marks: Option<&mut Vec<Pos>>) {
     let mut sprites = Vec::new();
     let mut marks = marks;
-    let mut mark = |p: Pos, marks: &mut Option<&mut Vec<Pos>>| {
+    let mark = |p: Pos, marks: &mut Option<&mut Vec<Pos>>| {
         if let Some(m) = marks.as_deref_mut() {
             m.push(p);
         }
@@ -226,6 +226,42 @@ fn main() {
             }
         }
         print_missing(&format!("z={z}"), &missing);
+    }
+    if flag("--bench") {
+        // Lookup cost: terrain() for every tile of 16 levels around z, plus items/buildings.
+        let mut v: Vec<Sprite> = Vec::with_capacity(64);
+        let (z0, z1) = ((z - 8).max(0), (z + 8).min(world.dims.z as i16));
+        let t4 = std::time::Instant::now();
+        let mut calls = 0usize;
+        let mut total = 0usize;
+        for zz in z0..z1 {
+            for y in 0..world.dims.y as i16 {
+                for x in 0..world.dims.x as i16 {
+                    v.clear();
+                    gfx.terrain(&world, Pos::new(x, y, zz), &mut v);
+                    total += v.len();
+                    calls += 1;
+                }
+            }
+        }
+        let dt = t4.elapsed().as_secs_f64();
+        eprintln!(
+            "bench: {calls} terrain lookups in {:.1} ms = {:.0} ns/tile ({} sprites); a 20k-tile frame costs {:.2} ms",
+            dt * 1000.0,
+            dt * 1e9 / calls as f64,
+            total,
+            dt * 1000.0 / calls as f64 * 20_000.0
+        );
+        let t5 = std::time::Instant::now();
+        for it in &world.items {
+            v.clear();
+            gfx.item(&world, it, &mut v);
+        }
+        for u in &world.units {
+            v.clear();
+            gfx.unit(&world, u, &mut v);
+        }
+        eprintln!("bench: {} items + {} units in {:.2} ms", world.items.len(), world.units.len(), t5.elapsed().as_secs_f64() * 1000.0);
     }
     if flag("--scan") {
         // Whole map, every level.

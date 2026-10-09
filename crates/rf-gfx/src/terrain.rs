@@ -183,7 +183,6 @@ pub(crate) struct BldGfx {
     pub plate: Option<Sprite>,
     pub lever: Option<Sprite>,
     pub well: Option<Sprite>,
-    pub well_top: Option<Sprite>,
     /// Stone, wood, metal.
     pub archery: [Option<Sprite>; 3],
     pub support: [Option<Sprite>; 3],
@@ -194,6 +193,16 @@ pub(crate) struct BldGfx {
     pub bridge: [[Option<Sprite>; 9]; 4],
     pub road_dirt: Option<Sprite>,
     pub road_paved: Option<Sprite>,
+}
+
+/// Wall shadows on floors. Sides in order N, S, W, E; `near[side]` = the two tapered ends
+/// (N: [OPEN_NW, OPEN_NE], S: [OPEN_SW, OPEN_SE], W: [OPEN_NW, OPEN_SW], E: [OPEN_NE, OPEN_SE]);
+/// corners NW, NE, SW, SE.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ShadowSet {
+    pub straight: [Option<Sprite>; 4],
+    pub near: [[Option<Sprite>; 2]; 4],
+    pub corner: [Option<Sprite>; 4],
 }
 
 /// Graphics of one typed item subtype (`ITEM_WEAPON_PICK`, `ITEM_ARMOR_COAT`, ...).
@@ -238,6 +247,7 @@ pub(crate) struct Tables {
     pub stockpile: Option<Sprite>,
     pub workshops: HashMap<&'static str, WorkshopGfx>,
     pub bld: BldGfx,
+    pub shadows: ShadowSet,
     /// Typed item graphics (`ARMOR_GRAPHICS`, `WEAPON_GRAPHICS`, ...) by item subtype token.
     pub typed: HashMap<String, TypedItem>,
     pub remains: Option<Sprite>,
@@ -281,6 +291,14 @@ const WORKSHOP_NAMES: &[(&str, &str)] = &[
     ("Siege", "WORKSHOP_SIEGE"),
     ("TradeDepot", "TRADE_DEPOT"),
 ];
+
+/// Premium graphics name of a workshop/furnace subtype (or `TradeDepot`).
+pub(crate) fn workshop_gfx_name(sub: &str) -> Option<&'static str> {
+    WORKSHOP_NAMES.iter().find(|(s, _)| *s == sub).map(|(_, n)| *n).or(match sub {
+        "Kennels" => Some("WORKSHOP_KENNEL"),
+        _ => None,
+    })
+}
 
 const WALL_PAGES: &[&str] = &[
     "WALL_STONE",
@@ -415,7 +433,6 @@ impl Tables {
             plate: n("TRAP_PLATE_READY"),
             lever: n("LEVER_SET"),
             well: n("BLD_WELL_WITH_ROPE").or(n("BLD_WELL")),
-            well_top: n("BLD_WELL_ROPE"),
             archery: [n("BLD_ARCHERY_TARGET_STONE"), n("BLD_ARCHERY_TARGET_WOOD"), n("BLD_ARCHERY_TARGET_METAL")],
             support: [n("BLD_SUPPORT_STONE"), n("BLD_SUPPORT_WOOD"), n("BLD_SUPPORT_METAL")],
             chain: [n("BLD_CHAIN_METAL"), n("BLD_CHAIN_ROPE")],
@@ -431,6 +448,14 @@ impl Tables {
         }
         t.bld = b;
         t.remains = n("ITEM_REMAINS");
+        let sides = [("N", "NW", "NE"), ("S", "SW", "SE"), ("W", "NW", "SW"), ("E", "NE", "SE")];
+        for (i, (d, a, b2)) in sides.iter().enumerate() {
+            t.shadows.straight[i] = n(&format!("WALL_SHADOW_STRAIGHT_{d}"));
+            t.shadows.near[i] = [n(&format!("WALL_SHADOW_NEAR_{d}_OPEN_{a}")), n(&format!("WALL_SHADOW_NEAR_{d}_OPEN_{b2}"))];
+        }
+        for (i, c) in ["NW", "NE", "SW", "SE"].iter().enumerate() {
+            t.shadows.corner[i] = n(&format!("WALL_SHADOW_AT_CORNER_{c}"));
+        }
         // Palette pages per class.
         let ids = |list: &[&str]| -> Vec<u16> { list.iter().filter_map(|p| g.page_id(p)).collect() };
         t.pal_pages.insert(
@@ -566,7 +591,10 @@ fn floor_kind(world: &World, p: Pos) -> FloorKind {
     if t.hidden() {
         return FloorKind::None;
     }
-    let tt = world.tiletypes.get(t.tt);
+    floor_kind_tt(world.tiletypes.get(t.tt))
+}
+
+fn floor_kind_tt(tt: &rf_core::TiletypeInfo) -> FloorKind {
     if !matches!(tt.shape, Shape::Floor | Shape::Pebbles | Shape::Boulder | Shape::Shrub | Shape::Sapling) {
         return FloorKind::None;
     }
@@ -898,6 +926,15 @@ fn floor(g: &Gfx, world: &World, p: Pos, mat: u16, tt: &rf_core::TiletypeInfo, h
         }
         TtMaterial::Ashes => t.ashes,
         TtMaterial::Driftwood => t.dirt.center(tt.variant, h),
+        // Shrubs/saplings: the ground under the plant is not exported; grass outside, dirt
+        // underground (estimate).
+        TtMaterial::Plant => {
+            if world.tile(p).map(|t| t.flags & rf_core::tile_flags::OUTSIDE != 0).unwrap_or(false) {
+                t.grass.center(0, h)
+            } else {
+                t.dirt.center(0, h)
+            }
+        }
         _ => {
             if matches!(tt.special, TtSpecial::Smooth | TtSpecial::SmoothDead) {
                 t.smooth_floor
@@ -911,45 +948,80 @@ fn floor(g: &Gfx, world: &World, p: Pos, mat: u16, tt: &rf_core::TiletypeInfo, h
         out.extend(t.driftwood);
     }
     // Edge bleeding from higher-priority neighbor floors (grass over dirt over stone).
+    // One pass over the 8 neighbors (index (dy+1)*3 + (dx+1), 4 = this tile).
     let mine = floor_kind(world, p);
-    for dy in -1..=1i16 {
-        for dx in -1..=1i16 {
-            if dx == 0 && dy == 0 {
-                continue;
-            }
-            let k = floor_kind(world, p.offset(dx, dy, 0));
-            if k <= mine || k == FloorKind::None {
-                continue;
-            }
-            let set = match k {
-                FloorKind::Grass => &t.grass,
-                FloorKind::Dirt => &t.dirt,
-                _ => &t.stone,
-            };
-            // The piece of the neighbor's 3x3 that lies on this tile.
-            let gx = (1 - dx) as usize;
-            let gy = (1 - dy) as usize;
-            if let Some(s) = set.pieces[gy * 3 + gx] {
-                out.push(s);
-            }
-        }
-    }
-    // Shadows of tree bases next to this floor (TREE_BASE_SHADOW_<dir of this tile>).
+    let mut walls = [false; 9];
     for dy in -1..=1i16 {
         for dx in -1..=1i16 {
             if dx == 0 && dy == 0 {
                 continue;
             }
             let q = p.offset(dx, dy, 0);
-            let c = g.tree_tt_at(world, q);
-            if !c.is_trunk() || g.tree_tt_at(world, q.offset(0, 0, -1)).is_trunk() {
-                continue;
+            let ni = ((dy + 1) * 3 + (dx + 1)) as usize;
+            let nt = match world.tile(q) {
+                Some(nt) if !nt.hidden() => nt,
+                _ => {
+                    walls[ni] = true;
+                    continue;
+                }
+            };
+            let ntt = world.tiletypes.get(nt.tt);
+            let k = floor_kind_tt(ntt);
+            let cls = g.tree_tt(nt.tt);
+            // Tree trunks cast their own (base) shadows, not wall shadows.
+            walls[ni] = cls == TreeTt::None && matches!(ntt.shape, Shape::Wall | Shape::None);
+            // Edge bleeding from higher-priority neighbor floors (grass over dirt over stone):
+            // the piece of the neighbor's 3x3 that lies on this tile.
+            if k > mine && k != FloorKind::None {
+                let set = match k {
+                    FloorKind::Grass => &t.grass,
+                    FloorKind::Dirt => &t.dirt,
+                    _ => &t.stone,
+                };
+                if let Some(s) = set.pieces[((1 - dy) * 3 + (1 - dx)) as usize] {
+                    out.push(s);
+                }
             }
-            let pg = world.tile(q).and_then(|t| g.plant_of_mat(t.mat));
-            let set = &g.plants_t.trees[pg.map(|p| p.tree as usize).unwrap_or(0).min(g.plants_t.trees.len().saturating_sub(1))];
-            if let Some(s) = set.base_shadow[((1 - dy) * 3 + (1 - dx)) as usize] {
-                out.push(s);
+            // Shadows of tree bases next to this floor (TREE_BASE_SHADOW_<dir of this tile>).
+            if cls.is_trunk() && !g.tree_tt_at(world, q.offset(0, 0, -1)).is_trunk() {
+                let pg = world.tile(q).and_then(|t| g.plant_of_mat(t.mat));
+                let set = &g.plants_t.trees[pg.map(|p| p.tree as usize).unwrap_or(0).min(g.plants_t.trees.len().saturating_sub(1))];
+                if let Some(s) = set.base_shadow[((1 - dy) * 3 + (1 - dx)) as usize] {
+                    out.push(s);
+                }
             }
+        }
+    }
+    wall_shadows(g, &walls, out);
+}
+
+/// Shadows cast by neighboring walls onto a floor (`SHADOWS_WALL` page): straight pieces for
+/// orthogonal walls (tapered `NEAR_<d>_OPEN_<diag>` where the wall run ends), corner pieces
+/// for diagonal walls whose two adjacent sides are open.
+fn wall_shadows(g: &Gfx, w: &[bool; 9], out: &mut Vec<Sprite>) {
+    let sh = &g.terrain_t.shadows;
+    // Neighbor indices: 0 NW, 1 N, 2 NE, 3 W, 5 E, 6 SW, 7 S, 8 SE.
+    let (nw, n, ne, wv, e, sw, s, se) = (w[0], w[1], w[2], w[3], w[5], w[6], w[7], w[8]);
+    // [straight, near_open_a, near_open_b] per side; a/b = the two diagonals of that side.
+    let sides = [(n, nw, ne, 0usize), (s, sw, se, 1), (wv, nw, sw, 2), (e, ne, se, 3)];
+    for (wall, da, db, i) in sides {
+        if !wall {
+            continue;
+        }
+        match (da, db) {
+            (true, true) => out.extend(sh.straight[i]),
+            (false, true) => out.extend(sh.near[i][0].or(sh.straight[i])),
+            (true, false) => out.extend(sh.near[i][1].or(sh.straight[i])),
+            (false, false) => {
+                out.extend(sh.near[i][0].or(sh.straight[i]));
+                out.extend(sh.near[i][1]);
+            }
+        }
+    }
+    // Corners: NW, NE, SW, SE.
+    for (i, (d, a, b)) in [(nw, n, wv), (ne, n, e), (sw, s, wv), (se, s, e)].into_iter().enumerate() {
+        if d && !a && !b {
+            out.extend(sh.corner[i]);
         }
     }
 }

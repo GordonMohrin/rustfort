@@ -521,10 +521,10 @@ impl Gfx {
         let has_farms = world.buildings.iter().any(|b| b.kind == "FarmPlot");
         if has_farms {
             for it in world.items.iter().filter(|i| i.kind == "SEEDS" && i.flags.in_building) {
-                let Some(pg) = self.plant_of_mat(it.mat) else { continue };
                 // Without growth data the ripe crop is shown (estimate; DF shows CROP_SPROUT
-                // until the plant has grown).
-                if let Some(s) = pg.crop.or(pg.crop_sprout) {
+                // until the plant has grown). Plants without crop graphics: FARMPLOT_PLANTED.
+                let s = self.plant_of_mat(it.mat).and_then(|pg| pg.crop.or(pg.crop_sprout)).or(self.terrain_t.bld.farmplot_planted);
+                if let Some(s) = s {
                     self.crops_at.insert(it.pos, s);
                 }
             }
@@ -630,6 +630,119 @@ impl Gfx {
         terrain::building(self, world, b, p, out)
     }
 
+    /// Footprint (w, h) in tiles of a building kind/subtype as DF builds it: 3x3 workshops and
+    /// furnaces, 1x1 quern/millstone, 5x5 trade depot and siege workshop, 1x1 otherwise
+    /// (variable-size buildings like bridges and farm plots report 1x1; the user drags them).
+    pub fn building_size(&self, kind: &str, subtype: &str) -> (i16, i16) {
+        let key = match kind {
+            "Workshop" | "Furnace" => subtype,
+            "TradeDepot" => "TradeDepot",
+            _ => return (1, 1),
+        };
+        match self.terrain_t.workshops.get(key) {
+            Some(w) => (w.w as i16, w.h as i16),
+            None if key == "TradeDepot" || key == "Siege" => (5, 5),
+            None if key == "Quern" || key == "Millstone" => (1, 1),
+            None => (3, 3),
+        }
+    }
+
+    /// Sprites of a fully built building for placement previews (Build menu ghost), with
+    /// `dx`/`dy` relative to the footprint's top-left tile (workshop roofs reach `dy = -1`).
+    /// Drawn in the base (unrecolored) look; the renderer applies its own ghost tint/alpha,
+    /// e.g. `s.mul_tint([255, 255, 255, 150])` (red for an invalid spot). Not for the per-tile
+    /// hot path (it allocates); cache it per selected building.
+    pub fn building_ghost(&self, kind: &str, subtype: &str) -> Vec<Sprite> {
+        let (w, h) = self.building_size(kind, subtype);
+        let world = World::default();
+        let b = Building {
+            kind: kind.to_string(),
+            subtype: subtype.to_string(),
+            x1: 0,
+            y1: 0,
+            x2: w - 1,
+            y2: h - 1,
+            mat: rf_core::NO_MAT,
+            stage: -1,
+            built: true,
+            owner: -1,
+            ..Default::default()
+        };
+        let mut out = Vec::new();
+        for y in 0..h {
+            for x in 0..w {
+                let s0 = out.len();
+                terrain::building(self, &world, &b, Pos::new(x, y, 0), &mut out);
+                for s in &mut out[s0..] {
+                    s.dx += x;
+                    s.dy += y;
+                }
+            }
+        }
+        if out.is_empty() {
+            // Furniture whose item sprite was not cached by `prepare` (none in the world yet).
+            let set = terrain::item_sprites_for_kind(self, &kind.to_uppercase());
+            out.extend(set[0].or(set[3]).or(set[4]).or(set[6]));
+        }
+        out
+    }
+
+    /// Build-menu icon for a building kind/subtype (`BUILDING_ICON_*` from the interface
+    /// graphics, 8x12-px tiles combined into one sprite), e.g. `("Workshop", "Masons")` ->
+    /// `BUILDING_ICON_WORKSHOP_MASON`, `("Trap", "CageTrap")` -> `BUILDING_ICON_TRAP_CAGE`.
+    /// Category icons are plain names for [`Gfx::ui_icon`]: `BUILDING_ICON_WORKSHOPS`,
+    /// `_WORKSHOPS_FURNACES`, `_WORKSHOPS_FARMING`, `_WORKSHOPS_CLOTHING`, `_FURNITURE`,
+    /// `_DOORS_HATCHES`, `_WALLS_FLOORS`, `_MILITARY`, `_TRAPS`, `_MACHINES_FLUIDS`,
+    /// `_CAGES_RESTRAINT`, `_DISPLAY_FURNITURE`.
+    pub fn building_icon(&self, kind: &str, subtype: &str) -> Option<Sprite> {
+        let ic = |n: &str| self.named.get(&format!("BUILDING_ICON_{n}")).copied();
+        match kind {
+            "Workshop" | "Furnace" | "TradeDepot" => {
+                let key = if kind == "TradeDepot" { "TradeDepot" } else { subtype };
+                let gfx = terrain::workshop_gfx_name(key)?;
+                if gfx == "TRADE_DEPOT" {
+                    return ic("TRADE_DEPOT");
+                }
+                ic(gfx)
+                    .or_else(|| ic(gfx.trim_end_matches("_LAVA")))
+                    .or_else(|| if gfx == "WORKSHOP_MAGMAFORGE" { ic("WORKSHOP_METALSMITH") } else { None })
+            }
+            "Trap" => ic(match subtype {
+                "CageTrap" => "TRAP_CAGE",
+                "StoneFallTrap" => "TRAP_STONE",
+                "WeaponTrap" => "TRAP_WEAPON",
+                "Lever" => "LEVER",
+                "PressurePlate" => "PRESSURE_PLATE",
+                "TrackStop" => "TRACK_STOP",
+                _ => "TRAPS",
+            }),
+            "Armorstand" => ic("ARMOR_STAND"),
+            "Weaponrack" => ic("WEAPON_RACK"),
+            "Chain" => ic("RESTRAINT"),
+            "BarsFloor" => ic("BARS_FLOORS"),
+            "Construction" => ic(match subtype {
+                "Floor" => "FLOOR",
+                "Ramp" => "RAMP",
+                "Fortification" => "FORTIFICATION",
+                s if s.starts_with("Stair") || s.starts_with("Up") || s.starts_with("Down") => "STAIRS",
+                "ReinforcedWall" => "REINFORCED_WALL",
+                "Track" | "TrackN" | "TrackS" | "TrackE" | "TrackW" => "TRACK",
+                _ => "WALL",
+            }),
+            k => {
+                // CamelCase -> SNAKE_CASE (TractionBench -> TRACTION_BENCH).
+                let mut snake = String::new();
+                for (i, c) in k.chars().enumerate() {
+                    if c.is_ascii_uppercase() && i > 0 {
+                        snake.push('_');
+                    }
+                    snake.push(c.to_ascii_uppercase());
+                }
+                ic(&snake)
+            }
+        }
+    }
+
     /// Interface icon by name (e.g. toolbar buttons from `vanilla_interface`), if available.
     /// Any `TILE_GRAPHICS` name works; multi-tile buttons (e.g. `BUTTON_DIG`, 4x3 tiles of
     /// 8x12 px) come back as one sprite with `tw`/`th` set. See README.md for names.
@@ -695,5 +808,28 @@ mod tests {
         assert!(out.len() >= 3, "dwarf should have several layers, got {}", out.len());
         let (pw, ph, px) = g.page_rgba(out[0].page).unwrap();
         assert_eq!(px.len(), (pw * ph * 4) as usize);
+        // A floor next to a wall gets a wall shadow.
+        let shadow_page = g.page_by_token("SHADOWS_WALL").expect("shadow page");
+        let mut found = false;
+        'outer: for z in 0..w.dims.z as i16 {
+            for y in 1..31 {
+                for x in 1..31 {
+                    let p = Pos::new(x, y, z);
+                    if w.shape(p) == rf_core::Shape::Floor && w.shape(p.offset(0, -1, 0)) == rf_core::Shape::Wall {
+                        out.clear();
+                        g.terrain(&w, p, &mut out);
+                        found = out.iter().any(|s| s.page == shadow_page);
+                        break 'outer;
+                    }
+                }
+            }
+        }
+        assert!(found, "wall shadow expected on a floor south of a wall");
+        // Ghosts for the build menu.
+        let ghost = g.building_ghost("Workshop", "Masons");
+        assert!(ghost.len() >= 9, "3x3 workshop ghost, got {}", ghost.len());
+        assert_eq!(g.building_size("TradeDepot", ""), (5, 5));
+        assert_eq!(g.building_size("Workshop", "Quern"), (1, 1));
+        assert!(!g.building_ghost("Bed", "").is_empty());
     }
 }
