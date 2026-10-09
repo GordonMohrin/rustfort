@@ -3,7 +3,9 @@
 -- samples.txt (written by `cargo run -p rf-import --example spotcheck -- pick ...`):
 --   tile X Y Z      -> "tile X Y Z <tiletype name> <material token>"
 --   unit ID         -> "unit ID <x> <y> <z> <profession>|<translated name>"
--- plus "count <key> <n>" lines for citizens/units/items/buildings at verification time.
+-- plus "count <key> <n>" lines for citizens/units/items/buildings at verification time, and (round 2)
+-- "orders N", "order ID JOB LEFT TOTAL FREQ NCONDS", "wsjobs BLD N" (via the global job list),
+-- "farm BLD C1,C2,C3,C4" ('-' = fallow), "mod I ID:VERSION", "plant_raws N".
 -- Uses plain field access (no raw memory copies) so it checks the exporter's fast path.
 -- A few hundred samples take a few ms; no pause, no state change.
 
@@ -121,6 +123,46 @@ out[#out + 1] = 'count items ' .. items
 out[#out + 1] = 'count buildings ' .. #df.global.world.buildings.all
 out[#out + 1] = 'count plants ' .. #df.global.world.plants.all
 out[#out + 1] = 'year_tick ' .. df.global.cur_year .. ' ' .. df.global.cur_year_tick
+
+-- round 2: work orders, workshop job queues, farm crops, mods (compared by `spotcheck compare`)
+local orders = df.global.world.manager_orders.all
+out[#out + 1] = 'orders ' .. #orders
+for _, o in ipairs(orders) do
+  out[#out + 1] = ('order %d %s %d %d %s %d'):format(o.id, df.job_type[o.job_type], o.amount_left, o.amount_total,
+    df.workquota_frequency_type[o.frequency] or tostring(o.frequency), #o.item_conditions)
+end
+-- jobs per workshop/furnace through a different path than the exporter: the global job list + job holder ref
+local per_bld = {}
+local link = df.global.world.jobs.list.next
+local JT = df.job_type
+while link do
+  local j = link.item
+  if j and j.job_type ~= JT.ConstructBuilding and j.job_type ~= JT.DestroyBuilding then
+    local b = try(dfhack.job.getHolder, j)
+    if b and (b:getType() == df.building_type.Workshop or b:getType() == df.building_type.Furnace) then
+      per_bld[b.id] = (per_bld[b.id] or 0) + 1
+    end
+  end
+  link = link.next
+end
+for _, b in ipairs(df.global.world.buildings.all) do
+  local t = b:getType()
+  if t == df.building_type.Workshop or t == df.building_type.Furnace then
+    out[#out + 1] = ('wsjobs %d %d'):format(b.id, per_bld[b.id] or 0)
+  elseif t == df.building_type.FarmPlot then
+    local c = {}
+    for s = 0, 3 do
+      local pid = b.plant_id[s]
+      c[#c + 1] = pid >= 0 and raws.plants.all[pid].id or '-'
+    end
+    out[#out + 1] = ('farm %d %s'):format(b.id, table.concat(c, ','))
+  end
+end
+local ol = df.global.world.object_loader
+for i = 0, #ol.object_load_order_id - 1 do
+  out[#out + 1] = ('mod %d %s:%d'):format(i, ol.object_load_order_id[i].value, ol.object_load_order_numeric_version[i])
+end
+out[#out + 1] = 'plant_raws ' .. #raws.plants.all
 local f = assert(io.open(outp, 'wb'))
 f:write(table.concat(out, '\n'), '\n')
 f:close()

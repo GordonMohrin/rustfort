@@ -18,9 +18,12 @@
 --     allocated itself (df.new) - DF memory is only read.
 --   * the call returns immediately; manifest.json is written LAST and is the done-marker.
 --     progress.json is rewritten about once per second; error.json is written if the export aborts.
+--
+-- Files: manifest.json tiletypes.json materials.json map/zNNN.bin units.jsonl items.jsonl buildings.jsonl
+--        plants.jsonl creatures.json + (round 2) work_orders.jsonl plant_raws.json burrows.json squads.json
 
 local VERSION = 1
-local SCRIPT_REV = '2026-10-09c'
+local SCRIPT_REV = '2026-10-10a'   -- round 2: work orders, workshop jobs, crops, plant raws, mods, gaits
 
 -- ------------------------------------------------------------------------------------------- args
 local args = { ... }
@@ -268,6 +271,60 @@ local function material_json(mt, mi)
                 'rgb', jarr({ ji(rgb[1]), ji(rgb[2]), ji(rgb[3]) }),
                 'is_stone', jb(st), 'is_gem', jb(gem), 'is_metal', jb(metal), 'is_ore', jb(ore), 'is_soil', jb(soil),
                 'is_wood', jb(wood), 'is_glass', jb(glass), 'tags', jarr(tags) })
+end
+
+-- ------------------------------------------------------------------------------------------- job / order helpers
+-- material token of a (type, index) pair as DF names it: '' = any, 'INORGANIC' = any inorganic (0,-1),
+-- 'INORGANIC:IRON', 'COAL', 'PLANT:MUSHROOM_HELMET_PLUMP:DRINK', ...
+local mat_tok_cache = {}
+local function mat_token(mt, mi)
+  if mt == nil or mt < 0 then return '' end
+  mi = mi or -1
+  local key = mt * 4294967296 + (mi + 1)
+  local v = mat_tok_cache[key]
+  if v then return v end
+  local info = try(dfhack.matinfo.decode, mt, mi)
+  v = info and try(function() return info:getToken() end) or (mt .. ':' .. mi)
+  mat_tok_cache[key] = v
+  return v
+end
+local function item_type_name(t)
+  if t == nil or t < 0 then return '' end
+  return df.item_type[t] or tostring(t)
+end
+local function subtype_token(t, st)
+  if t == nil or t < 0 or st == nil or st < 0 then return '' end
+  local d = try(dfhack.items.getSubtypeDef, t, st)
+  return d and d.id or tostring(st)
+end
+-- enum value of a struct field by name (works for any enum-typed field)
+local function enum_name(obj, field)
+  return try(function() return obj:_field(field)._type[obj[field]] end) or tostring(try(function() return obj[field] end))
+end
+-- names of the set bits of a DF bitfield, JSON-encoded; `upper` = uppercase them
+local function set_flags(bf, upper)
+  local out = {}
+  pcall(function()
+    for k, v in pairs(bf) do
+      if v == true and type(k) == 'string' and not k:match('^UNUSED') then out[#out + 1] = ja(upper and k:upper() or k) end
+    end
+  end)
+  return out
+end
+-- product item type of a job: the job's own item_type if set, else the job type's product (df.job_type.attrs.item)
+local function product_type(jt, it)
+  if it ~= nil and it >= 0 then return it end
+  return try(function() return df.job_type.attrs[jt].item end) or -1
+end
+-- the fields shared by rf_core::BuildingJob and rf_core::WorkOrder, as a jobj key/value list
+local function job_core(jt, reaction, it, ist, mt, mi, mc)
+  local pt = product_type(jt, it)
+  return { 'job', ja(df.job_type[jt] or tostring(jt)), 'reaction', js(reaction or ''), 'item_type', ja(item_type_name(pt)),
+           'item_subtype', js(subtype_token(pt, ist)), 'mat', js(mat_token(mt, mi)), 'mat_category', jarr(set_flags(mc, false)) }
+end
+local function kv_append(kv, more)
+  for i = 1, #more do kv[#kv + 1] = more[i] end
+  return kv
 end
 
 -- ------------------------------------------------------------------------------------------- tiletypes
@@ -644,6 +701,33 @@ local function enum_list(enum_t, get)
 end
 local LABOR_FIRST, LABOR_LAST = df.unit_labor._first_item, df.unit_labor._last_item
 local race_seen = {}
+-- walk_speed: full_speed of the caste's default gait (caste.body_info.gait_info[gait][default_gait_index[gait]]);
+-- gait = WALK, or FLY for FLIER castes that have a fly gait. DF units: 900 = dwarf "Walk".
+local GAIT_WALK = (df.gait_type and df.gait_type.WALK) or 0
+local GAIT_FLY = (df.gait_type and df.gait_type.FLY) or 1
+local gait_cache = {}
+local gait_stat = { raw = 0, fallback = 0, fly = 0 }
+local function walk_speed(u, caste)
+  local key = u.race * 1024 + u.caste
+  local v = gait_cache[key]
+  if v == nil then
+    v = false
+    pcall(function()
+      local bi = caste.body_info
+      local gt = GAIT_WALK
+      if flag(caste.flags, 'FLIER') and bi.default_gait_index[GAIT_FLY] >= 0 then gt = GAIT_FLY end
+      local idx = bi.default_gait_index[gt]
+      if idx >= 0 then
+        local s = bi.gait_info[gt][idx].full_speed
+        if s and s > 0 then v = s; if gt == GAIT_FLY then gait_stat.fly = gait_stat.fly + 1 end end
+      end
+    end)
+    gait_cache[key] = v
+  end
+  if v then gait_stat.raw = gait_stat.raw + 1 return v end
+  gait_stat.fallback = gait_stat.fallback + 1
+  return 900
+end
 local function q(f, u) local ok, r = pcall(f, u) return ok and r or false end
 local function unit_json(u)
   local U = dfhack.units
@@ -692,7 +776,7 @@ local function unit_json(u)
     'sleepiness_timer', ji(u.counters2.sleepiness_timer), 'stress', ji(stress),
     'skills', jarr(skills), 'labors', jarr(labors), 'phys_attrs', jarr(phys), 'ment_attrs', jarr(ment),
     'facets', jarr(facets), 'inventory', jarr(inv), 'squad_id', ji(u.military.squad_id), 'mood', ja(mood),
-    'body_size', ji(try(function() return u.body.size_info.size_cur end) or 0), 'walk_speed', ji(900),
+    'body_size', ji(try(function() return u.body.size_info.size_cur end) or 0), 'walk_speed', ji(walk_speed(u, caste)),
     'profession_name', js(try(U.getProfessionName, u) or ''), 'readable_name', js(try(U.getReadableName, u) or '') })
 end
 
@@ -831,6 +915,29 @@ local function subtype_name(bld, t)
     end
   end) or ''
 end
+-- bld.jobs of a workshop/furnace as rf_core::BuildingJob list; the building's own construction/removal job is skipped
+local JT_CONSTRUCT, JT_DESTROY = df.job_type.ConstructBuilding, df.job_type.DestroyBuilding
+local function building_jobs(bld)
+  local jobs = {}
+  pcall(function()
+    for _, j in ipairs(bld.jobs) do
+      local jt = j.job_type
+      if jt ~= JT_CONSTRUCT and jt ~= JT_DESTROY then
+        local ok, s = pcall(function()
+          local worker = try(dfhack.job.getWorker, j)
+          return jobj(kv_append(job_core(jt, j.reaction_name, j.item_type, j.item_subtype, j.mat_type, j.mat_index,
+                                         j.material_category),
+            { 'repeat', jb(j.flags['repeat']), 'suspended', jb(j.flags.suspend), 'order_id', ji(j.order_id),
+              'id', ji(j.id), 'worker', ji(worker and worker.id or -1), 'working', jb(j.flags.working),
+              'do_now', jb(j.flags.do_now) }))
+        end)
+        if ok then jobs[#jobs + 1] = s else warn('building_job', s) end
+      end
+    end
+  end)
+  counts.building_jobs = (counts.building_jobs or 0) + #jobs
+  return jobs
+end
 local PILE_CATS = { 'animals', 'food', 'furniture', 'corpses', 'refuse', 'stone', 'ammo', 'coins', 'bars_blocks', 'gems',
                     'finished_goods', 'leather', 'cloth', 'wood', 'weapons', 'armor', 'sheet' }
 local function building_json(bld)
@@ -870,11 +977,22 @@ local function building_json(bld)
   local items = {}
   pcall(function() for _, ci in ipairs(bld.contained_items) do items[#items + 1] = ji(ci.item.id) end end)
   local name = try(function() return bld.name end) or ''
+  -- only the queues of workshops and furnaces (other buildings' bld.jobs hold hauling/planting jobs DF generates)
+  local jobs = (t == BT.Workshop or t == BT.Furnace) and building_jobs(bld) or {}
+  local crops = {}
+  if t == BT.FarmPlot then
+    for s = 0, 3 do
+      local pid = try(function() return bld.plant_id[s] end) or -1
+      crops[#crops + 1] = ja(pid >= 0 and (try(function() return raws.plants.all[pid].id end) or '') or '')
+    end
+    counts.farm_plots = (counts.farm_plots or 0) + 1
+  end
   return jobj({ 'id', ji(bld.id), 'kind', ja(BT[t] or tostring(t)), 'subtype', ja(subtype_name(bld, t) or ''),
                 'x1', ji(bld.x1), 'y1', ji(bld.y1), 'x2', ji(bld.x2), 'y2', ji(bld.y2), 'z', ji(bld.z),
                 'center', jpos(bld.centerx, bld.centery, bld.z), 'mat', ji(palidx(bld.mat_type, bld.mat_index)),
                 'stage', ji(stage), 'built', jb(stage >= maxst), 'owner', ji(owner), 'name', js(name),
-                'stockpile', stockpile, 'extents', jarr(ext), 'items', jarr(items) })
+                'stockpile', stockpile, 'extents', jarr(ext), 'items', jarr(items), 'jobs', jarr(jobs),
+                'crops', jarr(crops) })
 end
 
 local function export_buildings()
@@ -894,6 +1012,241 @@ local function export_buildings()
   counts.buildings = n
 end
 
+-- ------------------------------------------------------------------------------------------- work orders
+local function cond_json(c)
+  local it = c.item_type
+  local fl = {}
+  for _, name in ipairs({ 'flags1', 'flags2', 'flags3' }) do
+    for _, s in ipairs(set_flags(c[name], true)) do fl[#fl + 1] = s end
+  end
+  local function str(field) return try(function() return c[field] end) or '' end
+  local function num(field) return try(function() return c[field] end) or -1 end
+  if str('reaction_class') ~= '' then fl[#fl + 1] = js('REACTION_CLASS:' .. str('reaction_class')) end
+  if str('has_material_reaction_product') ~= '' then
+    fl[#fl + 1] = js('HAS_MATERIAL_REACTION_PRODUCT:' .. str('has_material_reaction_product'))
+  end
+  if num('metal_ore') >= 0 then fl[#fl + 1] = js('METAL_ORE:' .. mat_token(0, num('metal_ore')):gsub('^INORGANIC:', '')) end
+  if num('has_tool_use') >= 0 then fl[#fl + 1] = ja('HAS_TOOL_USE:' .. (df.tool_uses[num('has_tool_use')] or num('has_tool_use'))) end
+  if num('min_dimension') >= 0 then fl[#fl + 1] = ja('MIN_DIMENSION:' .. num('min_dimension')) end
+  if num('reaction_id') >= 0 then fl[#fl + 1] = ja('REACTION_ID:' .. num('reaction_id')) end
+  for _, k in ipairs({ 'flags4', 'flags5' }) do
+    local v = try(function() return c[k] end)
+    if type(v) == 'number' and v ~= 0 then fl[#fl + 1] = ja(('%s:0x%x'):format(k:upper(), v)) end
+  end
+  return jobj({ 'compare', ja(enum_name(c, 'compare_type')), 'value', ji(c.compare_val), 'item_type', ja(item_type_name(it)),
+                'item_subtype', js(subtype_token(it, c.item_subtype)), 'mat', js(mat_token(c.mat_type, c.mat_index)),
+                'flags', jarr(fl) })
+end
+
+local function order_json(o)
+  local conds, oconds = {}, {}
+  for _, c in ipairs(o.item_conditions) do conds[#conds + 1] = cond_json(c) end
+  for _, c in ipairs(o.order_conditions) do
+    oconds[#oconds + 1] = jobj({ 'order_id', ji(c.order_id), 'condition', ja(enum_name(c, 'condition')) })
+  end
+  return jobj(kv_append(job_core(o.job_type, o.reaction_name, o.item_type, o.item_subtype, o.mat_type, o.mat_index,
+                                 o.material_category),
+    { 'id', ji(o.id), 'amount_left', ji(o.amount_left), 'amount_total', ji(o.amount_total),
+      'frequency', ja(enum_name(o, 'frequency')), 'workshop_id', ji(o.workshop_id),
+      'active', jb(o.status.active), 'validated', jb(o.status.validated), 'conditions', jarr(conds),
+      -- extras (not in rf_core::WorkOrder, ignored by serde)
+      'order_conditions', jarr(oconds), 'max_workshops', ji(o.max_workshops),
+      'finished_year', ji(o.finished_year), 'finished_year_tick', ji(o.finished_year_tick) }))
+end
+
+local function export_work_orders()
+  phase = 'work_orders'
+  -- manager_orders.all has no find(): it is small (tens of orders), so it is done in one slice without yielding
+  local out = {}
+  local all = df.global.world.manager_orders.all
+  for i = 0, #all - 1 do
+    local ok, s = pcall(order_json, all[i])
+    if ok then out[#out + 1] = s else warn('work_order', s) end
+  end
+  write_file(OUT .. '/work_orders.jsonl', #out > 0 and (table.concat(out, '\n') .. '\n') or '')
+  counts.work_orders = #out
+  checkpoint()
+end
+
+-- ------------------------------------------------------------------------------------------- plant raws
+local function mat_has_product(m, prod)
+  local found = false
+  pcall(function()
+    for j = 0, #m.reaction_product.id - 1 do
+      if m.reaction_product.id[j].value == prod then found = true return end
+    end
+  end)
+  return found
+end
+local function plant_raw_json(p)
+  local fl = p.flags
+  local md = p.material_defs
+  local function def(name)
+    local mt = try(function() return md.type[name] end) or -1
+    local mi = try(function() return md.idx[name] end) or -1
+    return mt, mi
+  end
+  -- palette index (adds the material to the palette) of a material def; NO_MAT if the plant has none
+  local function pal_of(name)
+    local mt, mi = def(name)
+    if mt < 0 then return 0xFFFF end
+    return palidx(mt, mi)
+  end
+  local smat = nil
+  do
+    local mt, mi = def('basic_mat')
+    local info = mt >= 0 and try(dfhack.matinfo.decode, mt, mi)
+    smat = info and info.material or nil
+  end
+  local s_pal, d_pal, seed_pal = pal_of('basic_mat'), pal_of('drink'), pal_of('seed')
+  local d_mt, seed_mt = def('drink'), def('seed')
+  local mill_mt, mill_mi = def('mill')
+  local thread_mt, thread_mi = def('thread')
+  local xb_mt, xv_mt, xs_mt = def('extract_barrel'), def('extract_vial'), def('extract_still_vial')
+  local biomes, under, above = {}, false, false
+  pcall(function()
+    for k, v in pairs(fl) do
+      if v == true and type(k) == 'string' and k:match('^BIOME_') then
+        local b = k:sub(7)
+        biomes[#biomes + 1] = ja(b)
+        if b:match('^SUBTERRANEAN') then under = true else above = true end
+      end
+    end
+  end)
+  local edible_raw = smat and flag(smat.flags, 'EDIBLE_RAW') or false
+  local edible_cooked = smat and flag(smat.flags, 'EDIBLE_COOKED') or false
+  local brew_from = (smat and mat_has_product(smat, 'DRINK_MAT')) and 'plant' or ''
+  local growths = {}
+  pcall(function()
+    for _, g in ipairs(p.growths) do
+      local info = try(dfhack.matinfo.decode, g.mat_type, g.mat_index)
+      local gm = info and info.material
+      local er = gm and flag(gm.flags, 'EDIBLE_RAW') or false
+      local ec = gm and flag(gm.flags, 'EDIBLE_COOKED') or false
+      local br = gm and mat_has_product(gm, 'DRINK_MAT') or false
+      edible_raw = edible_raw or er
+      edible_cooked = edible_cooked or ec
+      if br and brew_from == '' then brew_from = 'growth' end
+      growths[#growths + 1] = jobj({ 'id', ja(g.id), 'name', js(g.name), 'mat', js(mat_token(g.mat_type, g.mat_index)),
+                                     'edible_raw', jb(er), 'edible_cooked', jb(ec), 'brewable', jb(br) })
+    end
+  end)
+  local is_tree, is_grass = flag(fl, 'TREE'), flag(fl, 'GRASS')
+  local gd = p.growdur
+  return jobj({ 'token', ja(p.id), 'name', js(p.name), 'name_plural', js(p.name_plural),
+                -- GROWDUR is in hundreds of ticks (wiki: 1008 GROWDUR units per season = 100800 ticks)
+                'growdur', ji(gd * 100),
+                'spring', jb(flag(fl, 'SPRING')), 'summer', jb(flag(fl, 'SUMMER')), 'autumn', jb(flag(fl, 'AUTUMN')),
+                'winter', jb(flag(fl, 'WINTER')), 'underground', jb(under), 'aboveground', jb(above),
+                'is_tree', jb(is_tree), 'is_shrub', jb(not is_tree and not is_grass),
+                'brewable', jb(flag(fl, 'DRINK') or d_mt >= 0 or brew_from ~= ''),
+                'edible_raw', jb(edible_raw), 'edible_cooked', jb(edible_cooked),
+                'millable', jb(mill_mt >= 0), 'threshable', jb(thread_mt >= 0),
+                'has_seed', jb(flag(fl, 'SEED') or seed_mt >= 0),
+                'mat_structural', ji(s_pal), 'mat_drink', ji(d_pal), 'mat_seed', ji(seed_pal),
+                -- extras (not in rf_core::PlantRaw, ignored by serde)
+                'growdur_raw', ji(gd), 'value', ji(p.value), 'is_grass', jb(is_grass), 'biomes', jarr(biomes),
+                'underground_depth', jarr({ ji(p.underground_depth_min), ji(p.underground_depth_max) }),
+                'brew_from', ja(brew_from), 'mill', js(mill_mt >= 0 and mat_token(mill_mt, mill_mi) or ''),
+                'thread', js(thread_mt >= 0 and mat_token(thread_mt, thread_mi) or ''),
+                'extract_barrel', jb(xb_mt >= 0), 'extract_vial', jb(xv_mt >= 0), 'extract_still_vial', jb(xs_mt >= 0),
+                'seed_name', js(p.seed_singular), 'growths', jarr(growths) })
+end
+
+local function export_plant_raws()
+  phase = 'plant_raws'
+  local out = {}
+  local all = raws.plants.all   -- raws are static while a save is loaded: yielding is safe
+  for i = 0, #all - 1 do
+    local ok, s = pcall(plant_raw_json, all[i])
+    if ok then out[#out + 1] = s else warn('plant_raw', s) end
+    if i % 16 == 0 then phase_detail = i .. '/' .. #all; checkpoint() end
+  end
+  write_file(OUT .. '/plant_raws.json', '[\n' .. table.concat(out, ',\n') .. '\n]\n')
+  counts.plant_raws = #out
+end
+
+-- ------------------------------------------------------------------------------------------- burrows, squads
+local function popcount16(v)
+  local n = 0
+  while v ~= 0 do n = n + (v & 1); v = v >> 1 end
+  return n
+end
+local function burrow_tiles(b)
+  local n = 0
+  for _, blk in ipairs(dfhack.burrows.listBlocks(b)) do
+    local link = blk.block_burrows.next
+    while link do
+      local bb = link.item
+      if bb and bb.id == b.id then
+        for row = 0, 15 do n = n + popcount16(bb.tile_bitmask.bits[row] & 0xFFFF) end
+      end
+      link = link.next
+    end
+  end
+  return n
+end
+local function export_burrows_squads()
+  phase = 'burrows'
+  -- small lists; one slice each, no yield while iterating DF vectors
+  local bl = {}
+  local tiles_total = 0
+  pcall(function()
+    for _, b in ipairs(df.global.plotinfo.burrows.list) do
+      local n = try(burrow_tiles, b) or -1
+      tiles_total = tiles_total + math.max(n, 0)
+      local units = {}
+      for _, uid in ipairs(b.units) do units[#units + 1] = ji(uid) end
+      bl[#bl + 1] = jobj({ 'id', ji(b.id), 'name', js(b.name), 'tiles', ji(n), 'blocks', ji(#b.block_x), 'units', jarr(units) })
+    end
+  end)
+  write_file(OUT .. '/burrows.json', '[\n' .. table.concat(bl, ',\n') .. '\n]\n')
+  counts.burrows = #bl
+  checkpoint()
+  phase = 'squads'
+  local sq = {}
+  local gid = try(function() return df.global.plotinfo.group_id end) or -1
+  pcall(function()
+    for _, s in ipairs(df.global.world.squads.all) do
+      if s.entity_id == gid then
+        local mem, hfs = {}, {}
+        for _, pos in ipairs(s.positions) do
+          if pos.occupant >= 0 then
+            local hf = df.historical_figure.find(pos.occupant)
+            hfs[#hfs + 1] = ji(pos.occupant)
+            mem[#mem + 1] = ji(hf and hf.unit_id or -1)
+          end
+        end
+        local name = (s.alias ~= '' and s.alias) or (try(dfhack.translation.translateName, s.name, true) or '')
+        sq[#sq + 1] = jobj({ 'id', ji(s.id), 'name', js(name), 'members', jarr(mem), 'member_hfs', jarr(hfs),
+                             'positions', ji(#s.positions) })
+      end
+    end
+  end)
+  write_file(OUT .. '/squads.json', '[\n' .. table.concat(sq, ',\n') .. '\n]\n')
+  counts.squads = #sq
+  checkpoint()
+end
+
+-- ------------------------------------------------------------------------------------------- mods
+-- active mods of the loaded save in load order (the raws object loader DF used for this save;
+-- the same source DFHack's script-manager reads): "id:numeric_version"
+local function mods_lists()
+  local ids, detail = {}, {}
+  pcall(function()
+    local ol = df.global.world.object_loader
+    for i = 0, #ol.object_load_order_id - 1 do
+      local id = ol.object_load_order_id[i].value
+      local nv = ol.object_load_order_numeric_version[i]
+      ids[#ids + 1] = js(id .. ':' .. nv)
+      detail[#detail + 1] = jobj({ 'id', js(id), 'name', js(try(function() return ol.object_load_order_name[i].value end) or ''),
+                                   'version', js(try(function() return ol.object_load_order_displayed_version[i].value end) or ''),
+                                   'numeric_version', ji(nv) })
+    end
+  end)
+  return ids, detail
+end
+
 -- ------------------------------------------------------------------------------------------- main
 local function main()
   phase = 'tiletypes'
@@ -906,6 +1259,9 @@ local function main()
   export_units()
   export_items()
   export_buildings()
+  export_work_orders()
+  export_plant_raws()      -- before the materials: adds the plants' STRUCTURAL/DRINK/SEED materials to the palette
+  export_burrows_squads()
   phase = 'materials'
   local mats = {}
   local i = 1
@@ -918,7 +1274,10 @@ local function main()
   counts.materials = #mats
   for k, v in pairs(unresolved) do note(('map: %d %s tiles without resolvable material'):format(v, k)) end
   for k, v in pairs(warn_count) do if v > 3 then note(('%s: %d errors in total'):format(k, v)) end end
-  note('walk_speed is always 900 (gait raws not reachable from caste_raw in 53.16 DFHack structures)')
+  note(('walk_speed = full_speed of the caste default gait (body_info.gait_info, WALK; FLY for fliers): %d units from raws (%d flying), %d fell back to 900; attribute/injury/terrain modifiers not applied')
+       :format(gait_stat.raw, gait_stat.fly, gait_stat.fallback))
+  note('plant_raws: growdur = GROWDUR x 100 ticks (wiki: unit is hundreds of ticks, 1008 per season)')
+  note('buildings: jobs only for Workshop/Furnace, without the ConstructBuilding/DestroyBuilding job; job/order item_type falls back to the job type product (df.job_type.attrs.item)')
   note('LAVA_STONE and MAGMA (semi-molten rock) tiles -> INORGANIC:OBSIDIAN (approx.); POOL/BROOK/RIVER tiles -> geo layer')
   note(('TREE/ROOT/MUSHROOM tiles: %d resolved exactly (getPlantAtTile), %d via nearest tree trunk (approx.)')
        :format(stat.tree_exact, stat.tree_nearest))
@@ -931,12 +1290,14 @@ local function finish()
   local mpz = {}
   pcall(function() mpz = { df.global.world.map.region_x, df.global.world.map.region_y, df.global.world.map.region_z } end)
   local cnt = {}
-  for _, k in ipairs({ 'units', 'citizens', 'items', 'buildings', 'plants', 'materials', 'tiletypes', 'tiles', 'z_exported' }) do
+  for _, k in ipairs({ 'units', 'citizens', 'items', 'buildings', 'plants', 'materials', 'tiletypes', 'tiles', 'z_exported',
+                       'work_orders', 'plant_raws', 'building_jobs', 'farm_plots', 'burrows', 'squads' }) do
     cnt[#cnt + 1] = k
     cnt[#cnt + 1] = ji(counts[k] or 0)
   end
   local nl = {}
   for _, s in ipairs(notes) do nl[#nl + 1] = js(s) end
+  local mods, mods_detail = mods_lists()
   local manifest = jobj({
     'format_version', ji(VERSION), 'exporter_rev', ja(SCRIPT_REV),
     'df_version', ja((dfhack.getDFVersion() or ''):match('0%.(%d+%.%d+)') or dfhack.getDFVersion() or ''), 'dfhack_version', ja(dfhack.getDFHackVersion()),
@@ -952,6 +1313,7 @@ local function finish()
     'counts', jobj(cnt), 'export_seconds', jf((T1 - T0) / 1000), 'lua_seconds', jf(total_lua / 1000),
     'frames', ji(frames), 'max_slice_ms', ji(max_slice), 'budget_ms', ji(opt.budget),
     'map_complete', jb(not opt.skip_map and not opt.zmin and not opt.zmax),
+    'mods', jarr(mods), 'mods_detail', '[\n  ' .. table.concat(mods_detail, ',\n  ') .. '\n]',
     'notes', '[\n  ' .. table.concat(nl, ',\n  ') .. '\n]' })
   write_file(OUT .. '/manifest.json', manifest .. '\n')
   phase = 'done'

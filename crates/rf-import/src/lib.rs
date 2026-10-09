@@ -48,8 +48,74 @@ pub struct ImportReport {
     pub buildings: usize,
     pub plants: usize,
     pub tiles: usize,
+    /// Round-2 data (0 when the export predates it).
+    pub work_orders: usize,
+    pub plant_raws: usize,
+    /// Jobs in workshop/furnace queues (sum of `Building::jobs`).
+    pub building_jobs: usize,
     pub warnings: Vec<String>,
     pub seconds: f64,
+}
+
+/// One mod of `manifest.json` `mods_detail` (display data; `Meta::mods` holds `id:numeric_version`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ModInfo {
+    pub id: String,
+    pub name: String,
+    /// Displayed version, e.g. `53.16`.
+    pub version: String,
+    pub numeric_version: i32,
+}
+
+/// A burrow from `burrows.json` (optional file; not part of rf-core yet).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BurrowInfo {
+    pub id: i32,
+    pub name: String,
+    /// Number of tiles assigned to the burrow.
+    pub tiles: i32,
+    /// Number of 16x16 map blocks touched.
+    pub blocks: i32,
+    /// Unit ids assigned to the burrow.
+    pub units: Vec<i32>,
+}
+
+/// A squad of the fort from `squads.json` (optional file; not part of rf-core yet).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SquadInfo {
+    pub id: i32,
+    /// Alias if set, else the translated squad name.
+    pub name: String,
+    /// Unit ids of the members (-1 if the historical figure has no unit).
+    pub members: Vec<i32>,
+    /// Historical figure ids of the members (same order).
+    pub member_hfs: Vec<i32>,
+    /// Number of positions (filled or not).
+    pub positions: i32,
+}
+
+/// Optional extra data of an export that has no place in `rf_core::World` yet.
+#[derive(Clone, Debug, Default)]
+pub struct Extras {
+    pub burrows: Vec<BurrowInfo>,
+    pub squads: Vec<SquadInfo>,
+    pub mods: Vec<ModInfo>,
+}
+
+/// Read `burrows.json`, `squads.json` and the manifest's `mods_detail` (all optional; missing
+/// or broken files give empty lists).
+pub fn load_extras(dir: &Path) -> Extras {
+    fn opt<T: DeserializeOwned + Default>(p: &Path) -> T {
+        std::fs::read_to_string(p).ok().and_then(|t| serde_json::from_str(strip_bom(&t)).ok()).unwrap_or_default()
+    }
+    Extras {
+        burrows: opt(&dir.join("burrows.json")),
+        squads: opt(&dir.join("squads.json")),
+        mods: load_manifest(dir).map(|m| m.mods_detail).unwrap_or_default(),
+    }
 }
 
 /// `manifest.json` of an export (see docs/EXPORT_FORMAT.md). Unknown fields are ignored,
@@ -91,6 +157,8 @@ pub struct Manifest {
     pub notes: Vec<String>,
     /// Active mods of the save in load order (`id:numeric_version`).
     pub mods: Vec<String>,
+    /// The same mods with display name and version.
+    pub mods_detail: Vec<ModInfo>,
 }
 
 impl Manifest {
@@ -448,6 +516,9 @@ pub fn load_export(dir: &Path) -> Result<(World, ImportReport), ImportError> {
         buildings: world.buildings.len(),
         plants: world.plants.len(),
         tiles: world.tiles.len(),
+        work_orders: world.work_orders.len(),
+        plant_raws: world.plant_raws.len(),
+        building_jobs: world.buildings.iter().map(|b| b.jobs.len()).sum(),
         warnings: {
             let mut list = w.finish();
             for n in &manifest.notes {
@@ -491,7 +562,27 @@ fn validate(world: &mut World, m: &Manifest, w: &mut Warnings) {
             b.extents.clear();
         }
     }
+    // Round-2 data: palette indices of plant raws, 4 crop slots per farm plot.
+    let mut bad_raw_mats = 0usize;
+    for p in &mut world.plant_raws {
+        for m in [&mut p.mat_structural, &mut p.mat_drink, &mut p.mat_seed] {
+            if fix_mat(m) {
+                bad_raw_mats += 1;
+            }
+        }
+    }
+    if bad_raw_mats > 0 {
+        w.add("plant_raws", format!("{bad_raw_mats} plant raw material indices out of palette range (set to none)"));
+    }
+    for b in &mut world.buildings {
+        if !b.crops.is_empty() && b.crops.len() != 4 {
+            w.add("buildings", format!("building {} has {} crop slots, expected 4; padded/truncated", b.id, b.crops.len()));
+            b.crops.resize(4, String::new());
+        }
+    }
     let cit = world.units.iter().filter(|u| u.flags.citizen && !u.flags.dead).count();
+    let farm_plots = world.buildings.iter().filter(|b| b.kind == "FarmPlot").count();
+    let building_jobs = world.buildings.iter().map(|b| b.jobs.len()).sum::<usize>();
     for (key, got) in [
         ("units", world.units.len()),
         ("citizens", cit),
@@ -500,6 +591,10 @@ fn validate(world: &mut World, m: &Manifest, w: &mut Warnings) {
         ("plants", world.plants.len()),
         ("materials", world.materials.len()),
         ("tiletypes", world.tiletypes.infos.len()),
+        ("work_orders", world.work_orders.len()),
+        ("plant_raws", world.plant_raws.len()),
+        ("building_jobs", building_jobs),
+        ("farm_plots", farm_plots),
     ] {
         if let Some(want) = m.count(key) {
             if want != got as i64 {
@@ -538,6 +633,9 @@ pub fn write_export(world: &World, dir: &Path) -> Result<(), ImportError> {
     jsonl(dir, "items.jsonl", &world.items)?;
     jsonl(dir, "buildings.jsonl", &world.buildings)?;
     jsonl(dir, "plants.jsonl", &world.plants)?;
+    // Round-2 files (optional for the importer; always written here).
+    jsonl(dir, "work_orders.jsonl", &world.work_orders)?;
+    write_json("plant_raws.json", to_json(&world.plant_raws))?;
     let plane = world.dims.x as usize * world.dims.y as usize;
     for z in 0..world.dims.z as usize {
         let mut buf = Vec::with_capacity(plane * TILE_RECORD_BYTES);
@@ -563,6 +661,10 @@ pub fn write_export(world: &World, dir: &Path) -> Result<(), ImportError> {
         ("tiletypes", world.tiletypes.infos.len()),
         ("tiles", world.tiles.len()),
         ("z_exported", world.dims.z as usize),
+        ("work_orders", world.work_orders.len()),
+        ("plant_raws", world.plant_raws.len()),
+        ("building_jobs", world.buildings.iter().map(|b| b.jobs.len()).sum()),
+        ("farm_plots", world.buildings.iter().filter(|b| b.kind == "FarmPlot").count()),
     ] {
         counts.insert(k.to_string(), v as i64);
     }
@@ -587,6 +689,7 @@ pub fn write_export(world: &World, dir: &Path) -> Result<(), ImportError> {
         year_tick_end: world.calendar.year_tick,
         counts,
         map_complete: true,
+        mods: world.meta.mods.clone(),
         ..Default::default()
     };
     // manifest.json last: it is the done-marker, as in the DFHack exporter.
@@ -660,6 +763,228 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         assert!(find_export(Some(&dir)).is_none());
         assert!(load_export(&dir).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A synthetic world with round-2 data: a brewery with two queued jobs, a farm plot,
+    /// a well, two work orders (one with conditions), plant raws and a mod list.
+    fn round2_world() -> World {
+        use rf_core::{BuildingJob, OrderCondition, PlantRaw, WorkOrder};
+        let mut w = World::synthetic(24, 24, 10);
+        let still = BuildingJob {
+            job: "CustomReaction".into(),
+            reaction: "BREW_DRINK_FROM_PLANT".into(),
+            repeat: true,
+            order_id: 7,
+            ..Default::default()
+        };
+        w.buildings.push(Building {
+            id: 500,
+            kind: "Workshop".into(),
+            subtype: "Still".into(),
+            x1: 2,
+            y1: 2,
+            x2: 4,
+            y2: 4,
+            built: true,
+            jobs: vec![
+                still.clone(),
+                BuildingJob { job: "ConstructBarrel".into(), item_type: "BARREL".into(), mat_category: vec!["wood".into()], suspended: true, order_id: -1, ..Default::default() },
+            ],
+            ..Default::default()
+        });
+        w.buildings.push(Building {
+            id: 501,
+            kind: "FarmPlot".into(),
+            x1: 6,
+            y1: 6,
+            x2: 8,
+            y2: 8,
+            built: true,
+            crops: vec!["MUSHROOM_HELMET_PLUMP".into(), "GRASS_WHEAT_CAVE".into(), "".into(), "MUSHROOM_HELMET_PLUMP".into()],
+            ..Default::default()
+        });
+        w.buildings.push(Building { id: 502, kind: "Well".into(), x1: 10, y1: 10, x2: 10, y2: 10, built: true, ..Default::default() });
+        w.work_orders = vec![
+            WorkOrder {
+                id: 7,
+                job: "CustomReaction".into(),
+                reaction: "BREW_DRINK_FROM_PLANT".into(),
+                amount_left: 3,
+                amount_total: 5,
+                frequency: "Daily".into(),
+                workshop_id: -1,
+                active: true,
+                validated: true,
+                conditions: vec![
+                    OrderCondition { compare: "LessThan".into(), value: 100, item_type: "DRINK".into(), ..Default::default() },
+                    OrderCondition {
+                        compare: "AtLeast".into(),
+                        value: 5,
+                        item_type: "PLANT".into(),
+                        flags: vec!["UNROTTEN".into(), "HAS_MATERIAL_REACTION_PRODUCT:DRINK_MAT".into()],
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            },
+            WorkOrder { id: 8, job: "ConstructBed".into(), item_type: "BED".into(), mat_category: vec!["wood".into()], amount_left: 1, amount_total: 1, frequency: "OneTime".into(), workshop_id: 500, ..Default::default() },
+        ];
+        w.plant_raws = vec![
+            PlantRaw {
+                token: "MUSHROOM_HELMET_PLUMP".into(),
+                name: "plump helmet".into(),
+                name_plural: "plump helmets".into(),
+                growdur: 30_000,
+                spring: true,
+                summer: true,
+                autumn: true,
+                winter: true,
+                underground: true,
+                is_shrub: true,
+                brewable: true,
+                edible_raw: true,
+                edible_cooked: true,
+                has_seed: true,
+                mat_structural: 6,
+                mat_drink: 5,
+                mat_seed: NO_MAT,
+                ..Default::default()
+            },
+            PlantRaw { token: "OAK".into(), name: "oak".into(), is_tree: true, aboveground: true, mat_structural: 3, mat_drink: NO_MAT, mat_seed: NO_MAT, ..Default::default() },
+        ];
+        w.meta.mods = vec!["vanilla_text:5001".into(), "vanilla_creatures:5316".into()];
+        w
+    }
+
+    #[test]
+    fn round2_data_round_trip() {
+        let w = round2_world();
+        let dir = temp_dir("round2");
+        write_export(&w, &dir).unwrap();
+        let (got, rep) = load_export(&dir).unwrap();
+        assert!(rep.warnings.is_empty(), "{:?}", rep.warnings);
+        assert_eq!(rep.work_orders, 2);
+        assert_eq!(rep.plant_raws, 2);
+        assert_eq!(rep.building_jobs, 2);
+        // work orders with conditions
+        let o = got.work_orders.iter().find(|o| o.id == 7).unwrap();
+        assert_eq!((o.job.as_str(), o.reaction.as_str(), o.frequency.as_str()), ("CustomReaction", "BREW_DRINK_FROM_PLANT", "Daily"));
+        assert_eq!((o.amount_left, o.amount_total, o.workshop_id, o.active, o.validated), (3, 5, -1, true, true));
+        assert_eq!(o.conditions.len(), 2);
+        assert_eq!(o.conditions[0].compare, "LessThan");
+        assert_eq!(o.conditions[1].flags, vec!["UNROTTEN", "HAS_MATERIAL_REACTION_PRODUCT:DRINK_MAT"]);
+        assert_eq!(got.work_orders[1].workshop_id, 500);
+        assert_eq!(got.work_orders[1].mat_category, vec!["wood"]);
+        // workshop job queue, farm crops, well
+        let still = got.building(500).unwrap();
+        assert_eq!(still.jobs.len(), 2);
+        assert_eq!(still.jobs[0].reaction, "BREW_DRINK_FROM_PLANT");
+        assert!(still.jobs[0].repeat && still.jobs[0].order_id == 7);
+        assert!(still.jobs[1].suspended && still.jobs[1].item_type == "BARREL");
+        let farm = got.building(501).unwrap();
+        assert_eq!(farm.crops, vec!["MUSHROOM_HELMET_PLUMP", "GRASS_WHEAT_CAVE", "", "MUSHROOM_HELMET_PLUMP"]);
+        assert!(got.building(502).unwrap().jobs.is_empty() && got.building(502).unwrap().crops.is_empty());
+        assert_eq!(got.buildings.iter().filter(|b| b.kind == "Well").count(), 1);
+        // plant raws
+        let ph = got.plant_raws.iter().find(|p| p.token == "MUSHROOM_HELMET_PLUMP").unwrap();
+        assert_eq!(ph.growdur, 30_000);
+        assert!(ph.brewable && ph.underground && !ph.aboveground && ph.has_seed && ph.edible_raw);
+        assert_eq!((ph.mat_structural, ph.mat_drink, ph.mat_seed), (6, 5, NO_MAT));
+        assert_eq!(got.material(ph.mat_drink).unwrap().token, "PLANT:PLUMP_HELMET:DRINK");
+        // mods
+        assert_eq!(got.meta.mods, vec!["vanilla_text:5001", "vanilla_creatures:5316"]);
+        assert_eq!(load_manifest(&dir).unwrap().mods, got.meta.mods);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn export_without_round2_files_still_loads() {
+        // a v0.1 export: no work_orders.jsonl / plant_raws.json, no mods, no jobs/crops fields
+        let mut w = round2_world();
+        for b in &mut w.buildings {
+            b.jobs.clear();
+            b.crops.clear();
+        }
+        w.work_orders.clear();
+        w.plant_raws.clear();
+        w.meta.mods.clear();
+        let dir = temp_dir("v01");
+        write_export(&w, &dir).unwrap();
+        std::fs::remove_file(dir.join("work_orders.jsonl")).unwrap();
+        std::fs::remove_file(dir.join("plant_raws.json")).unwrap();
+        let b = std::fs::read_to_string(dir.join("buildings.jsonl")).unwrap();
+        std::fs::write(dir.join("buildings.jsonl"), b.replace(r#","jobs":[],"crops":[]"#, "")).unwrap();
+        let m = std::fs::read_to_string(dir.join("manifest.json")).unwrap();
+        let mut m: serde_json::Value = serde_json::from_str(&m).unwrap();
+        for k in ["work_orders", "plant_raws", "building_jobs", "farm_plots"] {
+            m["counts"].as_object_mut().unwrap().remove(k);
+        }
+        m.as_object_mut().unwrap().remove("mods");
+        std::fs::write(dir.join("manifest.json"), m.to_string()).unwrap();
+        assert!(!std::fs::read_to_string(dir.join("buildings.jsonl")).unwrap().contains("\"jobs\""));
+        let (got, rep) = load_export(&dir).unwrap();
+        assert!(rep.warnings.is_empty(), "{:?}", rep.warnings);
+        assert!(got.work_orders.is_empty() && got.plant_raws.is_empty() && got.meta.mods.is_empty());
+        assert_eq!(got.buildings.len(), w.buildings.len());
+        assert!(got.buildings.iter().all(|b| b.jobs.is_empty() && b.crops.is_empty()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn round2_bad_data_is_repaired() {
+        let mut w = round2_world();
+        w.plant_raws[0].mat_drink = 9_999; // out of palette range
+        w.buildings.iter_mut().find(|b| b.id == 501).unwrap().crops.truncate(2);
+        let dir = temp_dir("round2bad");
+        write_export(&w, &dir).unwrap();
+        // one broken work order line
+        let o = std::fs::read_to_string(dir.join("work_orders.jsonl")).unwrap();
+        std::fs::write(dir.join("work_orders.jsonl"), format!("{o}{{\"id\":\n")).unwrap();
+        let (got, rep) = load_export(&dir).unwrap();
+        let all = rep.warnings.join("\n");
+        assert!(all.contains("plant_raws: 1 plant raw material indices"), "{all}");
+        assert!(all.contains("crop slots"), "{all}");
+        assert!(all.contains("work_orders:") && all.contains("skipped bad line"), "{all}");
+        assert_eq!(got.plant_raws[0].mat_drink, NO_MAT);
+        assert_eq!(got.building(501).unwrap().crops.len(), 4);
+        assert_eq!(got.work_orders.len(), 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn exporter_style_round2_lines_parse() {
+        // Lines as rustfort-export.lua (rev 2026-10-10a) writes them, extras included.
+        let o: rf_core::WorkOrder = serde_json::from_str(r#"{"job":"ConstructSlab","reaction":"","item_type":"SLAB","item_subtype":"","mat":"INORGANIC","mat_category":[],"id":61,"amount_left":1,"amount_total":1,"frequency":"Daily","workshop_id":-1,"active":true,"validated":true,"conditions":[{"compare":"AtLeast","value":22,"item_type":"BOULDER","item_subtype":"","mat":"INORGANIC","flags":["NON_ECONOMIC","HARD"]},{"compare":"LessThan","value":2,"item_type":"SLAB","item_subtype":"","mat":"","flags":["UNENGRAVED"]}],"order_conditions":[],"max_workshops":0,"finished_year":-1,"finished_year_tick":-1}"#).unwrap();
+        assert_eq!((o.id, o.job.as_str(), o.mat.as_str()), (61, "ConstructSlab", "INORGANIC"));
+        assert_eq!(o.conditions[0].flags, vec!["NON_ECONOMIC", "HARD"]);
+        let b: Building = serde_json::from_str(r#"{"id":10978,"kind":"Workshop","subtype":"Still","x1":1,"y1":1,"x2":3,"y2":3,"z":130,"stockpile":null,"extents":[],"items":[],"jobs":[{"job":"CustomReaction","reaction":"BREW_DRINK_FROM_PLANT","item_type":"","item_subtype":"","mat":"","mat_category":[],"repeat":false,"suspended":false,"order_id":-1,"id":761553,"worker":-1,"working":false,"do_now":false}],"crops":[]}"#).unwrap();
+        assert_eq!(b.jobs.len(), 1);
+        assert_eq!(b.jobs[0].reaction, "BREW_DRINK_FROM_PLANT");
+        assert_eq!(b.jobs[0].order_id, -1);
+        let f: Building = serde_json::from_str(r#"{"id":10609,"kind":"FarmPlot","jobs":[],"crops":["MUSHROOM_HELMET_PLUMP","GRASS_WHEAT_CAVE","GRASS_WHEAT_CAVE","MUSHROOM_HELMET_PLUMP"]}"#).unwrap();
+        assert_eq!(f.crops[1], "GRASS_WHEAT_CAVE");
+        let p: rf_core::PlantRaw = serde_json::from_str(r#"{"token":"MUSHROOM_HELMET_PLUMP","name":"plump helmet","name_plural":"plump helmets","growdur":30000,"spring":true,"summer":true,"autumn":true,"winter":true,"underground":true,"aboveground":false,"is_tree":false,"is_shrub":true,"brewable":true,"edible_raw":true,"edible_cooked":true,"millable":false,"threshable":false,"has_seed":true,"mat_structural":1,"mat_drink":142,"mat_seed":200,"growdur_raw":300,"value":2,"is_grass":false,"biomes":["SUBTERRANEAN_WATER"],"underground_depth":[1,3],"brew_from":"plant","mill":"","thread":"","extract_barrel":false,"extract_vial":false,"extract_still_vial":false,"seed_name":"plump helmet spawn","growths":[]}"#).unwrap();
+        assert!(p.brewable && p.underground && p.growdur == 30_000 && p.mat_seed == 200);
+        let m: Manifest = serde_json::from_str(r#"{"format_version":1,"mods":["vanilla_text:5001","vanilla_procedural:5316"],"mods_detail":[{"id":"vanilla_text","name":"Vanilla Text","version":"50.01","numeric_version":5001}],"counts":{"work_orders":40}}"#).unwrap();
+        assert_eq!(m.mods.len(), 2);
+        assert_eq!(m.mods_detail[0].numeric_version, 5001);
+        assert_eq!(m.count("work_orders"), Some(40));
+    }
+
+    #[test]
+    fn extras_load_and_default() {
+        let w = round2_world();
+        let dir = temp_dir("extras");
+        write_export(&w, &dir).unwrap();
+        assert!(load_extras(&dir).burrows.is_empty());
+        std::fs::write(dir.join("burrows.json"), r#"[{"id":1,"name":"Zuflucht","tiles":1716,"blocks":18,"units":[]}]"#).unwrap();
+        std::fs::write(dir.join("squads.json"), r#"[{"id":72,"name":"Wache","members":[13957,-1],"member_hfs":[3898,3889],"positions":10}]"#).unwrap();
+        let e = load_extras(&dir);
+        assert_eq!(e.burrows[0].tiles, 1716);
+        assert_eq!(e.squads[0].members, vec![13957, -1]);
+        std::fs::write(dir.join("squads.json"), "{broken").unwrap();
+        assert!(load_extras(&dir).squads.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

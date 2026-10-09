@@ -54,6 +54,8 @@ fn compare(dir: &str, result: &str) {
     let text = std::fs::read_to_string(result).expect("result file");
     let (mut ok, mut bad) = (0, 0);
     let mut by_class: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+    // round-2 checks: (match, differ, missing in import)
+    let mut r2: BTreeMap<&str, (usize, usize, usize)> = BTreeMap::new();
     for line in text.lines() {
         let f: Vec<&str> = line.split_whitespace().collect();
         match f.first().copied() {
@@ -106,6 +108,91 @@ fn compare(dir: &str, result: &str) {
                 println!("count {:<10} import {got:>6} | DF now {:>6}", f[1], f[2]);
             }
             Some("year_tick") => println!("DF time now: year {} tick {} (export end tick {})", f[1], f[2], w.calendar.year_tick),
+            // round 2
+            Some("orders") if f.len() >= 2 => {
+                println!("work orders: import {} | DF now {}", w.work_orders.len(), f[1]);
+            }
+            Some("order") if f.len() >= 7 => {
+                let id: i32 = f[1].parse().unwrap_or(-1);
+                let e = r2.entry("orders").or_default();
+                match w.work_orders.iter().find(|o| o.id == id) {
+                    Some(o) => {
+                        let same = o.job == f[2]
+                            && o.amount_total.to_string() == f[4]
+                            && o.frequency == f[5]
+                            && o.conditions.len().to_string() == f[6];
+                        if same {
+                            e.0 += 1;
+                        } else {
+                            e.1 += 1;
+                            println!(
+                                "order {id}: import {} {}/{} {} {} conds | DF {} {}/{} {} {} conds",
+                                o.job,
+                                o.amount_left,
+                                o.amount_total,
+                                o.frequency,
+                                o.conditions.len(),
+                                f[2],
+                                f[3],
+                                f[4],
+                                f[5],
+                                f[6]
+                            );
+                        }
+                        if o.amount_left.to_string() != f[3] {
+                            println!("order {id} ({}): amount_left {} -> DF now {} (progress since export)", o.job, o.amount_left, f[3]);
+                        }
+                    }
+                    None => {
+                        e.2 += 1;
+                        println!("order {id} ({}): not in import (created after the export?)", f[2]);
+                    }
+                }
+            }
+            Some("wsjobs") if f.len() >= 3 => {
+                let id: i32 = f[1].parse().unwrap_or(-1);
+                let e = r2.entry("workshop job counts").or_default();
+                match w.building(id) {
+                    Some(b) if b.jobs.len().to_string() == f[2] => e.0 += 1,
+                    Some(b) => {
+                        e.1 += 1;
+                        let kinds: Vec<&str> = b.jobs.iter().map(|j| j.job.as_str()).collect();
+                        println!("workshop {id} {}: import {} jobs [{}] | DF now {}", b.subtype, b.jobs.len(), kinds.join(","), f[2]);
+                    }
+                    None => e.2 += 1,
+                }
+            }
+            Some("farm") if f.len() >= 3 => {
+                let id: i32 = f[1].parse().unwrap_or(-1);
+                let e = r2.entry("farm crops").or_default();
+                match w.building(id) {
+                    Some(b) => {
+                        let got: Vec<&str> = b.crops.iter().map(|c| if c.is_empty() { "-" } else { c.as_str() }).collect();
+                        if got.join(",") == f[2] {
+                            e.0 += 1;
+                        } else {
+                            e.1 += 1;
+                            println!("farm {id}: import {} | DF now {}", got.join(","), f[2]);
+                        }
+                    }
+                    None => e.2 += 1,
+                }
+            }
+            Some("mod") if f.len() >= 3 => {
+                let i: usize = f[1].parse().unwrap_or(usize::MAX);
+                let e = r2.entry("mods").or_default();
+                match w.meta.mods.get(i) {
+                    Some(m) if m == f[2] => e.0 += 1,
+                    Some(m) => {
+                        e.1 += 1;
+                        println!("mod {i}: import {m} | DF {}", f[2]);
+                    }
+                    None => e.2 += 1,
+                }
+            }
+            Some("plant_raws") if f.len() >= 2 => {
+                println!("plant raws: import {} | DF {}", w.plant_raws.len(), f[1]);
+            }
             _ => {}
         }
     }
@@ -113,6 +200,9 @@ fn compare(dir: &str, result: &str) {
         println!("  {c:<14} {o:>4} ok {b:>3} mismatch");
     }
     println!("tiles: {ok} match, {bad} mismatch");
+    for (k, (o, b, m)) in &r2 {
+        println!("{k}: {o} match, {b} differ, {m} missing in import");
+    }
 }
 
 fn main() {
