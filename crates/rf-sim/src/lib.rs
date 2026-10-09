@@ -48,6 +48,11 @@
 //!   (threshold: 8 requests per tick), so the sim is effectively single-threaded today.
 
 pub mod build_api;
+// [combat]
+pub mod combat;
+pub mod invasion;
+pub mod military;
+pub use combat::CombatStats;
 pub mod round3_api;
 pub use round3_api::{SquadOrder, StressLevel};
 pub use build_api::{BuildOption, OrderTemplate, ZONE_KINDS};
@@ -311,6 +316,8 @@ enum Task {
     Fetch(i32),
     GoSite,
     Craft,
+    /// [combat] Unit run by the combat/military module (fighting, fleeing, training, resting).
+    Combat,
 }
 
 struct UnitAi {
@@ -462,6 +469,8 @@ pub struct Sim {
     par_min_paths: usize,
     /// Workshops, farms, orders, construction (see `production`).
     prod: production::Prod,
+    /// [combat] Combat, military and invasions (see `combat`, `military`, `invasion`).
+    combat: combat::Combat,
 }
 
 #[inline]
@@ -555,6 +564,7 @@ impl Sim {
             stats: SimStats::default(),
             par_min_paths: PAR_MIN_PATHS,
             prod: production::Prod::default(),
+            combat: combat::Combat::default(), // [combat]
         };
         sim.init_plants();
         sim.init_units();
@@ -563,6 +573,7 @@ impl Sim {
         sim.init_jobs_from_tiles();
         sim.init_water();
         sim.init_production();
+        sim.init_combat(); // [combat]
         sim.rebuild_food_lists();
         sim.rebuild_haul();
         sim
@@ -910,6 +921,7 @@ impl Sim {
             }
             (_, Task::GoPickup(_, d)) | (_, Task::GoStore(_, d)) => ("Store Item in Stockpile", Some(pos_of(d))),
             (_, Task::Fetch(_)) | (_, Task::GoSite) | (_, Task::Craft) => self.wjob_caption(s),
+            (_, Task::Combat) => self.combat_caption(s), // [combat]
         };
         UnitStatus {
             activity: activity.into(),
@@ -961,6 +973,7 @@ impl Sim {
             mix(it.stack as u64);
         }
         self.prod_hash(&mut mix);
+        self.combat_hash(&mut mix); // [combat]
         h
     }
 
@@ -1059,6 +1072,7 @@ impl Sim {
             self.production_pass(now);
             self.phase[4] += tp.elapsed().as_secs_f64();
         }
+        self.combat_tick(now); // [combat]
         let t0 = Instant::now();
         for s in 0..self.ai.len() {
             if self.ai[s].wake <= now {
@@ -1268,7 +1282,12 @@ impl Sim {
                 return;
             }
             Kind::Animal | Kind::Other => {
-                self.think_simple(s, now);
+                // [combat] hostiles, fighting animals, leaving invaders
+                if self.combat_owns(s) {
+                    self.combat_think(s, now);
+                } else {
+                    self.think_simple(s, now);
+                }
                 return;
             }
             Kind::Worker => {}
@@ -1312,6 +1331,7 @@ impl Sim {
                     self.ai[s].wake = until.min(cap);
                 }
             }
+            Task::Combat => self.combat_think(s, now), // [combat]
             _ => {
                 let interruptible = matches!(task, Task::GoJob(_) | Task::GoPickup(..) | Task::GoStore(..) | Task::Wander | Task::Fetch(_) | Task::GoSite);
                 if urgent && interruptible {
@@ -1418,6 +1438,10 @@ impl Sim {
         }
         if sl >= needs::SLEEP_SEEK || (sl >= needs::SLEEP_CONSIDER && r.chance(elapsed, 120)) {
             self.start_sleep(s, now);
+            return;
+        }
+        // [combat] soldiers on duty, civilian alert, wounded resting
+        if self.combat_decide(s, now) {
             return;
         }
         let ai = &self.ai[s];
@@ -1553,6 +1577,7 @@ impl Sim {
             Task::Fetch(id) => self.prod_arrive_fetch(s, id, now),
             Task::GoSite => self.prod_arrive_site(s, now),
             Task::Job(_) | Task::Drink(_) | Task::Eat(_) | Task::Sleep(_) | Task::Craft => {}
+            Task::Combat => self.combat_think(s, now), // [combat]
         }
     }
 
@@ -1652,6 +1677,7 @@ impl Sim {
                 self.release_pile_tile(dest);
             }
             Task::Fetch(_) | Task::GoSite | Task::Craft => self.prod_cancel(s),
+            Task::Combat => self.combat_cancel(s), // [combat]
             Task::Idle | Task::Wander => {}
         }
         let ai = &mut self.ai[s];
