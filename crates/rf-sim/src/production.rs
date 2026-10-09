@@ -1835,7 +1835,7 @@ impl Sim {
         }
         let wj = self.prod.wj[s];
         let (base, skill) = self.wjob_work(&wj);
-        let rating = self.world.units[self.ai[s].uidx].skill(skill);
+        let rating = self.social_rating(s, self.world.units[self.ai[s].uidx].skill(skill)); // [social] focus
         let dur = (base as i32 * 10 / (10 + 2 * rating.clamp(0, 20))).max(10) as u64;
         let cap = self.need_cap(s);
         let ai = &mut self.ai[s];

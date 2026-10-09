@@ -19,15 +19,16 @@ pub enum StressLevel {
 }
 
 impl StressLevel {
-    /// DF v50 stress thresholds (wiki "Stress"): approximate until the social sim refines them.
+    /// [social] DF v50 stress buckets of short-term stress (DFHack `Units::stress_cutoffs`
+    /// 50 000 / 25 000 / 10 000 / -10 000 / -25 000 / -50 000, i.e. DF's stress face).
     pub fn from_stress(stress: i32) -> StressLevel {
         match stress {
-            i32::MIN..=-100_000 => StressLevel::Ecstatic,
-            -99_999..=-25_000 => StressLevel::Happy,
-            -24_999..=-1 => StressLevel::Content,
-            0..=24_999 => StressLevel::Fine,
-            25_000..=49_999 => StressLevel::Stressed,
-            50_000..=99_999 => StressLevel::VeryStressed,
+            i32::MIN..=-50_001 => StressLevel::Ecstatic,
+            -50_000..=-25_001 => StressLevel::Happy,
+            -25_000..=-10_001 => StressLevel::Content,
+            -10_000..=9_999 => StressLevel::Fine,
+            10_000..=24_999 => StressLevel::Stressed,
+            25_000..=49_999 => StressLevel::VeryStressed,
             _ => StressLevel::Breaking,
         }
     }
@@ -61,7 +62,7 @@ impl Sim {
     /// One DF-style sentence for a remembered emotion, e.g.
     /// "felt satisfaction after drinking a good drink".
     pub fn describe_emotion(&self, e: &Emotion) -> String {
-        format!("felt {} ({})", e.emotion.to_lowercase(), e.thought)
+        self.describe(e) // [social]
     }
 
     pub fn stress_level(&self, unit_id: i32) -> StressLevel {
