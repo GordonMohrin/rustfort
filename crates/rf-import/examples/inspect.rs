@@ -3,6 +3,9 @@
 //! dims, counts, citizens, item/building histograms, mods, work orders, workshop job queues,
 //! farm plots with crops, wells, drink/food stock, burrows/squads, walk speeds, tile histograms
 //! per z-range and an ASCII map of the z-level with the most citizens (or `--z N`).
+//! Round 3: stress categories, needs, most common thoughts, relationships, wounds, hostiles,
+//! squads (members, orders, uniform), burrows, creature raws with body part counts, the dwarf
+//! body part list, weapon/armor raws, material mechanics, corpses and aquifer tiles.
 
 use rf_core::{Pos, Shape, TtMaterial, World, NO_MAT};
 use std::collections::BTreeMap;
@@ -309,6 +312,207 @@ fn production(w: &World, dir: &std::path::Path) {
     println!("walk_speed (units): {}", s.join(", "));
 }
 
+/// Round-3 data: needs and stress, thoughts, relationships, wounds, squads, burrows, creature,
+/// weapon and armor raws, material mechanics, corpses, heavy aquifer.
+fn round3(w: &World, dir: &std::path::Path, rep: &rf_import::ImportReport) {
+    let manifest = rf_import::load_manifest(dir).unwrap_or_default();
+    let cits: Vec<_> = w.citizens().collect();
+    if cits.is_empty() {
+        return;
+    }
+    // stress
+    let n = cits.len() as f64;
+    let avg = cits.iter().map(|u| u.stress as f64).sum::<f64>() / n;
+    const CAT: [&str; 7] = ["0 haggard", "1 stressed", "2 unhappy", "3 fine", "4 content", "5 happy", "6 ecstatic"];
+    let mut cat: BTreeMap<usize, usize> = BTreeMap::new();
+    for u in &cits {
+        if let Some(c) = manifest.stress_category(u.stress) {
+            *cat.entry(c).or_default() += 1;
+        }
+    }
+    let cats: Vec<String> = cat.iter().map(|(c, k)| format!("{} {k}", CAT.get(*c).copied().unwrap_or("?"))).collect();
+    println!("\nstress (citizens): avg {avg:.0}, min {}, max {}; DF categories (cutoffs {:?}): {}",
+        cits.iter().map(|u| u.stress).min().unwrap_or(0),
+        cits.iter().map(|u| u.stress).max().unwrap_or(0),
+        manifest.stress_cutoffs,
+        if cats.is_empty() { "n/a (export before round 3)".into() } else { cats.join(", ") });
+    // needs: how many citizens have each need and how many of them are unmet (focus < 0)
+    let mut needs: BTreeMap<String, (usize, usize, i64)> = BTreeMap::new();
+    for u in &cits {
+        for nd in &u.needs {
+            let e = needs.entry(nd.id.clone()).or_default();
+            e.0 += 1;
+            if nd.focus_level < 0 {
+                e.1 += 1;
+            }
+            e.2 += nd.need_level as i64;
+        }
+    }
+    let mut nv: Vec<_> = needs.into_iter().collect();
+    nv.sort_by(|a, b| (b.1).1.cmp(&(a.1).1).then(a.0.cmp(&b.0)));
+    println!("needs (citizens having it / unmet = focus < 0 / avg importance):");
+    for (k, (have, unmet, lvl)) in nv.iter().take(14) {
+        println!("  {k:<22} {have:>3} have, {unmet:>3} unmet, importance {:.1}", *lvl as f64 / (*have).max(1) as f64);
+    }
+    // thoughts
+    let mut th: BTreeMap<String, usize> = BTreeMap::new();
+    let mut recent: BTreeMap<String, usize> = BTreeMap::new();
+    let mut n_emo = 0usize;
+    for u in &cits {
+        for e in &u.emotions {
+            n_emo += 1;
+            let k = format!("{} {}", e.emotion, e.thought);
+            *th.entry(k.clone()).or_default() += 1;
+            if e.year == w.calendar.year {
+                *recent.entry(k).or_default() += 1;
+            }
+        }
+    }
+    println!("thoughts: {n_emo} remembered emotions; most common (all / this year):");
+    for (k, c) in top(&th, 15) {
+        println!("  {c:>5} / {:<5} {k}", recent.get(&k).copied().unwrap_or(0));
+    }
+    let vals: usize = cits.iter().map(|u| u.values.len()).sum();
+    println!("values: {vals} ({:.1} per citizen)", vals as f64 / n);
+    // relationships
+    let mut rk: BTreeMap<String, usize> = BTreeMap::new();
+    for u in &cits {
+        for r in &u.relationships {
+            *rk.entry(r.kind.clone()).or_default() += 1;
+        }
+    }
+    let rs: Vec<String> = top(&rk, 16).into_iter().map(|(k, c)| format!("{k} {c}")).collect();
+    println!("relationships (citizens): {}", rs.join(", "));
+    // wounds
+    let wounded: Vec<_> = w.units.iter().filter(|u| !u.wounds.is_empty()).collect();
+    let mut wp: BTreeMap<String, usize> = BTreeMap::new();
+    let mut wf: BTreeMap<String, usize> = BTreeMap::new();
+    for u in &wounded {
+        for wd in &u.wounds {
+            *wp.entry(if wd.body_part.is_empty() { "(systemic)".into() } else { wd.body_part.clone() }).or_default() += 1;
+            for f in &wd.flags {
+                *wf.entry(f.clone()).or_default() += 1;
+            }
+        }
+    }
+    let bleeding = w.units.iter().filter(|u| u.wounds.iter().any(|wd| wd.bleeding > 0)).count();
+    let low_blood = w.units.iter().filter(|u| u.blood_max > 0 && u.blood < u.blood_max).count();
+    println!(
+        "wounds: {} units with {} wound layers ({} citizens), {bleeding} bleeding, {low_blood} below full blood",
+        wounded.len(),
+        wounded.iter().map(|u| u.wounds.len()).sum::<usize>(),
+        wounded.iter().filter(|u| u.flags.citizen).count()
+    );
+    let s: Vec<String> = top(&wp, 10).into_iter().map(|(k, c)| format!("{k} {c}")).collect();
+    println!("  parts: {}", s.join(", "));
+    let s: Vec<String> = top(&wf, 10).into_iter().map(|(k, c)| format!("{k} {c}")).collect();
+    println!("  flags: {}", s.join(", "));
+    // hostiles
+    let hostile: Vec<_> = w.units.iter().filter(|u| u.flags.hostile && !u.flags.dead).collect();
+    let mut hr: BTreeMap<String, usize> = BTreeMap::new();
+    for u in &hostile {
+        *hr.entry(if u.invader_civ >= 0 { format!("{} (civ {})", u.race, u.invader_civ) } else { u.race.clone() }).or_default() += 1;
+    }
+    let s: Vec<String> = top(&hr, 10).into_iter().map(|(k, c)| format!("{k} {c}")).collect();
+    println!("hostile units ({}): {}", hostile.len(), if s.is_empty() { "none".into() } else { s.join(", ") });
+
+    // squads
+    println!("\nsquads ({}):", w.squads.len());
+    for s in &w.squads {
+        let label = if s.alias.is_empty() { s.name.clone() } else { s.alias.clone() };
+        let filled = s.members.iter().filter(|&&m| m >= 0).count();
+        let orders = if s.orders.is_empty() { "-".into() } else { s.orders.join("; ") };
+        println!("  {:>4} {:<14} {:>2}/{:<2} schedule {:<18} orders {orders}", s.id, label, filled, s.members.len(), s.schedule);
+        let names: Vec<String> = s
+            .members
+            .iter()
+            .enumerate()
+            .filter(|(_, &m)| m >= 0)
+            .map(|(i, &m)| format!("{i}:{}", w.unit(m).map(|u| u.name.split(' ').next().unwrap_or("").to_string()).unwrap_or_else(|| format!("#{m}"))))
+            .collect();
+        println!("       members {}", names.join(" "));
+        println!("       uniform {}", s.uniform.join(", "));
+    }
+    // burrows
+    println!("burrows ({}):", w.burrows.len());
+    for b in &w.burrows {
+        let (zmin, zmax) = b.tiles.iter().fold((i16::MAX, i16::MIN), |(a, c), p| (a.min(p.z), c.max(p.z)));
+        let zr = if b.tiles.is_empty() { "-".into() } else { format!("z {zmin}..{zmax}") };
+        println!("  {:>3} {:<20} {:>6} tiles {zr:<12} {} units", b.id, b.name, b.tiles.len(), b.units.len());
+    }
+
+    // raws
+    let castes: usize = w.creature_raws.iter().map(|c| c.castes.len()).sum();
+    println!("\ncreature raws: {} creatures, {castes} castes (by body part count, first caste):", rep.creature_raws);
+    let mut cl: Vec<_> = w.creature_raws.iter().filter(|c| !c.castes.is_empty()).collect();
+    cl.sort_by_key(|c| std::cmp::Reverse(c.castes[0].body_parts.len()));
+    let line: Vec<String> = cl
+        .iter()
+        .map(|c| {
+            let k = &c.castes[0];
+            format!("{} {}p/{}l/{}a", c.token, k.body_parts.len(), k.body_parts.iter().map(|p| p.layers.len()).sum::<usize>(), k.attacks.len())
+        })
+        .collect();
+    for chunk in line.chunks(6) {
+        println!("  {}", chunk.join(", "));
+    }
+    if let Some(d) = w.creature_raws.iter().find(|c| c.token == "DWARF") {
+        let k = &d.castes[0];
+        println!(
+            "dwarf ({}): body size {} cm3, walk {}, {} parts, attacks: {}",
+            k.token,
+            k.body_size,
+            k.walk_speed,
+            k.body_parts.len(),
+            k.attacks.iter().map(|a| format!("{} ({})", a.name, a.body_part)).collect::<Vec<_>>().join(", ")
+        );
+        let parts: Vec<String> = k
+            .body_parts
+            .iter()
+            .map(|p| {
+                let parent = if p.parent >= 0 { k.body_parts.get(p.parent as usize).map(|x| x.token.as_str()).unwrap_or("?") } else { "-" };
+                let layers: Vec<&str> = p.layers.iter().map(|l| l.tissue.as_str()).collect();
+                format!("{}<{} [{}]", p.token, parent, layers.join("/"))
+            })
+            .collect();
+        for chunk in parts.chunks(6) {
+            println!("  {}", chunk.join("  "));
+        }
+    }
+    let mut wk: BTreeMap<String, usize> = BTreeMap::new();
+    for x in &w.weapon_raws {
+        *wk.entry(x.skill.clone()).or_default() += 1;
+    }
+    let s: Vec<String> = wk.iter().map(|(k, c)| format!("{} {c}", if k.is_empty() { "-" } else { k })).collect();
+    println!("weapon raws ({}) by skill: {}", w.weapon_raws.len(), s.join(", "));
+    let mut ak: BTreeMap<String, usize> = BTreeMap::new();
+    for x in &w.armor_raws {
+        *ak.entry(x.kind.clone()).or_default() += 1;
+    }
+    let s: Vec<String> = ak.iter().map(|(k, c)| format!("{k} {c}")).collect();
+    println!("armor raws ({}): {}", w.armor_raws.len(), s.join(", "));
+    let mech = w.materials.iter().filter(|m| m.density > 0).count();
+    let show: Vec<String> = ["INORGANIC:IRON", "INORGANIC:STEEL", "INORGANIC:COPPER", "CREATURE:DWARF:BONE"]
+        .iter()
+        .filter_map(|t| w.materials.iter().find(|m| m.token == *t))
+        .map(|m| format!("{} dens {} shear {}/{} impact {}/{} edge {}", m.token, m.density, m.shear_yield, m.shear_fracture, m.impact_yield, m.impact_fracture, m.max_edge))
+        .collect();
+    println!("materials with mechanics: {mech}/{}", w.materials.len());
+    for s in show {
+        println!("  {s}");
+    }
+    // corpses, heavy aquifer
+    let mut co: BTreeMap<String, usize> = BTreeMap::new();
+    for i in w.items.iter().filter(|i| i.kind == "CORPSE" || i.kind == "CORPSEPIECE" || i.kind == "REMAINS") {
+        *co.entry(format!("{}:{}", i.kind, i.subtype)).or_default() += 1;
+    }
+    let s: Vec<String> = top(&co, 8).into_iter().map(|(k, c)| format!("{k} {c}")).collect();
+    println!("corpses/remains: {}", s.join(", "));
+    let heavy = w.tiles.iter().filter(|t| t.flags & rf_import::TILE_FLAG_HEAVY_AQUIFER != 0).count();
+    let aq = w.tiles.iter().filter(|t| t.flags & rf_core::tile_flags::AQUIFER != 0).count();
+    println!("aquifer tiles: {aq}, heavy: {heavy}");
+}
+
 fn main() {
     let mut dir: Option<PathBuf> = None;
     let mut zsel: Option<i16> = None;
@@ -400,6 +604,7 @@ fn main() {
     }
 
     production(&w, &dir);
+    round3(&w, &dir, &rep);
 
     // tiles per z-range
     println!("\ntiles per z-range (shape %, material class %, top materials; hidden = undiscovered):");

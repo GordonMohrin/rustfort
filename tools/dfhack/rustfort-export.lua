@@ -21,9 +21,14 @@
 --
 -- Files: manifest.json tiletypes.json materials.json map/zNNN.bin units.jsonl items.jsonl buildings.jsonl
 --        plants.jsonl creatures.json + (round 2) work_orders.jsonl plant_raws.json burrows.json squads.json
+--        + (round 3) creature_raws.json weapon_raws.json armor_raws.json
 
 local VERSION = 1
-local SCRIPT_REV = '2026-10-10a'   -- round 2: work orders, workshop jobs, crops, plant raws, mods, gaits
+-- round 2 (2026-10-10a): work orders, workshop jobs, crops, plant raws, mods, gaits
+-- round 3 (2026-10-10b): needs/emotions/values/relationships/wounds/blood, creature/weapon/armor raws,
+--                        material mechanics, squads with orders/uniforms/schedule, burrow tile lists,
+--                        corpse creature tokens, heavy aquifer tile flag
+local SCRIPT_REV = '2026-10-10b'
 
 -- ------------------------------------------------------------------------------------------- args
 local args = { ... }
@@ -172,6 +177,7 @@ local T0 = now()
 local START_YEAR, START_TICK = df.global.cur_year, df.global.cur_year_tick
 local deadline = 0
 local frames, max_slice, total_lua = 0, 0, 0
+local phase_max = {}   -- longest slice per phase (ms), reported in manifest.json max_slice_by_phase
 local phase, phase_detail = 'start', ''
 local last_progress = 0
 local cancelled = false
@@ -267,10 +273,44 @@ local function material_json(mt, mi)
       if soil and token:find('CLAY') then tags[#tags + 1] = ja('IS_CLAY') end
     end
   end
-  return jobj({ 'mat_type', ji(mt), 'mat_index', ji(mi), 'token', js(token), 'name', js(name),
-                'rgb', jarr({ ji(rgb[1]), ji(rgb[2]), ji(rgb[3]) }),
-                'is_stone', jb(st), 'is_gem', jb(gem), 'is_metal', jb(metal), 'is_ore', jb(ore), 'is_soil', jb(soil),
-                'is_wood', jb(wood), 'is_glass', jb(glass), 'tags', jarr(tags) })
+  -- round 3: mechanical properties (DF material.strength, solid_density, material_value) and heat points
+  local mech = { 'density', '0', 'shear_yield', '0', 'shear_fracture', '0', 'shear_strain_at_yield', '0',
+                 'impact_yield', '0', 'impact_fracture', '0', 'impact_strain_at_yield', '0', 'max_edge', '0', 'value', '0' }
+  pcall(function()
+    local m = info.material
+    local s = m.strength
+    local SH, IM = df.strain_type.SHEAR, df.strain_type.IMPACT
+    mech = { 'density', ji(m.solid_density), 'shear_yield', ji(s.yield[SH]), 'shear_fracture', ji(s.fracture[SH]),
+             'shear_strain_at_yield', ji(s.strain_at_yield[SH]), 'impact_yield', ji(s.yield[IM]),
+             'impact_fracture', ji(s.fracture[IM]), 'impact_strain_at_yield', ji(s.strain_at_yield[IM]),
+             'max_edge', ji(s.max_edge), 'value', ji(m.material_value) }
+  end)
+  -- extras: all six strain types [yield, fracture, strain_at_yield], absorption, liquid density, molar mass, heat
+  pcall(function()
+    local m = info.material
+    local s = m.strength
+    local st6 = {}
+    for i = df.strain_type._first_item, df.strain_type._last_item do
+      local nm = df.strain_type[i]
+      if nm then st6[#st6 + 1] = '"' .. nm .. '":' .. jarr({ ji(s.yield[i]), ji(s.fracture[i]), ji(s.strain_at_yield[i]) }) end
+    end
+    local more = { 'strength', '{' .. table.concat(st6, ',') .. '}', 'absorption', ji(s.absorption),
+                   'liquid_density', ji(m.liquid_density), 'molar_mass', ji(m.molar_mass) }
+    for i = 1, #more do mech[#mech + 1] = more[i] end
+  end)
+  pcall(function()
+    local h = info.material.heat
+    local hj = jobj({ 'spec_heat', ji(h.spec_heat), 'heatdam_point', ji(h.heatdam_point),
+      'colddam_point', ji(h.colddam_point), 'ignite_point', ji(h.ignite_point), 'melting_point', ji(h.melting_point),
+      'boiling_point', ji(h.boiling_point), 'mat_fixed_temp', ji(h.mat_fixed_temp) })
+    mech[#mech + 1] = 'heat'; mech[#mech + 1] = hj
+  end)
+  local kv = { 'mat_type', ji(mt), 'mat_index', ji(mi), 'token', js(token), 'name', js(name),
+               'rgb', jarr({ ji(rgb[1]), ji(rgb[2]), ji(rgb[3]) }),
+               'is_stone', jb(st), 'is_gem', jb(gem), 'is_metal', jb(metal), 'is_ore', jb(ore), 'is_soil', jb(soil),
+               'is_wood', jb(wood), 'is_glass', jb(glass), 'tags', jarr(tags) }
+  for i = 1, #mech do kv[#kv + 1] = mech[i] end
+  return jobj(kv)
 end
 
 -- ------------------------------------------------------------------------------------------- job / order helpers
@@ -656,6 +696,7 @@ local function export_map()
                   | (((o & 7) ~= 0) and (1 << 11) or 0)  -- building occupancy
                   | (((d >> 30) & 1) << 12)              -- stagnant
                   | (((d >> 31) & 1) << 13)              -- salt
+                  | (((o >> 26) & 1) << 14)              -- heavy aquifer (o.heavy_aquifer, round 3)
                 local liq = (d & 7) | (((d >> 21) & 1) << 3)
                 recs[lx + 1] = pack('<I2I2I2BB', tt & 0xFFFF, mat, fl, liq, (d >> 4) & 7)
               end
@@ -707,8 +748,8 @@ local GAIT_WALK = (df.gait_type and df.gait_type.WALK) or 0
 local GAIT_FLY = (df.gait_type and df.gait_type.FLY) or 1
 local gait_cache = {}
 local gait_stat = { raw = 0, fallback = 0, fly = 0 }
-local function walk_speed(u, caste)
-  local key = u.race * 1024 + u.caste
+local function caste_walk_speed(race, ci, caste)
+  local key = race * 1024 + ci
   local v = gait_cache[key]
   if v == nil then
     v = false
@@ -724,11 +765,170 @@ local function walk_speed(u, caste)
     end)
     gait_cache[key] = v
   end
+  return v
+end
+local function walk_speed(u, caste)
+  local v = caste_walk_speed(u.race, u.caste, caste)
   if v then gait_stat.raw = gait_stat.raw + 1 return v end
   gait_stat.fallback = gait_stat.fallback + 1
   return 900
 end
 local function q(f, u) local ok, r = pcall(f, u) return ok and r or false end
+
+-- ---- round 3: psychology, relationships, wounds
+local r3 = { needs = 0, emotions = 0, values = 0, relationships = 0, wounds = 0, invaders = 0 }
+local FORT_CIV = try(function() return df.global.plotinfo.civ_id end) or -1
+local function needs_json(p)
+  local out = {}
+  for _, n in ipairs(p.needs) do
+    out[#out + 1] = jobj({ 'id', ja(df.need_type[n.id] or tostring(n.id)), 'deity_id', ji(n.deity_id),
+                           'focus_level', ji(n.focus_level), 'need_level', ji(n.need_level) })
+  end
+  return out
+end
+local function emotions_json(p)
+  local out = {}
+  for _, e in ipairs(p.emotions) do
+    out[#out + 1] = jobj({ 'emotion', ja(df.emotion_type[e.type] or tostring(e.type)),
+                           'thought', ja(df.unit_thought_type[e.thought] or tostring(e.thought)),
+                           'subthought', ji(e.subthought), 'strength', ji(e.strength), 'severity', ji(e.severity),
+                           'year', ji(e.year), 'year_tick', ji(e.year_tick), 'flags', jarr(set_flags(e.flags, true)),
+                           -- extras
+                           'relative_strength', ji(e.relative_strength) })
+  end
+  return out
+end
+local function values_json(p)
+  local out = {}
+  for _, v in ipairs(p.values) do
+    out[#out + 1] = jobj({ 'id', ja(df.value_type[v.type] or tostring(v.type)), 'strength', ji(v.strength) })
+  end
+  return out
+end
+-- histfig link type -> rf_core::Relationship kind
+local LINK_KIND = { MOTHER = 'Mother', FATHER = 'Father', SPOUSE = 'Spouse', CHILD = 'Child', DEITY = 'Deity',
+                    LOVER = 'Lover', PRISONER = 'Prisoner', IMPRISONER = 'Imprisoner', MASTER = 'Master',
+                    APPRENTICE = 'Apprentice', COMPANION = 'Companion', FORMER_MASTER = 'FormerMaster',
+                    FORMER_APPRENTICE = 'FormerApprentice', PET_OWNER = 'PetOwner', FORMER_SPOUSE = 'FormerSpouse',
+                    DECEASED_SPOUSE = 'DeceasedSpouse' }
+-- unit id of a historical figure if that unit is alive and on the map, else -1; also the raw unit id
+local function hf_unit(hfid)
+  local h = df.historical_figure.find(hfid)
+  if not h then return -1, -1, false end
+  local dead = h.died_year ~= -1
+  local uid = h.unit_id or -1
+  if uid < 0 then return -1, -1, dead end
+  local tu = df.unit.find(uid)
+  if tu and not q(dfhack.units.isDead, tu) and q(dfhack.units.isActive, tu) then return uid, uid, dead end
+  return -1, uid, dead
+end
+-- DF v50 relationship level from the visual relationship (wiki "Relationship"): friend at love >= 50,
+-- close friend >= 75, kindred spirit 100; long-term acquaintance after 30 meetings. Grudge = love < 0 (estimate).
+local function visual_kind(core, meets)
+  local love = core.love
+  if love < 0 then return 'Grudge' end
+  if love >= 100 then return 'KindredSpirit' end
+  if love >= 75 then return 'CloseFriend' end
+  if love >= 50 then return 'Friend' end
+  if meets >= 30 then return 'LongTermAcquaintance' end
+  return 'PassingAcquaintance'
+end
+local function relationships_json(u)
+  local out = {}
+  local h = u.hist_figure_id >= 0 and df.historical_figure.find(u.hist_figure_id) or nil
+  local seen = {}
+  local function add(kind, hfid, extra)
+    local key = kind .. ':' .. hfid
+    if seen[key] then return end
+    seen[key] = true
+    local uid, uid_any, dead = hf_unit(hfid)
+    local kv = { 'kind', ja(kind), 'hist_fig_id', ji(hfid), 'unit_id', ji(uid), 'unit_id_any', ji(uid_any), 'dead', jb(dead) }
+    if extra then for i = 1, #extra do kv[#kv + 1] = extra[i] end end
+    out[#out + 1] = jobj(kv)
+  end
+  if h then
+    local parents = {}
+    for _, l in ipairs(h.histfig_links) do
+      local lt = df.histfig_hf_link_type[l:getType()] or ''
+      local kind = LINK_KIND[lt] or lt
+      add(kind, l.target_hf, { 'source', ja('family'), 'strength', ji(l.link_strength) })
+      if lt == 'MOTHER' or lt == 'FATHER' then parents[#parents + 1] = l.target_hf end
+    end
+    -- siblings: other children of the parents
+    for _, ph in ipairs(parents) do
+      local p = df.historical_figure.find(ph)
+      if p then
+        for _, l in ipairs(p.histfig_links) do
+          if df.histfig_hf_link_type[l:getType()] == 'CHILD' and l.target_hf ~= h.id then
+            add('Sibling', l.target_hf, { 'source', ja('family'), 'strength', ji(l.link_strength) })
+          end
+        end
+      end
+    end
+    pcall(function()
+      for _, r in ipairs(h.info.relationships.hf_visual) do
+        local c = r.core
+        add(visual_kind(c, r.meet_count), r.histfig_id, { 'source', ja('visual'), 'love', ji(c.love), 'trust', ji(c.trust),
+          'respect', ji(c.respect), 'loyalty', ji(c.loyalty), 'fear', ji(c.fear), 'meet_count', ji(r.meet_count),
+          'first_year', ji(r.first_year), 'last_meet_year', ji(r.last_meet_year),
+          'last_meet_tick', ji(r.last_meet_season_tick) })
+      end
+    end)
+  end
+  -- pets: the owner unit (animals have no histfig links)
+  pcall(function()
+    local owner = u.relationship_ids.PetOwner
+    if owner >= 0 then
+      local ou = df.unit.find(owner)
+      out[#out + 1] = jobj({ 'kind', ja('PetOwner'), 'hist_fig_id', ji(ou and ou.hist_figure_id or -1), 'unit_id', ji(owner),
+                             'unit_id_any', ji(owner), 'dead', jb(ou and q(dfhack.units.isDead, ou) or false), 'source', ja('unit') })
+    end
+  end)
+  return out
+end
+-- unit_wound + its layer entries, flattened per (wound, part, layer) as rf_core::Wound
+local function wounds_json(u)
+  local out = {}
+  local parts = u.body.body_plan.body_parts
+  for _, w in ipairs(u.body.wounds) do
+    local wflags = set_flags(w.flags, true)
+    if w.flags.severed_part then wflags[#wflags + 1] = ja('SEVERED') end
+    if w.flags.infection then wflags[#wflags + 1] = ja('INFECTED') end
+    local function entry(p)
+      local fl, seen = {}, {}
+      local function addf(s) if not seen[s] then seen[s] = true; fl[#fl + 1] = s end end
+      for _, s in ipairs(wflags) do addf(s) end
+      local bp_tok, layer, ext = '', '', {}
+      if p then
+        for _, s in ipairs(set_flags(p.flags1, true)) do addf(s) end
+        for _, s in ipairs(set_flags(p.flags2, true)) do addf(s) end
+        if p.bleeding > 0 then addf(ja('BLEEDING')) end
+        pcall(function()
+          local bp = parts[p.body_part_id]
+          bp_tok = bp.token
+          layer = p.layer_idx >= 0 and bp.layers[p.layer_idx].layer_name or ''
+        end)
+        ext = { 'part_id', ji(p.body_part_id), 'layer_idx', ji(p.layer_idx), 'global_layer_idx', ji(p.global_layer_idx),
+                'contact_area', ji(p.contact_area), 'surface_perc', ji(p.surface_perc), 'strain', ji(p.strain),
+                'cur_penetration_perc', ji(p.cur_penetration_perc), 'max_penetration_perc', ji(p.max_penetration_perc),
+                'swelling', ji(p.swelling), 'impaired', ji(p.impaired), 'numbness', ji(p.numbness),
+                'paralysis', ji(p.paralysis), 'nausea', ji(p.nausea), 'dizziness', ji(p.dizziness) }
+      end
+      local kv = { 'body_part', ja(bp_tok), 'layer', ja(layer), 'flags', jarr(fl),
+                   -- severity: share of the layer's surface hit, 0..10000 (estimate; raw values in the extras)
+                   'severity', ji(p and math.max(0, math.min(100, p.surface_perc)) * 100 or 0),
+                   'pain', ji(p and p.pain or 0), 'bleeding', ji(p and p.bleeding or 0), 'age', ji(w.age),
+                   -- extras
+                   'wound_id', ji(w.id), 'wound_pain', ji(w.pain), 'attacker_unit_id', ji(w.attacker_unit_id),
+                   'attacker_hist_figure_id', ji(w.attacker_hist_figure_id), 'syndrome_id', ji(w.syndrome_id),
+                   'fever', ji(w.fever) }
+      for i = 1, #ext do kv[#kv + 1] = ext[i] end
+      out[#out + 1] = jobj(kv)
+    end
+    if #w.parts == 0 then entry(nil) else for _, p in ipairs(w.parts) do entry(p) end end
+  end
+  return out
+end
 local function unit_json(u)
   local U = dfhack.units
   local cr = raws.creatures.all[u.race]
@@ -761,13 +961,46 @@ local function unit_json(u)
   local mood = ''
   pcall(function() if u.mood >= 0 then mood = df.mood_type[u.mood] or '' end end)
   local stress = try(function() return soul.personality.stress end) or 0
+  local hostile = q(U.isInvader, u) or q(U.isUndead, u) or (q(U.isDanger, u) and not q(U.isTame, u))
   local flags = jobj({
     'citizen', jb(q(U.isCitizen, u)), 'resident', jb(q(U.isResident, u)), 'animal', jb(q(U.isAnimal, u)),
     'tame', jb(q(U.isTame, u)), 'dead', jb(q(U.isDead, u)),
-    'hostile', jb(q(U.isInvader, u) or q(U.isUndead, u) or (q(U.isDanger, u) and not q(U.isTame, u))),
+    'hostile', jb(hostile),
     'visitor', jb(q(U.isVisitor, u)), 'merchant', jb(q(U.isMerchant, u)), 'caged', jb(u.flags1.caged),
     'forest', jb(q(U.isForest, u)), 'inactive', jb(not q(U.isActive, u)) })
-  return jobj({
+  -- round 3: psychology, relationships, wounds, blood, squad position, invader civ
+  local needs, emotions, values, rels, wounds = {}, {}, {}, {}, {}
+  if soul then
+    local p = soul.personality
+    local ok, r = pcall(needs_json, p); if ok then needs = r else warn('unit_needs', r) end
+    ok, r = pcall(emotions_json, p); if ok then emotions = r else warn('unit_emotions', r) end
+    ok, r = pcall(values_json, p); if ok then values = r else warn('unit_values', r) end
+  end
+  do
+    local ok, r = pcall(relationships_json, u); if ok then rels = r else warn('unit_relationships', r) end
+    ok, r = pcall(wounds_json, u); if ok then wounds = r else warn('unit_wounds', r) end
+  end
+  r3.needs, r3.emotions, r3.values = r3.needs + #needs, r3.emotions + #emotions, r3.values + #values
+  r3.relationships, r3.wounds = r3.relationships + #rels, r3.wounds + #wounds
+  -- the entity a hostile unit belongs to (invaders, raiders); -1 for wildlife, undead without civ and our own
+  local invader_civ = -1
+  if hostile and u.civ_id >= 0 and u.civ_id ~= FORT_CIV then invader_civ = u.civ_id; r3.invaders = r3.invaders + 1 end
+  local size_raw = try(function() return u.body.size_info.size_cur end) or 0
+  local focus = try(function() return soul.personality.current_focus end) or 0
+  local undistracted = try(function() return soul.personality.undistracted_focus end) or 0
+  local stress_cat = try(U.getStressCategory, u)
+  local r3kv = {
+    'needs', jarr(needs), 'emotions', jarr(emotions), 'values', jarr(values), 'relationships', jarr(rels),
+    'wounds', jarr(wounds), 'blood', ji(u.body.blood_count), 'blood_max', ji(u.body.blood_max),
+    'squad_position', ji(u.military.squad_position), 'invader_civ', ji(invader_civ),
+    -- extras
+    'body_size_raw', ji(size_raw), 'current_focus', ji(focus), 'undistracted_focus', ji(undistracted),
+    'stress_category', ji(stress_cat or -1),
+    'longterm_stress', ji(try(function() return soul.personality.longterm_stress end) or 0),
+    'population_id', ji(u.population_id), 'invasion_id', ji(try(function() return u.invasion_id end) or -1),
+    'last_attacker', ji(try(function() return u.relationship_ids.LastAttacker end) or -1),
+  }
+  local kv = {
     'id', ji(u.id), 'race', ja(cr.creature_id), 'caste', ja(caste.caste_id), 'name', js(name), 'name_native', js(native),
     'profession', ja(df.profession[u.profession] or ''), 'custom_profession', js(u.custom_profession),
     'pos', jpos(u.pos.x, u.pos.y, u.pos.z), 'flags', flags, 'civ_id', ji(u.civ_id), 'hist_fig_id', ji(u.hist_figure_id),
@@ -776,8 +1009,11 @@ local function unit_json(u)
     'sleepiness_timer', ji(u.counters2.sleepiness_timer), 'stress', ji(stress),
     'skills', jarr(skills), 'labors', jarr(labors), 'phys_attrs', jarr(phys), 'ment_attrs', jarr(ment),
     'facets', jarr(facets), 'inventory', jarr(inv), 'squad_id', ji(u.military.squad_id), 'mood', ja(mood),
-    'body_size', ji(try(function() return u.body.size_info.size_cur end) or 0), 'walk_speed', ji(walk_speed(u, caste)),
-    'profession_name', js(try(U.getProfessionName, u) or ''), 'readable_name', js(try(U.getReadableName, u) or '') })
+    -- DF keeps volumes in units of 10 cm³ (raw BODY_SIZE / 10); body_size is cm³ since rev 2026-10-10b
+    'body_size', ji(size_raw * 10), 'walk_speed', ji(walk_speed(u, caste)),
+    'profession_name', js(try(U.getProfessionName, u) or ''), 'readable_name', js(try(U.getReadableName, u) or '') }
+  for i = 1, #r3kv do kv[#kv + 1] = r3kv[i] end
+  return jobj(kv)
 end
 
 local function export_units()
@@ -805,7 +1041,9 @@ local function export_units()
         end
       end
     end
-    if i % 16 == 0 then phase_detail = i .. '/' .. #ids; checkpoint() end
+    -- round 3 units are heavier (emotions, relationships, wounds): check the budget after every unit
+    phase_detail = i .. '/' .. #ids
+    checkpoint()
   end
   f:close()
   counts.units, counts.citizens = n, cit
@@ -833,10 +1071,22 @@ local function item_pos(it)
   return a.x, a.y, a.z
 end
 local IT_ARTIFACT_REF = df.general_ref_type.IS_ARTIFACT
+local CORPSE_TYPES = { [df.item_type.CORPSE] = true, [df.item_type.CORPSEPIECE] = true, [df.item_type.REMAINS] = true }
+local corpse_races = {}   -- races of corpses/remains on the map (their raws are exported too: butchery)
 local function item_json(it, x, y, z)
   local t = it:getType()
   local subtype = ''
+  local extra = {}
   if it:getSubtype() >= 0 then subtype = try(function() return it.subtype.id end) or '' end
+  if CORPSE_TYPES[t] then
+    -- round 3: corpses, body parts and vermin remains carry the creature token (caste as an extra)
+    pcall(function()
+      local cr = raws.creatures.all[it.race]
+      corpse_races[it.race] = true
+      subtype = cr.creature_id
+      extra = { 'caste', ja(it.caste >= 0 and cr.caste[it.caste].caste_id or '') }
+    end)
+  end
   local fl = it.flags
   local quality = try(function() return it:getQuality() end) or 0
   if fl.artifact then quality = 6 end
@@ -857,13 +1107,15 @@ local function item_json(it, x, y, z)
                        'owned', jb(fl.owned), 'rotten', jb(fl.rotten), 'artifact', jb(fl.artifact),
                        'construction', jb(fl.construction), 'hidden', jb(fl.hidden) })
   local wear = try(function() return it:getWear() end) or 0
-  return jobj({ 'id', ji(it.id), 'kind', ja(df.item_type[t] or tostring(t)), 'subtype', ja(subtype),
-                'mat', ji(palidx(it:getMaterial(), it:getMaterialIndex())), 'pos', jpos(x, y, z),
-                'stack', ji(try(function() return it:getStackSize() end) or 1), 'quality', ji(math.max(0, math.min(255, quality))),
-                'wear', ji(math.max(0, math.min(255, wear))), 'flags', flags,
-                'container', ji(cont and cont.id or -1), 'holder', ji(holder and holder.id or -1),
-                'building', ji(bld and bld.id or -1), 'name', js(name), 'desc', js(desc),
-                'value', ji(try(dfhack.items.getValue, it) or 0) })
+  local kv = { 'id', ji(it.id), 'kind', ja(df.item_type[t] or tostring(t)), 'subtype', ja(subtype),
+               'mat', ji(palidx(it:getMaterial(), it:getMaterialIndex())), 'pos', jpos(x, y, z),
+               'stack', ji(try(function() return it:getStackSize() end) or 1), 'quality', ji(math.max(0, math.min(255, quality))),
+               'wear', ji(math.max(0, math.min(255, wear))), 'flags', flags,
+               'container', ji(cont and cont.id or -1), 'holder', ji(holder and holder.id or -1),
+               'building', ji(bld and bld.id or -1), 'name', js(name), 'desc', js(desc),
+               'value', ji(try(dfhack.items.getValue, it) or 0) }
+  for i = 1, #extra do kv[#kv + 1] = extra[i] end
+  return jobj(kv)
 end
 
 local function export_items()
@@ -1167,65 +1419,381 @@ local function export_plant_raws()
 end
 
 -- ------------------------------------------------------------------------------------------- burrows, squads
-local function popcount16(v)
-  local n = 0
-  while v ~= 0 do n = n + (v & 1); v = v >> 1 end
-  return n
-end
-local function burrow_tiles(b)
-  local n = 0
+-- round 3: rf_core::Burrow with the tile list (from the block masks; bit x of bits[y] = local tile (x, y))
+local function burrow_tile_list(b)
+  local out, n = {}, 0
   for _, blk in ipairs(dfhack.burrows.listBlocks(b)) do
+    local bx, by, bz = blk.map_pos.x, blk.map_pos.y, blk.map_pos.z
     local link = blk.block_burrows.next
     while link do
       local bb = link.item
       if bb and bb.id == b.id then
-        for row = 0, 15 do n = n + popcount16(bb.tile_bitmask.bits[row] & 0xFFFF) end
+        for ly = 0, 15 do
+          local bits = bb.tile_bitmask.bits[ly] & 0xFFFF
+          if bits ~= 0 then
+            for lx = 0, 15 do
+              if bits & (1 << lx) ~= 0 then n = n + 1; out[n] = jpos(bx + lx, by + ly, bz) end
+            end
+          end
+        end
       end
       link = link.next
     end
   end
-  return n
+  return out, n
 end
-local function export_burrows_squads()
+local function find_burrow(id)
+  for _, b in ipairs(df.global.plotinfo.burrows.list) do if b.id == id then return b end end
+end
+local function export_burrows()
   phase = 'burrows'
-  -- small lists; one slice each, no yield while iterating DF vectors
+  local ids = {}
+  pcall(function() for _, b in ipairs(df.global.plotinfo.burrows.list) do ids[#ids + 1] = b.id end end)
   local bl = {}
   local tiles_total = 0
-  pcall(function()
-    for _, b in ipairs(df.global.plotinfo.burrows.list) do
-      local n = try(burrow_tiles, b) or -1
-      tiles_total = tiles_total + math.max(n, 0)
-      local units = {}
-      for _, uid in ipairs(b.units) do units[#units + 1] = ji(uid) end
-      bl[#bl + 1] = jobj({ 'id', ji(b.id), 'name', js(b.name), 'tiles', ji(n), 'blocks', ji(#b.block_x), 'units', jarr(units) })
+  for i = 1, #ids do
+    local b = find_burrow(ids[i])   -- re-found after every yield: the player may delete a burrow
+    if b then
+      local ok, s = pcall(function()
+        local tiles, n = burrow_tile_list(b)
+        tiles_total = tiles_total + n
+        local units = {}
+        for _, uid in ipairs(b.units) do units[#units + 1] = ji(uid) end
+        return jobj({ 'id', ji(b.id), 'name', js(b.name), 'tiles', '[' .. table.concat(tiles, ',') .. ']', 'units', jarr(units),
+                      -- extras
+                      'tile_count', ji(n), 'blocks', ji(#b.block_x), 'flags', jarr(set_flags(b.flags, true)) })
+      end)
+      if ok then bl[#bl + 1] = s else warn('burrow', s) end
     end
-  end)
+    checkpoint()
+  end
   write_file(OUT .. '/burrows.json', '[\n' .. table.concat(bl, ',\n') .. '\n]\n')
   counts.burrows = #bl
-  checkpoint()
-  phase = 'squads'
-  local sq = {}
-  local gid = try(function() return df.global.plotinfo.group_id end) or -1
-  pcall(function()
-    for _, s in ipairs(df.global.world.squads.all) do
-      if s.entity_id == gid then
-        local mem, hfs = {}, {}
-        for _, pos in ipairs(s.positions) do
-          if pos.occupant >= 0 then
-            local hf = df.historical_figure.find(pos.occupant)
-            hfs[#hfs + 1] = ji(pos.occupant)
-            mem[#mem + 1] = ji(hf and hf.unit_id or -1)
-          end
+  counts.burrow_tiles = tiles_total
+end
+
+-- squad order as DF-like strings (rf_core::Squad::orders): Train, Station x,y,z, Kill <unit id>,
+-- DefendBurrows <ids>, Patrol <route id>; other order types by their CamelCase type name
+local function camel(s)
+  return (tostring(s):lower():gsub('_(%l)', function(c) return c:upper() end):gsub('^%l', string.upper))
+end
+local function order_strings(o)
+  local t = df.squad_order_type[o:getType()] or 'NONE'
+  if t == 'TRAIN' then return { 'Train' } end
+  if t == 'MOVE' then
+    local p = o.pos
+    return { ('Station %d,%d,%d'):format(p.x, p.y, p.z) }
+  end
+  if t == 'KILL_LIST' then
+    local out = {}
+    for _, uid in ipairs(o.units) do out[#out + 1] = 'Kill ' .. uid end
+    if #out == 0 then out[1] = 'Kill' end
+    return out
+  end
+  if t == 'DEFEND_BURROWS' then
+    local b = {}
+    for _, id in ipairs(o.burrows) do b[#b + 1] = tostring(id) end
+    return { 'DefendBurrows ' .. table.concat(b, ',') }
+  end
+  if t == 'PATROL_ROUTE' then return { 'Patrol ' .. o.route_id } end
+  return { camel(t) }
+end
+-- uniform entry: ITEM_TYPE[:SUBTYPE][@material token | @material class]
+local function uniform_spec(sp)
+  local s = item_type_name(sp.item_type)
+  if s == '' then s = 'ANY' end
+  local st = subtype_token(sp.item_type, sp.item_subtype)
+  if st ~= '' then s = s .. ':' .. st end
+  if sp.mattype >= 0 then s = s .. '@' .. mat_token(sp.mattype, sp.matindex)
+  elseif sp.material_class >= 0 then s = s .. '@' .. (df.entity_material_category[sp.material_class] or sp.material_class) end
+  return s
+end
+local function squad_json(s)
+  local month = df.global.cur_year_tick // 33600
+  local mem, hfs, uni_by_pos, pos_orders, seen_uni, uni = {}, {}, {}, {}, {}, {}
+  for _, pos in ipairs(s.positions) do
+    local uid = -1
+    if pos.occupant >= 0 then
+      local hf = df.historical_figure.find(pos.occupant)
+      uid = hf and hf.unit_id or -1
+    end
+    mem[#mem + 1] = ji(uid)
+    hfs[#hfs + 1] = ji(pos.occupant)
+    local specs = {}
+    pcall(function()
+      local uf = pos.equipment.uniform
+      for cat = 0, df.uniform_category._last_item do
+        for _, sp in ipairs(uf[cat]) do
+          local str = uniform_spec(sp)
+          if not seen_uni[str] then seen_uni[str] = true; uni[#uni + 1] = js(str) end
+          local asg = {}
+          for _, iid in ipairs(sp.assigned) do asg[#asg + 1] = ji(iid) end
+          specs[#specs + 1] = jobj({ 'category', ja(df.uniform_category[cat]), 'item', js(str), 'assigned', jarr(asg) })
         end
-        local name = (s.alias ~= '' and s.alias) or (try(dfhack.translation.translateName, s.name, true) or '')
-        sq[#sq + 1] = jobj({ 'id', ji(s.id), 'name', js(name), 'members', jarr(mem), 'member_hfs', jarr(hfs),
-                             'positions', ji(#s.positions) })
+      end
+    end)
+    uni_by_pos[#uni_by_pos + 1] = jarr(specs)
+    local po = {}
+    pcall(function() for _, o in ipairs(pos.orders) do for _, x in ipairs(order_strings(o)) do po[#po + 1] = js(x) end end end)
+    pos_orders[#pos_orders + 1] = jarr(po)
+  end
+  local explicit = {}
+  pcall(function() for _, o in ipairs(s.orders) do for _, x in ipairs(order_strings(o)) do explicit[#explicit + 1] = js(x) end end end)
+  -- the active routine and this month's scheduled orders
+  local routine_name, sched, sched_entry = '', {}, 'null'
+  pcall(function()
+    for _, r in ipairs(df.global.plotinfo.alerts.routines) do if r.id == s.cur_routine_idx then routine_name = r.name end end
+  end)
+  pcall(function()
+    local e = s.schedule.routine[s.cur_routine_idx].month[month]
+    local so = {}
+    for _, o in ipairs(e.orders) do
+      for _, x in ipairs(order_strings(o.order)) do
+        sched[#sched + 1] = js(x)
+        so[#so + 1] = jobj({ 'order', js(x), 'min_count', ji(o.min_count) })
       end
     end
+    sched_entry = jobj({ 'month', ji(month), 'name', js(e.name), 'sleep_mode', ji(e.sleep_mode), 'uniform_mode', ji(e.uniform_mode),
+                         'orders', jarr(so) })
   end)
+  -- current orders: the explicit squad orders if any, else this month's scheduled orders (DF behaviour)
+  local current = #explicit > 0 and explicit or sched
+  local rooms = {}
+  pcall(function() for _, r in ipairs(s.rooms) do rooms[#rooms + 1] = ji(r.building_id) end end)
+  local tname = try(dfhack.translation.translateName, s.name, true) or ''
+  return jobj({ 'id', ji(s.id), 'name', js(tname), 'alias', js(s.alias), 'members', jarr(mem), 'orders', jarr(current),
+                'uniform', jarr(uni), 'schedule', js(routine_name),
+                -- extras
+                'display_name', js(s.alias ~= '' and s.alias or tname),
+                'name_native', js(try(dfhack.translation.translateName, s.name, false) or ''),
+                'member_hfs', jarr(hfs), 'positions', ji(#s.positions), 'explicit_orders', jarr(explicit),
+                'schedule_orders', jarr(sched), 'schedule_month', sched_entry, 'position_orders', jarr(pos_orders),
+                'uniform_by_position', jarr(uni_by_pos), 'routine_id', ji(s.cur_routine_idx),
+                'leader_position', ji(s.leader_position), 'barracks', jarr(rooms) })
+end
+local function export_squads()
+  phase = 'squads'
+  local gid = try(function() return df.global.plotinfo.group_id end) or -1
+  local ids = {}
+  pcall(function() for _, s in ipairs(df.global.world.squads.all) do if s.entity_id == gid then ids[#ids + 1] = s.id end end end)
+  local sq = {}
+  for i = 1, #ids do
+    local s = df.squad.find(ids[i])
+    if s then
+      local ok, j = pcall(squad_json, s)
+      if ok then sq[#sq + 1] = j else warn('squad', j) end
+    end
+    checkpoint()
+  end
   write_file(OUT .. '/squads.json', '[\n' .. table.concat(sq, ',\n') .. '\n]\n')
   counts.squads = #sq
-  checkpoint()
+end
+local function export_burrows_squads()
+  export_burrows()
+  export_squads()
+end
+
+-- ------------------------------------------------------------------------------------------- creature raws (round 3)
+-- rf_core::CreatureRaw for the races on the map, the corpses on the map and the races of the world's civilizations.
+-- Bodies come fully expanded from caste.body_info (DF did the BODY_DETAIL_PLAN work). DF keeps volumes in
+-- units of 10 cm³; body sizes here are cm³ as in the raws (BODY_SIZE).
+local ATTACK_FLAG_NAME = { with = 'WITH', latch = 'CANLATCH', edge = 'EDGE', independent_multiattack = 'INDEPENDENT_MULTIATTACK',
+                           bad_multiattack = 'BAD_MULTIATTACK' }
+local function str_vec0(v) return try(function() return v[0].value end) or '' end
+local function creature_attack_json(a, parts)
+  local fl = {}
+  pcall(function()
+    for k, v in pairs(a.flags) do
+      if v == true and type(k) == 'string' and k ~= 'main' then fl[#fl + 1] = ja(ATTACK_FLAG_NAME[k] or k:upper()) end
+    end
+  end)
+  pcall(function()
+    for _, sa in ipairs(a.specialattack_type) do fl[#fl + 1] = ja('SPECIALATTACK_' .. (df.specialattack_type[sa] or sa)) end
+  end)
+  local bps, layers = {}, {}
+  pcall(function() for _, i in ipairs(a.body_part_idx) do bps[#bps + 1] = ja(parts[i].token) end end)
+  pcall(function() for _, i in ipairs(a.tissue_layer_idx) do layers[#layers + 1] = ji(i) end end)
+  local first = try(function() return parts[a.body_part_idx[0]].token end) or ''
+  return jobj({ 'name', ja(a.name), 'verb', js(a.verb_2nd), 'body_part', ja(first),
+                -- creature attacks: ATTACK_CONTACT_PERC / ATTACK_PENETRATION_PERC (percent of the part)
+                'contact_area', ji(a.contact_perc), 'penetration', ji(a.penetration_perc),
+                'velocity_multiplier', ji(a.velocity_modifier), 'prepare_ticks', ji(a.time_to_strike),
+                'recover_ticks', ji(a.time_to_recover), 'main', jb(a.flags.main), 'flags', jarr(fl),
+                -- extras
+                'verb_3rd', js(a.verb_3rd), 'skill', ja(df.job_skill[a.skill] or tostring(a.skill)), 'perc', 'true',
+                'body_parts', jarr(bps), 'tissue_layers', jarr(layers) })
+end
+local function creature_raw_json(ri, source)
+  local cr = raws.creatures.all[ri]
+  -- tissues: name, material token, palette index, flags
+  local tis = {}
+  for ti, t in ipairs(cr.tissue) do
+    local mt, mi = t.mat_type, t.mat_index
+    tis[ti] = { id = t.id, tok = mat_token(mt, mi), pal = palidx(mt, mi), flags = set_flags(t.flags, true),
+                shape = t.tissue_shape_str or '', thick = t.relative_thickness }
+  end
+  local castes = {}
+  for ci, c in ipairs(cr.caste) do
+    local bi = c.body_info
+    local parts = bi.body_parts
+    local pj = {}
+    for _, p in ipairs(parts) do
+      local layers = {}
+      for _, l in ipairs(p.layers) do
+        local t = tis[l.tissue_id] or { id = '', tok = '', pal = 0xFFFF, flags = {} }
+        local fl, seen = {}, {}
+        for _, s in ipairs(set_flags(l.flags, true)) do if not seen[s] then seen[s] = true; fl[#fl + 1] = s end end
+        for _, s in ipairs(t.flags) do if not seen[s] then seen[s] = true; fl[#fl + 1] = s end end
+        layers[#layers + 1] = jobj({ 'tissue', ja(l.layer_name), 'material', js(t.tok), 'mat', ji(t.pal),
+                                     'thickness', ji(l.part_fraction), 'flags', jarr(fl),
+                                     -- extras
+                                     'tissue_id', ja(t.id), 'healing_rate', ji(l.healing_rate), 'vascular', ji(l.vascular),
+                                     'pain_receptors', ji(l.pain_receptors), 'layer_depth', ji(l.layer_depth),
+                                     'relative_thickness', ji(t.thick or 0) })
+      end
+      pj[#pj + 1] = jobj({ 'token', ja(p.token), 'name', js(str_vec0(p.name_singular)), 'category', ja(p.category),
+                           'parent', ji(p.con_part_id), 'relsize', ji(p.relsize), 'flags', jarr(set_flags(p.flags, false)),
+                           'layers', jarr(layers),
+                           -- extras
+                           'name_plural', js(str_vec0(p.name_plural)), 'number', ji(p.number),
+                           'fraction_total', ji(p.fraction_total), 'fraction_fat', ji(p.fraction_fat),
+                           'fraction_muscle', ji(p.fraction_muscle) })
+      checkpoint()   -- raws are static while a save is loaded: yielding is safe
+    end
+    local attacks = {}
+    for _, a in ipairs(bi.attacks) do
+      local ok, s = pcall(creature_attack_json, a, parts)
+      if ok then attacks[#attacks + 1] = s else warn('creature_attack', s) end
+    end
+    local sizes = {}
+    local adult = 0
+    pcall(function()
+      for k = 0, #c.body_size - 1 do
+        sizes[#sizes + 1] = jarr({ ji(c.body_size_day[k]), ji(c.body_size[k] * 10) })
+        adult = c.body_size[k] * 10
+      end
+    end)
+    castes[#castes + 1] = jobj({ 'token', ja(c.caste_id), 'name', js(c.caste_name[0]), 'body_size', ji(adult),
+                                 'walk_speed', ji(caste_walk_speed(ri, ci, c) or 900), 'attacks', jarr(attacks),
+                                 'body_parts', jarr(pj), 'flags', jarr(set_flags(c.flags, false)),
+                                 -- extras: [age in days, cm³] per BODY_SIZE entry; total relsize; blood
+                                 'body_size_by_age', jarr(sizes), 'total_relsize', ji(bi.total_relsize),
+                                 'baby_age', ji(c.misc.baby_age), 'child_age', ji(c.misc.child_age),
+                                 'max_age', jarr({ ji(c.misc.maxage_min), ji(c.misc.maxage_max) }) })
+  end
+  return jobj({ 'token', ja(cr.creature_id), 'name', js(cr.name[0]), 'name_plural', js(cr.name[1]), 'castes', jarr(castes),
+                'flags', jarr(set_flags(cr.flags, false)),
+                -- extras
+                'index', ji(ri), 'source', jarr(source), 'tissues', ji(#cr.tissue) })
+end
+local function export_creature_raws()
+  phase = 'creature_raws'
+  local want, why = {}, {}
+  local function mark(ri, s)
+    if ri == nil or ri < 0 then return end
+    if not want[ri] then want[ri] = true; why[ri] = {} end
+    why[ri][s] = true
+  end
+  for ri in pairs(race_seen) do mark(ri, 'unit') end
+  for ri in pairs(corpse_races) do mark(ri, 'item') end
+  -- races of the world's civilizations (visitors, traders, invaders)
+  pcall(function()
+    for _, e in ipairs(df.global.world.entities.all) do
+      if e.type == df.historical_entity_type.Civilization then mark(e.race, 'civ') end
+    end
+  end)
+  local list = {}
+  for ri in pairs(want) do list[#list + 1] = ri end
+  table.sort(list)
+  local out = {}
+  for i, ri in ipairs(list) do
+    phase_detail = i .. '/' .. #list
+    local src = {}
+    for s in pairs(why[ri]) do src[#src + 1] = ja(s) end
+    table.sort(src)
+    local ok, s = pcall(creature_raw_json, ri, src)
+    if ok then out[#out + 1] = s else warn('creature_raw', s) end
+    checkpoint()
+  end
+  write_file(OUT .. '/creature_raws.json', '[\n' .. table.concat(out, ',\n') .. '\n]\n')
+  counts.creature_raws = #out
+end
+
+-- ------------------------------------------------------------------------------------------- weapon / armor raws (round 3)
+-- sizes in cm³ as in the raws (DF memory /10 -> x10 here); attack contact/penetration are absolute as in [ATTACK:...]
+local function weapon_attack_json(a)
+  local fl = set_flags(a.flags, true)
+  if a.edged then fl[#fl + 1] = ja('EDGE') end
+  return jobj({ 'name', js(a.verb_2nd), 'verb', js(a.verb_2nd), 'body_part', ja(''), 'contact_area', ji(a.contact),
+                'penetration', ji(a.penetration), 'velocity_multiplier', ji(a.velocity_mult), 'prepare_ticks', ji(a.prepare),
+                'recover_ticks', ji(a.recover), 'main', 'false', 'flags', jarr(fl),
+                -- extras
+                'verb_3rd', js(a.verb_3rd), 'noun', js(a.noun), 'edged', jb(a.edged), 'perc', 'false' })
+end
+local function attacks_of(d)
+  local out = {}
+  pcall(function() for _, a in ipairs(d.attacks) do out[#out + 1] = weapon_attack_json(a) end end)
+  return out
+end
+local function weapon_raw_json(d, kind)
+  local skill, skill_r = '', ''
+  pcall(function() if d.skill_melee >= 0 then skill = df.job_skill[d.skill_melee] end end)
+  pcall(function() if d.skill_ranged >= 0 then skill_r = df.job_skill[d.skill_ranged] end end)
+  if skill == '' then skill = skill_r end
+  local function n(f) return try(function() return d[f] end) or 0 end
+  return jobj({ 'token', ja(d.id), 'name', js(d.name), 'skill', ja(skill), 'size', ji(n('size') * 10),
+                'two_handed', ji(n('two_handed') * 10), 'minimum_size', ji(n('minimum_size') * 10),
+                'ranged_ammo', js(try(function() return d.ranged_ammo end) or try(function() return d.ammo_class end) or ''),
+                'attacks', jarr(attacks_of(d)),
+                -- extras
+                'kind', ja(kind), 'name_plural', js(d.name_plural), 'adjective', js(try(function() return d.adjective end) or ''),
+                'skill_ranged', ja(skill_r), 'material_size', ji(n('material_size')), 'value', ji(n('value')),
+                'shoot_force', ji(n('shoot_force')), 'shoot_maxvel', ji(n('shoot_maxvel')), 'hits', ji(n('hits')),
+                'flags', jarr(set_flags(d.flags, false)) })
+end
+local ARMOR_LAYER = { [0] = 'UNDER', [1] = 'OVER', [2] = 'ARMOR', [3] = 'COVER' }
+local function armor_raw_json(d, kind)
+  local function n(f) return try(function() return d[f] end) or 0 end
+  local layer, coverage, fl, lsize, lpermit = '', 100, {}, 0, 0
+  pcall(function()
+    local p = d.props
+    layer = ARMOR_LAYER[p.layer] or tostring(p.layer)
+    coverage, lsize, lpermit = p.coverage, p.layer_size, p.layer_permit
+    fl = set_flags(p.flags, false)
+  end)
+  local dfl = try(function() return d.flags end)   -- shields have no flags
+  if dfl then for _, s in ipairs(set_flags(dfl, false)) do fl[#fl + 1] = s end end
+  return jobj({ 'token', ja(d.id), 'name', js(d.name), 'kind', ja(kind), 'layer', ja(layer), 'coverage', ji(coverage),
+                'flags', jarr(fl),
+                -- extras
+                'name_plural', js(d.name_plural), 'armorlevel', ji(n('armorlevel')), 'ubstep', ji(n('ubstep')),
+                'lbstep', ji(n('lbstep')), 'upstep', ji(n('upstep')), 'layer_size', ji(lsize), 'layer_permit', ji(lpermit),
+                'material_size', ji(n('material_size')), 'value', ji(n('value')), 'blockchance', ji(n('blockchance')) })
+end
+local function export_item_raws()
+  phase = 'item_raws'
+  local W = raws.itemdefs
+  local wo = {}
+  for _, pair in ipairs({ { W.weapons, 'WEAPON' }, { W.ammo, 'AMMO' }, { W.trapcomps, 'TRAPCOMP' } }) do
+    for _, d in ipairs(pair[1]) do
+      local ok, s = pcall(weapon_raw_json, d, pair[2])
+      if ok then wo[#wo + 1] = s else warn('weapon_raw', s) end
+    end
+    checkpoint()
+  end
+  write_file(OUT .. '/weapon_raws.json', '[\n' .. table.concat(wo, ',\n') .. '\n]\n')
+  counts.weapon_raws = #wo
+  local ao = {}
+  for _, pair in ipairs({ { W.armor, 'ARMOR' }, { W.helms, 'HELM' }, { W.gloves, 'GLOVES' }, { W.shoes, 'SHOES' },
+                          { W.pants, 'PANTS' }, { W.shields, 'SHIELD' } }) do
+    for _, d in ipairs(pair[1]) do
+      local ok, s = pcall(armor_raw_json, d, pair[2])
+      if ok then ao[#ao + 1] = s else warn('armor_raw', s) end
+    end
+    checkpoint()
+  end
+  write_file(OUT .. '/armor_raws.json', '[\n' .. table.concat(ao, ',\n') .. '\n]\n')
+  counts.armor_raws = #ao
 end
 
 -- ------------------------------------------------------------------------------------------- mods
@@ -1262,12 +1830,14 @@ local function main()
   export_work_orders()
   export_plant_raws()      -- before the materials: adds the plants' STRUCTURAL/DRINK/SEED materials to the palette
   export_burrows_squads()
+  export_creature_raws()   -- after units/items (races seen), before the materials: adds the tissue materials
+  export_item_raws()
   phase = 'materials'
   local mats = {}
   local i = 1
   while i <= #pal do       -- palette may still grow? no: all palidx calls are done; loop by index anyway
     mats[#mats + 1] = material_json(pal[i][1], pal[i][2])
-    if i % 32 == 0 then phase_detail = i .. '/' .. #pal; checkpoint() end
+    if i % 8 == 0 then phase_detail = i .. '/' .. #pal; checkpoint() end
     i = i + 1
   end
   write_file(OUT .. '/materials.json', '[\n' .. table.concat(mats, ',\n') .. '\n]\n')
@@ -1282,6 +1852,11 @@ local function main()
   note(('TREE/ROOT/MUSHROOM tiles: %d resolved exactly (getPlantAtTile), %d via nearest tree trunk (approx.)')
        :format(stat.tree_exact, stat.tree_nearest))
   note('GRASS tiles -> STRUCTURAL material of the grass event with the largest amount; PLANT tiles -> plant at the tile')
+  note(('round 3 units: %d needs, %d emotions, %d values, %d relationships, %d wound entries, %d hostile units with an invader civ')
+       :format(r3.needs, r3.emotions, r3.values, r3.relationships, r3.wounds, r3.invaders))
+  note('relationships: family from histfig_links (+ siblings via the parents), friends/acquaintances from hf_visual: kind from love (Friend >= 50, CloseFriend >= 75, KindredSpirit 100, Grudge < 0 = estimate) and meet_count (LongTermAcquaintance >= 30)')
+  note('wounds: one entry per wound layer; severity = surface_perc x 100 (estimate), raw DF values in the extras')
+  note('volumes (unit body_size, caste body_size, weapon size/two_handed/minimum_size) are cm3 as in the raws = DF memory x 10')
 end
 
 local function finish()
@@ -1290,11 +1865,22 @@ local function finish()
   local mpz = {}
   pcall(function() mpz = { df.global.world.map.region_x, df.global.world.map.region_y, df.global.world.map.region_z } end)
   local cnt = {}
+  counts.unit_needs, counts.unit_emotions, counts.unit_values = r3.needs, r3.emotions, r3.values
+  counts.unit_relationships, counts.unit_wounds = r3.relationships, r3.wounds
   for _, k in ipairs({ 'units', 'citizens', 'items', 'buildings', 'plants', 'materials', 'tiletypes', 'tiles', 'z_exported',
-                       'work_orders', 'plant_raws', 'building_jobs', 'farm_plots', 'burrows', 'squads' }) do
+                       'work_orders', 'plant_raws', 'building_jobs', 'farm_plots', 'burrows', 'squads',
+                       'burrow_tiles', 'creature_raws', 'weapon_raws', 'armor_raws', 'unit_needs', 'unit_emotions',
+                       'unit_values', 'unit_relationships', 'unit_wounds' }) do
     cnt[#cnt + 1] = k
     cnt[#cnt + 1] = ji(counts[k] or 0)
   end
+  -- DF's stress category cutoffs (dfhack.units.getStressCutoffs), for the social simulation
+  local cutoffs = {}
+  pcall(function()
+    local c = dfhack.units.getStressCutoffs()   -- 0-based list in 53.16-r2
+    local i = (c[0] ~= nil) and 0 or 1
+    while c[i] ~= nil and i < 32 do cutoffs[#cutoffs + 1] = ji(c[i]); i = i + 1 end
+  end)
   local nl = {}
   for _, s in ipairs(notes) do nl[#nl + 1] = js(s) end
   local mods, mods_detail = mods_lists()
@@ -1314,6 +1900,13 @@ local function finish()
     'frames', ji(frames), 'max_slice_ms', ji(max_slice), 'budget_ms', ji(opt.budget),
     'map_complete', jb(not opt.skip_map and not opt.zmin and not opt.zmax),
     'mods', jarr(mods), 'mods_detail', '[\n  ' .. table.concat(mods_detail, ',\n  ') .. '\n]',
+    'stress_cutoffs', jarr(cutoffs),
+    'max_slice_by_phase', (function()
+      local kv = {}
+      for k, v in pairs(phase_max) do kv[#kv + 1] = '"' .. k .. '":' .. ji(v) end
+      table.sort(kv)
+      return '{' .. table.concat(kv, ',') .. '}'
+    end)(),
     'notes', '[\n  ' .. table.concat(nl, ',\n  ') .. '\n]' })
   write_file(OUT .. '/manifest.json', manifest .. '\n')
   phase = 'done'
@@ -1341,11 +1934,13 @@ local function step()
   end
   local t = now()
   deadline = t + opt.budget
+  local ph = phase
   local ok, err = coroutine.resume(co)
   local dt = now() - t
   frames = frames + 1
   total_lua = total_lua + dt
   if dt > max_slice then max_slice = dt end
+  if dt > (phase_max[ph] or 0) then phase_max[ph] = dt end
   if not ok then fail(err) return end
   if coroutine.status(co) == 'dead' then
     local fok, ferr = pcall(finish)

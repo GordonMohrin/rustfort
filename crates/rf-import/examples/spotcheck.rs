@@ -47,6 +47,33 @@ fn pick(dir: &str, out: &str, per_class: usize) {
     for u in cits.iter().step_by((cits.len() / 3).max(1)).take(3) {
         lines.push(format!("unit {}", u.id));
     }
+    // round 3: psychology of 6 citizens, 3 wounded units, 3 hostiles; aquifer flags; burrow tiles; corpses
+    let mut psy: Vec<i32> = cits.iter().step_by((cits.len() / 6).max(1)).take(6).map(|u| u.id).collect();
+    psy.extend(w.units.iter().filter(|u| !u.wounds.is_empty() && !u.flags.citizen).take(3).map(|u| u.id));
+    psy.extend(w.units.iter().filter(|u| u.flags.hostile && !u.flags.dead).take(3).map(|u| u.id));
+    for id in psy {
+        lines.push(format!("psy {id}"));
+    }
+    let aq: Vec<usize> = (0..w.tiles.len()).filter(|&i| w.tiles[i].flags & rf_core::tile_flags::AQUIFER != 0).collect();
+    for k in 0..aq.len().min(10) {
+        let p = w.pos_of(aq[(k * 7919 + 13) % aq.len()]);
+        lines.push(format!("aq {} {} {}", p.x, p.y, p.z));
+    }
+    for k in 0..10usize {
+        let p = w.pos_of((k * 1_000_003 + 17) % w.tiles.len().max(1));
+        lines.push(format!("aq {} {} {}", p.x, p.y, p.z));
+    }
+    for b in &w.burrows {
+        for k in 0..b.tiles.len().min(8) {
+            let p = b.tiles[(k * 211) % b.tiles.len()];
+            lines.push(format!("btile {} {} {} {}", b.id, p.x, p.y, p.z));
+            // a neighbour that may or may not be in the burrow (checks the x/y orientation of the mask)
+            lines.push(format!("btile {} {} {} {}", b.id, p.x + 1, p.y + 2, p.z));
+        }
+    }
+    for i in w.items.iter().filter(|i| i.kind == "CORPSE" || i.kind == "CORPSEPIECE" || i.kind == "REMAINS").step_by(37).take(8) {
+        lines.push(format!("corpse {}", i.id));
+    }
     std::fs::write(out, lines.join("\n") + "\n").expect("write samples");
     eprintln!("{} samples -> {out}", lines.len());
 }
@@ -194,6 +221,186 @@ fn compare(dir: &str, result: &str) {
             }
             Some("plant_raws") if f.len() >= 2 => {
                 println!("plant raws: import {} | DF {}", w.plant_raws.len(), f[1]);
+            }
+            // round 3
+            Some("psy") if f.len() >= 24 => {
+                let id: i32 = f[1].parse().unwrap_or(-1);
+                let Some(u) = w.unit(id) else {
+                    println!("psy {id}: not in import");
+                    continue;
+                };
+                const FAMILY: [&str; 16] = [
+                    "Mother", "Father", "Spouse", "Child", "Deity", "Lover", "Prisoner", "Imprisoner", "Master", "Apprentice",
+                    "Companion", "FormerMaster", "FormerApprentice", "PetOwnerHf", "FormerSpouse", "DeceasedSpouse",
+                ];
+                const VISUAL: [&str; 6] = ["PassingAcquaintance", "LongTermAcquaintance", "Friend", "CloseFriend", "KindredSpirit", "Grudge"];
+                let fam = u.relationships.iter().filter(|r| FAMILY.contains(&r.kind.as_str())).count();
+                let vis = u.relationships.iter().filter(|r| VISUAL.contains(&r.kind.as_str())).count();
+                let got = [
+                    ("needs", u.needs.len().to_string(), f[3]),
+                    ("emotions", u.emotions.len().to_string(), f[5]),
+                    ("values", u.values.len().to_string(), f[7]),
+                    ("family", fam.to_string(), f[9]),
+                    ("visual", vis.to_string(), f[11]),
+                    ("wounds", u.wounds.len().to_string(), f[13]),
+                    ("blood", format!("{}/{}", u.blood, u.blood_max), &*format!("{}/{}", f[15], f[16])),
+                    ("squad", format!("{}/{}", u.squad_id, u.squad_position), &*format!("{}/{}", f[18], f[19])),
+                    ("civ", u.civ_id.to_string(), f[21]),
+                ]
+                .map(|(k, a, b)| (k, a.clone(), b.to_string()));
+                let e = r2.entry("unit psychology fields").or_default();
+                let mut diff = Vec::new();
+                for (k, a, b) in &got {
+                    if a == b {
+                        e.0 += 1;
+                    } else {
+                        e.1 += 1;
+                        diff.push(format!("{k} {a}->{b}"));
+                    }
+                }
+                println!(
+                    "psy {id} {} {}: {} | stress {} -> DF now {}",
+                    u.race,
+                    u.name,
+                    if diff.is_empty() { "all 9 fields match".into() } else { diff.join(", ") },
+                    u.stress,
+                    f[23]
+                );
+            }
+            Some("aq") if f.len() >= 6 => {
+                let p = Pos::new(f[1].parse().unwrap_or(0), f[2].parse().unwrap_or(0), f[3].parse().unwrap_or(0));
+                let t = w.tile(p).copied().unwrap_or_default();
+                let got = format!(
+                    "{} {}",
+                    (t.flags & rf_core::tile_flags::AQUIFER != 0) as u8,
+                    (t.flags & rf_import::TILE_FLAG_HEAVY_AQUIFER != 0) as u8
+                );
+                let e = r2.entry("aquifer flags").or_default();
+                if got == format!("{} {}", f[4], f[5]) {
+                    e.0 += 1;
+                } else {
+                    e.1 += 1;
+                    println!("aq ({},{},{}): import {got} | DF {} {}", p.x, p.y, p.z, f[4], f[5]);
+                }
+            }
+            Some("btile") if f.len() >= 6 => {
+                let bid: i32 = f[1].parse().unwrap_or(-1);
+                let p = Pos::new(f[2].parse().unwrap_or(0), f[3].parse().unwrap_or(0), f[4].parse().unwrap_or(0));
+                let e = r2.entry("burrow tiles").or_default();
+                match w.burrows.iter().find(|b| b.id == bid) {
+                    Some(b) => {
+                        let got = b.tiles.contains(&p) as u8;
+                        if got.to_string() == f[5] {
+                            e.0 += 1;
+                        } else {
+                            e.1 += 1;
+                            println!("btile {bid} ({},{},{}): import {got} | DF {}", p.x, p.y, p.z, f[5]);
+                        }
+                    }
+                    None => e.2 += 1,
+                }
+            }
+            Some("corpse") if f.len() >= 3 => {
+                let id: i32 = f[1].parse().unwrap_or(-1);
+                let e = r2.entry("corpse creature tokens").or_default();
+                match w.item(id) {
+                    Some(i) if i.subtype == f[2] => e.0 += 1,
+                    Some(i) => {
+                        e.1 += 1;
+                        println!("corpse {id}: import {} | DF {}", i.subtype, f[2]);
+                    }
+                    None => e.2 += 1,
+                }
+            }
+            Some("squad") if f.len() >= 6 => {
+                let id: i32 = f[1].parse().unwrap_or(-1);
+                let e = r2.entry("squads").or_default();
+                match w.squads.iter().find(|s| s.id == id) {
+                    Some(s) => {
+                        let filled = s.members.iter().filter(|&&m| m >= 0).count();
+                        let routine = f[5..].join(" ");
+                        let same = s.members.len().to_string() == f[2] && filled.to_string() == f[3] && s.schedule == routine;
+                        if same {
+                            e.0 += 1;
+                        } else {
+                            e.1 += 1;
+                        }
+                        println!(
+                            "squad {id} {}: import {}/{} '{}' orders [{}] | DF {}/{} '{routine}' {} explicit orders -> {}",
+                            s.alias,
+                            filled,
+                            s.members.len(),
+                            s.schedule,
+                            s.orders.join("; "),
+                            f[3],
+                            f[2],
+                            f[4],
+                            if same { "MATCH" } else { "DIFFER" }
+                        );
+                    }
+                    None => e.2 += 1,
+                }
+            }
+            Some("burrow") if f.len() >= 4 => {
+                let id: i32 = f[1].parse().unwrap_or(-1);
+                let e = r2.entry("burrows").or_default();
+                match w.burrows.iter().find(|b| b.id == id) {
+                    Some(b) if b.tiles.len().to_string() == f[2] && b.units.len().to_string() == f[3] => e.0 += 1,
+                    Some(b) => {
+                        e.1 += 1;
+                        println!("burrow {id} {}: import {} tiles {} units | DF {} {}", b.name, b.tiles.len(), b.units.len(), f[2], f[3]);
+                    }
+                    None => e.2 += 1,
+                }
+            }
+            Some("itemdefs") if f.len() >= 3 => {
+                println!("item raws: import {} weapons/ammo/trapcomps, {} armor | DF {} / {}", w.weapon_raws.len(), w.armor_raws.len(), f[1], f[2]);
+                let e = r2.entry("item raw counts").or_default();
+                if w.weapon_raws.len().to_string() == f[1] && w.armor_raws.len().to_string() == f[2] {
+                    e.0 += 1;
+                } else {
+                    e.1 += 1;
+                }
+            }
+            Some("craw") if f.len() >= 7 => {
+                let e = r2.entry("creature bodies").or_default();
+                match w.creature_raws.iter().find(|c| c.token == f[1]) {
+                    Some(c) => {
+                        let k = &c.castes[0];
+                        let got = format!(
+                            "{} {} {} {} {}",
+                            c.castes.len(),
+                            k.body_parts.len(),
+                            k.body_parts.iter().map(|p| p.layers.len()).sum::<usize>(),
+                            k.attacks.len(),
+                            k.body_size
+                        );
+                        let want = f[2..7].join(" ");
+                        if got == want {
+                            e.0 += 1;
+                        } else {
+                            e.1 += 1;
+                        }
+                        println!("creature {}: import castes/parts/layers/attacks/size {got} | DF {want}", f[1]);
+                    }
+                    None => e.2 += 1,
+                }
+            }
+            Some("mech") if f.len() >= 6 => {
+                let e = r2.entry("material mechanics").or_default();
+                match w.materials.iter().find(|m| m.token == f[1]) {
+                    Some(m) => {
+                        let got = format!("{} {} {} {}", m.density, m.shear_yield, m.impact_fracture, m.max_edge);
+                        let want = f[2..6].join(" ");
+                        if got == want {
+                            e.0 += 1;
+                        } else {
+                            e.1 += 1;
+                            println!("mech {}: import {got} | DF {want}", f[1]);
+                        }
+                    }
+                    None => e.2 += 1,
+                }
             }
             _ => {}
         }
