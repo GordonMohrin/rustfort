@@ -434,8 +434,9 @@ mod tests {
         assert_eq!(job_label(&t, &d("CustomReaction", "BREW_DRINK_FROM_PLANT", "", "", "", &[])), "Brew drink from plant");
         let stone = vec!["stone".to_string()];
         let stone: &'static [String] = Box::leak(stone.into_boxed_slice());
-        assert_eq!(job_label(&t, &d("MakeCrafts", "", "", "", "", stone)), "Make crafts (stone)");
-        assert_eq!(job_label(&t, &d("MakeWeapon", "", "WEAPON", "ITEM_WEAPON_PICK", "INORGANIC:IRON", &[])), "Make weapon (pick, iron)");
+        // [industry] crafts and forge jobs now have templates (DF menu labels).
+        assert_eq!(job_label(&t, &d("MakeCrafts", "", "", "", "", stone)), "Make rock crafts");
+        assert_eq!(job_label(&t, &d("MakeWeapon", "", "WEAPON", "ITEM_WEAPON_PICK", "INORGANIC:IRON", &[])), "Forge metal weapon (pick, iron)");
         assert_eq!(job_label(&t, &d("CustomReaction", "BREW_DRINK_FROM_PLANT_GROWTH", "", "", "", &[])), "Brew drink from fruit");
     }
 }

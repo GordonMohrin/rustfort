@@ -95,7 +95,7 @@ impl Cat {
         }
     }
     /// DF hauling labor bit for items of this category.
-    pub fn haul_labor(self) -> u32 {
+    pub fn haul_labor(self) -> u64 { // [industry] u64 labor bits
         use crate::labor::*;
         match self {
             Cat::Stone => HAUL_STONE,

@@ -59,6 +59,10 @@ pub mod production;
 pub use production::{Census, PlantInfo, ProductionReport};
 pub mod social; // [social]
 pub use social::{Breakdown, MonthStress, SocialReport}; // [social]
+mod industry; // [industry]
+mod storage; // [industry]
+pub use industry::IndustryReport; // [industry]
+pub use storage::{PileReport, StorageReport}; // [industry]
 mod rng;
 
 use items::{is_drink, is_edible, Cat};
@@ -99,35 +103,55 @@ pub mod needs {
 
 /// Labor bits (subset of DF `unit_labor`).
 pub mod labor {
-    pub const MINE: u32 = 1 << 0;
-    pub const CUTWOOD: u32 = 1 << 1;
-    pub const HERBALISM: u32 = 1 << 2;
-    pub const HAUL_STONE: u32 = 1 << 3;
-    pub const HAUL_WOOD: u32 = 1 << 4;
-    pub const HAUL_FOOD: u32 = 1 << 5;
-    pub const HAUL_ITEM: u32 = 1 << 6;
-    pub const HAUL_REFUSE: u32 = 1 << 7;
-    pub const HAUL_FURNITURE: u32 = 1 << 8;
-    pub const HAUL_BODY: u32 = 1 << 9;
-    pub const HAUL_ANIMALS: u32 = 1 << 10;
-    pub const BREW: u32 = 1 << 11;
-    pub const COOK: u32 = 1 << 12;
+    pub const MINE: u64 = 1 << 0;
+    pub const CUTWOOD: u64 = 1 << 1;
+    pub const HERBALISM: u64 = 1 << 2;
+    pub const HAUL_STONE: u64 = 1 << 3;
+    pub const HAUL_WOOD: u64 = 1 << 4;
+    pub const HAUL_FOOD: u64 = 1 << 5;
+    pub const HAUL_ITEM: u64 = 1 << 6;
+    pub const HAUL_REFUSE: u64 = 1 << 7;
+    pub const HAUL_FURNITURE: u64 = 1 << 8;
+    pub const HAUL_BODY: u64 = 1 << 9;
+    pub const HAUL_ANIMALS: u64 = 1 << 10;
+    pub const BREW: u64 = 1 << 11;
+    pub const COOK: u64 = 1 << 12;
     /// Farming (fields): planting and harvesting.
-    pub const PLANT: u32 = 1 << 13;
-    pub const CARPENTER: u32 = 1 << 14;
-    pub const MASON: u32 = 1 << 15;
-    pub const STONE_CRAFT: u32 = 1 << 16;
-    pub const WOOD_CRAFT: u32 = 1 << 17;
-    pub const PROCESS_PLANT: u32 = 1 << 18;
-    pub const MILLER: u32 = 1 << 19;
-    pub const BUILD_CONSTRUCTION: u32 = 1 << 20;
-    pub const MECHANIC: u32 = 1 << 21;
-    pub const ANY_HAUL: u32 = HAUL_STONE | HAUL_WOOD | HAUL_FOOD | HAUL_ITEM | HAUL_REFUSE | HAUL_FURNITURE | HAUL_BODY | HAUL_ANIMALS;
-    pub const ANY_JOB: u32 = MINE | CUTWOOD | HERBALISM;
+    pub const PLANT: u64 = 1 << 13;
+    pub const CARPENTER: u64 = 1 << 14;
+    pub const MASON: u64 = 1 << 15;
+    pub const STONE_CRAFT: u64 = 1 << 16;
+    pub const WOOD_CRAFT: u64 = 1 << 17;
+    pub const PROCESS_PLANT: u64 = 1 << 18;
+    pub const MILLER: u64 = 1 << 19;
+    pub const BUILD_CONSTRUCTION: u64 = 1 << 20;
+    pub const MECHANIC: u64 = 1 << 21;
+    // [industry] furnaces, forge, animal and cloth industries (DF `unit_labor` names).
+    pub const BURN_WOOD: u64 = 1 << 22;
+    pub const SMELT: u64 = 1 << 23;
+    pub const FORGE_WEAPON: u64 = 1 << 24;
+    pub const FORGE_ARMOR: u64 = 1 << 25;
+    pub const FORGE_FURNITURE: u64 = 1 << 26;
+    pub const METAL_CRAFT: u64 = 1 << 27;
+    pub const GLASSMAKER: u64 = 1 << 28;
+    pub const BUTCHER: u64 = 1 << 29;
+    pub const TANNER: u64 = 1 << 30;
+    pub const LEATHER: u64 = 1 << 31;
+    pub const WEAVER: u64 = 1 << 32;
+    pub const CLOTHESMAKER: u64 = 1 << 33;
+    pub const CLEAN_FISH: u64 = 1 << 34;
+    pub const BONE_CARVE: u64 = 1 << 35;
+    pub const ENGRAVER: u64 = 1 << 36;
+    pub const SHEARER: u64 = 1 << 37;
+    pub const SPINNER: u64 = 1 << 38;
+    pub const ANY_INDUSTRY: u64 = BURN_WOOD | SMELT | FORGE_WEAPON | FORGE_ARMOR | FORGE_FURNITURE | METAL_CRAFT | GLASSMAKER | BUTCHER | TANNER
+        | LEATHER | WEAVER | CLOTHESMAKER | CLEAN_FISH | BONE_CARVE | ENGRAVER | SHEARER | SPINNER | WOOD_CRAFT | MECHANIC | MILLER | PROCESS_PLANT;
+    pub const ANY_HAUL: u64 = HAUL_STONE | HAUL_WOOD | HAUL_FOOD | HAUL_ITEM | HAUL_REFUSE | HAUL_FURNITURE | HAUL_BODY | HAUL_ANIMALS;
+    pub const ANY_JOB: u64 = MINE | CUTWOOD | HERBALISM;
     /// Labors that can take workshop, farm or construction jobs.
-    pub const ANY_PROD: u32 = BREW | COOK | PLANT | CARPENTER | MASON | STONE_CRAFT | HAUL_FURNITURE;
+    pub const ANY_PROD: u64 = BREW | COOK | PLANT | CARPENTER | MASON | STONE_CRAFT | HAUL_FURNITURE | ANY_INDUSTRY; // [industry]
 
-    pub fn from_df(s: &str) -> u32 {
+    pub fn from_df(s: &str) -> u64 {
         match s {
             "MINE" => MINE,
             "CUTWOOD" => CUTWOOD,
@@ -151,10 +175,28 @@ pub mod labor {
             "HAUL_FURNITURE" => HAUL_FURNITURE,
             "HAUL_BODY" => HAUL_BODY,
             "HAUL_ANIMALS" => HAUL_ANIMALS,
+            // [industry]
+            "BURN_WOOD" => BURN_WOOD,
+            "SMELT" => SMELT,
+            "FORGE_WEAPON" => FORGE_WEAPON,
+            "FORGE_ARMOR" => FORGE_ARMOR,
+            "FORGE_FURNITURE" => FORGE_FURNITURE,
+            "METAL_CRAFT" => METAL_CRAFT,
+            "GLASSMAKER" => GLASSMAKER,
+            "BUTCHER" => BUTCHER,
+            "TANNER" => TANNER,
+            "LEATHER" => LEATHER,
+            "WEAVER" => WEAVER,
+            "CLOTHESMAKER" => CLOTHESMAKER,
+            "CLEAN_FISH" => CLEAN_FISH,
+            "BONE_CARVE" => BONE_CARVE,
+            "ENGRAVER" | "STONE_ENGRAVER" => ENGRAVER,
+            "SHEARER" => SHEARER,
+            "SPINNER" => SPINNER,
             _ => 0,
         }
     }
-    pub fn bits(labors: &[String]) -> u32 {
+    pub fn bits(labors: &[String]) -> u64 {
         labors.iter().fold(0, |a, l| a | from_df(l))
     }
 }
@@ -248,7 +290,7 @@ pub enum JobKind {
 }
 
 impl JobKind {
-    pub fn labor(self) -> u32 {
+    pub fn labor(self) -> u64 { // [industry] u64 labor bits
         match self {
             JobKind::Dig(_) => labor::MINE,
             JobKind::Chop => labor::CUTWOOD,
@@ -338,7 +380,7 @@ struct UnitAi {
     waiting: bool,
     req: u32,
     carrying: i32,
-    labors: u32,
+    labors: u64, // [industry] u64 labor bits
     seen_jobs: u64,
     seen_haul: u64,
     seen_prod: u64,
@@ -468,6 +510,10 @@ pub struct Sim {
     prod: production::Prod,
     /// [social] Thoughts, needs, stress, rooms (see `social`).
     social: social::Social,
+    /// [industry] Bins/barrels on stockpiles, rot (see `storage`).
+    store: storage::Store,
+    /// [industry] Furnace/forge/animal/cloth job details (see `industry`).
+    ind: industry::Ind,
 }
 
 #[inline]
@@ -562,6 +608,8 @@ impl Sim {
             par_min_paths: PAR_MIN_PATHS,
             prod: production::Prod::default(),
             social: social::Social::default(), // [social]
+            store: storage::Store::default(), // [industry]
+            ind: industry::Ind::default(),    // [industry]
         };
         sim.init_plants();
         sim.init_units();
@@ -571,6 +619,7 @@ impl Sim {
         sim.init_water();
         sim.init_production();
         sim.init_social(); // [social]
+        sim.init_storage(); // [industry]
         sim.rebuild_food_lists();
         sim.rebuild_haul();
         sim
@@ -730,6 +779,7 @@ impl Sim {
         let free = occ.iter().filter(|&&o| o == 0).count() as u32;
         self.piles.push(Pile { cats, tiles, occ, res: vec![false; n], free });
         self.pile_cats |= cats;
+        self.store_pile_added(bi); // [industry]
     }
 
     fn is_water(&self, i: usize) -> bool {
@@ -1676,6 +1726,7 @@ impl Sim {
                 self.ai[s].sleeping = false;
             }
             Task::GoPickup(id, dest) => {
+                self.store_release(id); // [industry]
                 self.set_hauling(id, false);
                 self.release_pile_tile(dest);
                 self.haul_add(id);
@@ -2502,6 +2553,7 @@ impl Sim {
             && it.holder < 0
             && it.building < 0
             && !self.imeta[idx].dead
+            && !(it.kind == "THREAD" && it.desc.contains(" web")) // [industry] webs are collected at a loom, not hauled
     }
 
     fn rebuild_haul(&mut self) {
@@ -2579,6 +2631,7 @@ impl Sim {
                 free_cats |= p.cats;
             }
         }
+        free_cats |= self.store.free_cats; // [industry] container space
         let mut want = 0u32;
         for cat in Cat::ALL {
             if self.haul_cnt[cat as usize] > 0 && labors & cat.haul_labor() != 0 {
@@ -2619,14 +2672,14 @@ impl Sim {
             }
             let (id, t) = (best.1, best.2);
             let cat = self.imeta[self.item_idx[&id] as usize].cat;
-            let dest = match self.find_pile_tile(cat, self.nav.xyz(t), c) {
+            let dest = match self.store_dest(id, cat, self.nav.xyz(t), c) { // [industry] bins/barrels
                 Some(d) => d,
                 None => {
                     want &= !cat.bit();
                     continue;
                 }
             };
-            if let Some(&(p, k)) = self.pile_at.get(&dest) {
+            if let Some(&(p, k)) = self.pile_at.get(&dest).filter(|_| !self.store_assigned(id)) { // [industry]
                 let pile = &mut self.piles[p as usize];
                 pile.res[k as usize] = true;
                 pile.free -= 1;
@@ -2659,6 +2712,9 @@ impl Sim {
     }
 
     fn drop_item(&mut self, s: usize, id: i32, tile: u32) {
+        if self.store_drop(s, id, tile) {
+            return; // [industry] stored into a bin/barrel
+        }
         let uidx = self.ai[s].uidx;
         self.world.units[uidx].inventory.retain(|&x| x != id);
         self.ai[s].carrying = -1;
