@@ -8,3 +8,9 @@ publish.workspace = true
 
 [dependencies]
 rf-core.workspace = true
+rf-raws.workspace = true
+image = { version = "0.25", default-features = false, features = ["png", "bmp"] }
+
+[dev-dependencies]
+serde.workspace = true
+serde_json.workspace = true

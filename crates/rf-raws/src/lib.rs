@@ -390,9 +390,11 @@ impl Raws {
         self.index.clear();
         self.by_kind.clear();
         for (i, o) in self.objects.iter().enumerate() {
-            // TILE_GRAPHICS etc. can legitimately repeat a name; keep all of those in by_kind.
+            // Graphics objects add up instead of replacing each other: DF merges e.g. the
+            // CREATURE_GRAPHICS:DWARF of the sprite file and of the portrait file, and
+            // TILE_GRAPHICS names legitimately repeat. Keep all of those in by_kind.
             let key = (o.kind.clone(), o.id.clone());
-            let multi = o.object_type == "GRAPHICS" && (o.kind == "TILE_GRAPHICS" || o.kind == "TILE_GRAPHICS_RECTANGLE");
+            let multi = o.object_type == "GRAPHICS";
             if !multi {
                 if let Some(&old) = self.index.get(&key) {
                     // A later definition replaces the earlier one (mod override).
@@ -409,6 +411,11 @@ impl Raws {
     /// Object by start-token kind and id, e.g. `get("CREATURE", "DWARF")`.
     pub fn get(&self, kind: &str, id: &str) -> Option<&RawObject> {
         self.index.get(&(kind.to_string(), id.to_string())).map(|&i| &self.objects[i])
+    }
+
+    /// All objects with this kind and id (graphics objects can have several), in load order.
+    pub fn all_of<'a>(&'a self, kind: &'a str, id: &'a str) -> impl Iterator<Item = &'a RawObject> + 'a {
+        self.of_kind(kind).filter(move |o| o.id == id)
     }
 
     /// All live objects of a start-token kind, in load order.
