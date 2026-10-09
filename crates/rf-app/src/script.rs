@@ -3,7 +3,8 @@
 //! reproducible.
 //!
 //! Commands: `move x,y`, `click x,y`, `ldown`, `lup`, `rclick`, `mdown`, `mup`, `wheel n`,
-//! `key k` (a-z, 0-9, esc, space, enter, pgup, pgdn, period), `char c`, `mods shift|ctrl|none`.
+//! `key k` (a-z, 0-9, esc, space, enter, pgup, pgdn, period, backspace, tab, f5, f9), `char c`,
+//! `mods shift|ctrl|none`.
 
 use crate::keys::{InputFrame, CTRL, SHIFT};
 use macroquad::prelude::*;
@@ -42,6 +43,10 @@ fn key(name: &str) -> Option<KeyCode> {
         "pgup" => K::PageUp,
         "pgdn" => K::PageDown,
         "period" => K::Period,
+        "backspace" => K::Backspace,
+        "tab" => K::Tab,
+        "f5" => K::F5,
+        "f9" => K::F9,
         "up" => K::Up,
         "down" => K::Down,
         "left" => K::Left,

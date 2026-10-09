@@ -4,6 +4,10 @@
 //! The UI is drawn after the map. Every panel registers its rectangle, so the map input that
 //! runs afterwards knows whether the mouse is over the UI (`UiCtx::over_ui`).
 
+pub mod build;
+pub mod building;
+pub mod labor;
+pub mod orders;
 pub mod overlay;
 pub mod panels;
 pub mod toolbar;
@@ -289,6 +293,102 @@ pub fn skill_level_name(r: i32) -> &'static str {
     N[r.clamp(0, 15) as usize]
 }
 
+/// "MeetingHall" -> "Meeting hall", "BrewDrink" -> "Brew drink".
+pub fn words(camel: &str) -> String {
+    let mut out = String::with_capacity(camel.len() + 4);
+    for (i, c) in camel.chars().enumerate() {
+        if c.is_uppercase() && i > 0 {
+            out.push(' ');
+            out.extend(c.to_lowercase());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Draw a named interface sprite (`Gfx::ui_icon`) into `r`. Returns false if there is none.
+pub fn draw_icon(gfx: &Gfx, rend: &mut MapRenderer, name: &str, r: Rect, tint: Color) -> bool {
+    let Some(mut sp) = gfx.ui_icon(name) else { return false };
+    sp = sp.mul_tint([(tint.r * 255.0) as u8, (tint.g * 255.0) as u8, (tint.b * 255.0) as u8, (tint.a * 255.0) as u8]);
+    rend.draw_ui_sprite(gfx, &sp, r)
+}
+
+/// A button with an icon on the left and a label (build menu entries, zone kinds).
+#[allow(clippy::too_many_arguments)]
+pub fn icon_label_button(
+    ui: &mut UiCtx,
+    font: &Font,
+    gfx: &Gfx,
+    rend: &mut MapRenderer,
+    r: Rect,
+    icon: &str,
+    fallback: Ico,
+    label: &str,
+    state: BtnState,
+) -> bool {
+    let hover = ui.hovered(r) && state != BtnState::Disabled;
+    let bg = match state {
+        BtnState::Active => col::BUTTON_ACTIVE,
+        _ if hover => col::BUTTON_HOVER,
+        _ => col::BUTTON,
+    };
+    draw_rectangle(r.x, r.y, r.w, r.h, bg);
+    let border = match state {
+        BtnState::Active => col::ACTIVE_BORDER,
+        _ if hover => col::BORDER_HI,
+        _ => Color::new(0.30, 0.30, 0.33, 1.0),
+    };
+    draw_rectangle_lines(r.x, r.y, r.w, r.h, 1.0, border);
+    let s = ui.scale;
+    let isz = (r.h - 4.0 * s).min(32.0 * s);
+    let ir = Rect::new(r.x + 2.0 * s, r.y + (r.h - isz) / 2.0, isz, isz);
+    if icon.is_empty() || !draw_icon(gfx, rend, icon, ir, WHITE) {
+        draw_fallback_icon(font, fallback, ir.x, ir.y, ir.w, ir.h);
+    }
+    let tx = ir.x + ir.w + 6.0 * s;
+    let maxc = ((r.x + r.w - tx - 4.0 * s) / (GW * s)).max(1.0) as usize;
+    let tc = if state == BtnState::Disabled { col::TEXT_DIM } else { col::TEXT };
+    font.draw(&clip(label, maxc), tx, r.y + (r.h - GH * s) / 2.0, s, tc);
+    state != BtnState::Disabled && ui.clicked(r)
+}
+
+/// A clickable list row (hover highlight). Returns true when clicked.
+pub fn list_row(ui: &mut UiCtx, r: Rect, selected: bool) -> bool {
+    if selected {
+        draw_rectangle(r.x, r.y, r.w, r.h, col::BUTTON_ACTIVE);
+    } else if ui.hovered(r) {
+        draw_rectangle(r.x, r.y, r.w, r.h, col::BUTTON_HOVER);
+    }
+    ui.clicked(r)
+}
+
+/// A small checkbox; returns true when clicked.
+pub fn checkbox(ui: &mut UiCtx, font: &Font, x: f32, y: f32, on: bool, label: &str) -> bool {
+    let s = ui.scale;
+    let bs = GH * s;
+    let w = bs + 6.0 * s + font.width(label, s);
+    let r = Rect::new(x, y, w, bs);
+    let hov = ui.hovered(r);
+    draw_rectangle(x, y, bs, bs, if on { col::BUTTON_ACTIVE } else { col::BUTTON });
+    draw_rectangle_lines(x, y, bs, bs, 1.0, if hov { col::BORDER_HI } else { Color::new(0.4, 0.4, 0.44, 1.0) });
+    if on {
+        font.draw("√", x + (bs - GW * s) / 2.0, y, s, col::TEXT_GOOD);
+    }
+    font.draw(label, x + bs + 6.0 * s, y, s, if hov { col::TEXT_HI } else { col::TEXT });
+    ui.clicked(r)
+}
+
+/// Mouse wheel over `r` as a scroll step (+1 = down), and mark the wheel as used.
+pub fn wheel_over(ui: &UiCtx, input: &mut crate::keys::InputFrame, r: Rect) -> i32 {
+    if r.contains(ui.mouse) && input.wheel != 0 {
+        input.wheel_used = true;
+        -input.wheel
+    } else {
+        0
+    }
+}
+
 /// Truncate to at most `n` characters (with an ellipsis).
 pub fn clip(s: &str, n: usize) -> String {
     if s.chars().count() <= n {
@@ -310,5 +410,8 @@ mod tests {
         assert_eq!(skill_level_name(5), "Proficient");
         assert_eq!(skill_level_name(20), "Legendary");
         assert_eq!(clip("abcdef", 4), "abc.");
+        assert_eq!(words("MeetingHall"), "Meeting hall");
+        assert_eq!(words("BrewDrink"), "Brew drink");
+        assert_eq!(words("Still"), "Still");
     }
 }

@@ -47,6 +47,14 @@ pub fn draw_sheet(g: &mut Game, top: f32, bottom: f32, right: f32) {
             panel(&mut g.ui, r);
             tile_sheet(g, p, r);
         }
+        Selected::Building(id) => {
+            if g.sim.world.building(id).is_none() {
+                g.selected = Selected::None;
+                return;
+            }
+            panel(&mut g.ui, r);
+            super::building::building_sheet(g, id, r);
+        }
     }
 }
 

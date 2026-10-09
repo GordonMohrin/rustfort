@@ -9,7 +9,7 @@ use crate::Args;
 use macroquad::prelude::*;
 use rf_core::{tile_flags, Pos, Shape, World};
 use rf_gfx::Gfx;
-use rf_sim::{AnnouncementKind, DesignationKind, Sim};
+use rf_sim::{AnnouncementKind, BuildOption, DesignationKind, Sim};
 use std::collections::VecDeque;
 use std::time::Instant;
 
@@ -53,6 +53,10 @@ pub enum Tool {
     Designate(DesignationKind),
     /// Index into [`STOCK_PRESETS`].
     Stockpile(usize),
+    /// Index into `Game::build_opts` (= `Sim::build_options()`).
+    Build(usize),
+    /// Index into [`rf_sim::ZONE_KINDS`].
+    Zone(usize),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -60,6 +64,8 @@ pub enum Submenu {
     None,
     Dig,
     Stockpile,
+    Build,
+    Zone,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -67,6 +73,80 @@ pub enum Selected {
     None,
     Unit(i32),
     Tile(Pos),
+    Building(i32),
+}
+
+/// Full-window info screens (DF's work orders and labor windows).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Screen {
+    None,
+    WorkOrders,
+    Labor,
+}
+
+/// Work orders screen state.
+#[derive(Default)]
+pub struct OrdersUi {
+    /// The "new order" picker is open.
+    pub new_open: bool,
+    /// Selected template (index into `Sim::order_templates()`).
+    pub template: usize,
+    pub amount: i32,
+    /// Index into [`FREQUENCIES`].
+    pub freq: usize,
+    pub scroll: usize,
+    pub tscroll: usize,
+}
+
+pub const FREQUENCIES: &[(&str, &str)] =
+    &[("OneTime", "One time"), ("Daily", "Daily"), ("Monthly", "Monthly"), ("Seasonally", "Seasonally"), ("Yearly", "Yearly")];
+
+/// Labor screen state.
+#[derive(Default)]
+pub struct LaborUi {
+    pub scroll: usize,
+    /// Index into `ui::labor::GROUPS`.
+    pub group: usize,
+    pub filter: String,
+    /// The name filter has keyboard focus.
+    pub typing: bool,
+}
+
+/// Building sheet state.
+#[derive(Default)]
+pub struct BuildingUi {
+    /// The workshop "Add job" list is open.
+    pub add_open: bool,
+    /// New workshop jobs are added as repeating.
+    pub repeat: bool,
+    /// Farm plot: season whose crop list is open.
+    pub crop_season: Option<usize>,
+    pub scroll: usize,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum MenuPage {
+    #[default]
+    Main,
+    Load,
+}
+
+/// Esc menu state.
+#[derive(Default)]
+pub struct MenuUi {
+    pub page: MenuPage,
+    pub saves: Vec<crate::save::SaveInfo>,
+    pub scroll: usize,
+}
+
+/// Stocks readout of the top bar (recounted once per second).
+#[derive(Clone, Copy, Default, Debug, PartialEq)]
+pub struct Stocks {
+    pub drinks: i32,
+    pub food: i32,
+    /// Distinct edible materials (DF's "food variety").
+    pub food_kinds: usize,
+    pub at: f64,
 }
 
 pub struct StockPreset {
@@ -193,6 +273,21 @@ pub struct Game {
     pub sim_budget: f64,
     /// Time of the last `Gfx::prepare` (new items/units need palette variants).
     pub prepared_at: f64,
+    pub seed: u64,
+    pub screen: Screen,
+    /// `Sim::build_options()`, refreshed when the build menu opens.
+    pub build_opts: Vec<BuildOption>,
+    /// Selected category in the build menu (index into `build_categories()`).
+    pub build_cat: usize,
+    /// Cached `Sim::can_place` answer for (option, a, b).
+    pub build_check: Option<(usize, Pos, Pos, Result<(), String>)>,
+    pub orders: OrdersUi,
+    pub labor: LaborUi,
+    pub bui: BuildingUi,
+    pub menu: MenuUi,
+    pub stocks: Stocks,
+    /// Save running in a background thread.
+    pub saving: Option<std::thread::JoinHandle<Result<crate::save::SaveInfo, String>>>,
 }
 
 pub fn ordinal(d: i32) -> String {
@@ -308,7 +403,20 @@ impl Game {
             follow: None,
             sim_budget: SIM_BUDGET_S.min(0.75 / args.gfps.max(10) as f64),
             prepared_at: 0.0,
+            seed: args.seed,
+            screen: Screen::None,
+            build_opts: Vec::new(),
+            build_cat: 0,
+            build_check: None,
+            orders: OrdersUi { amount: 10, ..Default::default() },
+            labor: LaborUi::default(),
+            bui: BuildingUi::default(),
+            menu: MenuUi::default(),
+            stocks: Stocks::default(),
+            saving: None,
         };
+        g.build_opts = g.sim.build_options();
+        g.stocks = crate::ui::topbar::count_stocks(&g.sim.world, 0.0);
         let now = get_time();
         if let Some(w) = loaded.warning {
             g.log.push(LogLine { text: w, pos: None, kind: AnnouncementKind::Warning, born: now });
@@ -379,6 +487,54 @@ impl Game {
                     self.tool = Tool::Stockpile(0);
                 }
                 "menu" => self.menu_open = true,
+                "loadmenu" => self.open_load_menu(),
+                "build" => {
+                    self.open_build();
+                    if let Ok(c) = v.parse::<usize>() {
+                        self.build_cat = c;
+                    }
+                }
+                "place" => {
+                    // Build tool with option `v` (index or label) selected.
+                    self.open_build();
+                    let i = v.parse::<usize>().ok().or_else(|| self.build_opts.iter().position(|o| o.label == v || o.subtype == v || o.kind == v));
+                    if let Some(i) = i.filter(|&i| i < self.build_opts.len()) {
+                        let cats = crate::ui::build::build_categories(&self.build_opts);
+                        self.build_cat = cats.iter().position(|c| *c == self.build_opts[i].category).unwrap_or(0);
+                        self.tool = Tool::Build(i);
+                    }
+                }
+                "zone" => {
+                    self.open_zones();
+                    if let Ok(k) = v.parse::<usize>() {
+                        self.tool = Tool::Zone(k.min(rf_sim::ZONE_KINDS.len() - 1));
+                    }
+                }
+                "orders" => self.screen = Screen::WorkOrders,
+                "neworder" => {
+                    self.screen = Screen::WorkOrders;
+                    self.orders.new_open = true;
+                    if let Ok(t) = v.parse::<usize>() {
+                        self.orders.template = t;
+                    }
+                }
+                "labor-screen" => self.screen = Screen::Labor,
+                "bld" => {
+                    // Select a building by id or by kind/subtype (first match).
+                    let w = &self.sim.world;
+                    let id = v.parse::<i32>().ok().or_else(|| w.buildings.iter().find(|b| b.kind == v || b.subtype == v).map(|b| b.id));
+                    if let Some(b) = id.and_then(|id| w.building(id)) {
+                        let c = b.center;
+                        self.selected = Selected::Building(b.id);
+                        self.cam.x = c.x as f32 + 0.5;
+                        self.cam.y = c.y as f32 + 0.5;
+                        self.cam.tx = self.cam.x;
+                        self.cam.ty = self.cam.y;
+                        self.cam.z = c.z as i32;
+                    }
+                }
+                "addjob" => self.bui.add_open = true,
+                "crop" => self.bui.crop_season = Some(v.parse::<usize>().unwrap_or(0).min(3)),
                 "unit" => {
                     let id = v.parse::<i32>().ok().or_else(|| self.sim.world.citizens().next().map(|u| u.id));
                     if let Some(id) = id {
@@ -462,6 +618,10 @@ impl Game {
             self.prepared_at = now;
             self.gfx.prepare(&self.sim.world);
         }
+        if now - self.stocks.at > 1.0 {
+            self.stocks = crate::ui::topbar::count_stocks(&self.sim.world, now);
+        }
+        self.poll_save();
         for a in self.sim.drain_announcements() {
             self.log.push(LogLine { text: a.text, pos: a.pos, kind: a.kind, born: now });
         }
@@ -480,13 +640,16 @@ impl Game {
     // ---------------------------------------------------------------- input
 
     fn global_keys(&mut self) {
+        if self.input.hit(&self.binds, "RF_QUICKSAVE") && self.saving.is_none() {
+            self.start_save();
+        }
         let b = &self.binds;
         let inp = &self.input;
         if inp.hit(b, "LEAVESCREEN") {
             self.escape();
             return;
         }
-        if self.menu_open {
+        if self.menu_open || self.typing() {
             return;
         }
         if inp.hit(b, "D_PAUSE") {
@@ -525,6 +688,150 @@ impl Game {
             self.open_stockpiles();
         } else if inp.hit(b, "D_UNITLIST") {
             self.citizens_open = !self.citizens_open;
+        } else if inp.hit(b, "D_BUILDING") {
+            self.open_build();
+        } else if inp.hit(b, "D_CIVZONE") {
+            self.open_zones();
+        } else if inp.hit(b, "D_ORDERS") {
+            self.toggle_screen(Screen::WorkOrders);
+        } else if inp.hit(b, "D_LABOR") {
+            self.toggle_screen(Screen::Labor);
+        }
+    }
+
+    /// A text field has keyboard focus: hotkeys and WASD are off.
+    pub fn typing(&self) -> bool {
+        self.screen == Screen::Labor && self.labor.typing
+    }
+
+    pub fn toggle_screen(&mut self, s: Screen) {
+        self.screen = if self.screen == s { Screen::None } else { s };
+        self.labor.typing = false;
+        if self.screen != Screen::None {
+            self.tool = Tool::None;
+            self.submenu = Submenu::None;
+            self.drag = None;
+        }
+    }
+
+    pub fn open_build(&mut self) {
+        if self.submenu == Submenu::Build {
+            self.submenu = Submenu::None;
+            self.tool = Tool::None;
+        } else {
+            self.build_opts = self.sim.build_options();
+            self.submenu = Submenu::Build;
+            self.tool = Tool::None;
+            self.screen = Screen::None;
+        }
+        self.build_check = None;
+        self.drag = None;
+    }
+
+    pub fn open_zones(&mut self) {
+        if self.submenu == Submenu::Zone {
+            self.submenu = Submenu::None;
+            self.tool = Tool::None;
+        } else {
+            self.submenu = Submenu::Zone;
+            self.tool = Tool::None;
+            self.screen = Screen::None;
+        }
+        self.drag = None;
+    }
+
+    pub fn open_load_menu(&mut self) {
+        self.menu_open = true;
+        self.menu.page = MenuPage::Load;
+        self.menu.scroll = 0;
+        self.menu.saves = crate::save::list_saves(&crate::save::save_dir());
+    }
+
+    /// Save in a background thread (the world is cloned first, so play continues).
+    pub fn start_save(&mut self) {
+        if self.saving.is_some() {
+            return;
+        }
+        let w = self.sim.world.clone();
+        let seed = self.seed;
+        self.set_status("Saving...".into());
+        self.saving = Some(std::thread::spawn(move || crate::save::save_world(&w, seed, &crate::save::save_dir())));
+    }
+
+    /// Block until a running save is done (screenshot runs, quitting).
+    pub fn finish_save(&mut self) {
+        if let Some(h) = self.saving.as_ref() {
+            while !h.is_finished() {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        }
+        self.poll_save();
+    }
+
+    fn poll_save(&mut self) {
+        if !self.saving.as_ref().map(|h| h.is_finished()).unwrap_or(false) {
+            return;
+        }
+        let res = self.saving.take().unwrap().join().unwrap_or_else(|_| Err("save thread panicked".into()));
+        let now = get_time();
+        let (text, kind) = match res {
+            Ok(i) => (
+                format!("Saved {} ({}, {:.2}s)", i.path.display(), crate::save::fmt_bytes(i.bytes), i.secs),
+                AnnouncementKind::Info,
+            ),
+            Err(e) => (format!("Save failed: {e}"), AnnouncementKind::Warning),
+        };
+        self.set_status(text.clone());
+        self.log.push(LogLine { text, pos: None, kind, born: now });
+        if self.menu_open && self.menu.page == MenuPage::Load {
+            self.menu.saves = crate::save::list_saves(&crate::save::save_dir());
+        }
+    }
+
+    /// Replace the running game with a save. The simulation state is rebuilt.
+    pub fn load_save(&mut self, path: &std::path::Path) {
+        let now = get_time();
+        match crate::save::load_world(path) {
+            Ok((world, info)) => {
+                let t = Instant::now();
+                let same_fort = world.meta.fort_name == self.sim.world.meta.fort_name && world.dims == self.sim.world.dims;
+                self.gfx.prepare(&world);
+                self.zclass = compute_zclass(&world);
+                if !same_fort {
+                    self.cam = initial_camera(&world);
+                }
+                let seed = if info.header.seed != 0 { info.header.seed } else { self.seed };
+                self.seed = seed;
+                self.sim = Sim::new(world, seed);
+                let file = path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
+                self.label = format!("{} - loaded {file}", self.sim.world.meta.fort_name);
+                self.selected = Selected::None;
+                self.tool = Tool::None;
+                self.submenu = Submenu::None;
+                self.screen = Screen::None;
+                self.drag = None;
+                self.follow = None;
+                self.paused = true;
+                self.menu_open = false;
+                self.build_opts = self.sim.build_options();
+                self.build_check = None;
+                self.stocks = crate::ui::topbar::count_stocks(&self.sim.world, now);
+                let text = format!(
+                    "Loaded {} ({}): {} in {:.2}s + sim {:.2}s",
+                    info.header.fort,
+                    info.header.date,
+                    crate::save::fmt_bytes(info.bytes),
+                    info.secs,
+                    t.elapsed().as_secs_f64()
+                );
+                self.set_status(text.clone());
+                self.log.push(LogLine { text, pos: None, kind: AnnouncementKind::Info, born: now });
+            }
+            Err(e) => {
+                let text = format!("Load failed: {e}");
+                self.set_status(text.clone());
+                self.log.push(LogLine { text, pos: None, kind: AnnouncementKind::Warning, born: now });
+            }
         }
     }
 
@@ -554,7 +861,20 @@ impl Game {
     /// options menu.
     pub fn escape(&mut self) {
         if self.menu_open {
-            self.menu_open = false;
+            if self.menu.page != MenuPage::Main {
+                self.menu.page = MenuPage::Main;
+            } else {
+                self.menu_open = false;
+            }
+        } else if self.labor.typing {
+            self.labor.typing = false;
+        } else if self.bui.add_open || self.bui.crop_season.is_some() {
+            self.bui.add_open = false;
+            self.bui.crop_season = None;
+        } else if self.orders.new_open {
+            self.orders.new_open = false;
+        } else if self.screen != Screen::None {
+            self.screen = Screen::None;
         } else if self.drag.is_some() {
             self.drag = None;
         } else if self.tool != Tool::None || self.submenu != Submenu::None {
@@ -566,6 +886,7 @@ impl Game {
             self.selected = Selected::None;
         } else {
             self.menu_open = true;
+            self.menu.page = MenuPage::Main;
         }
     }
 
@@ -577,7 +898,7 @@ impl Game {
                 _ => self.follow = None,
             }
         }
-        if !self.menu_open {
+        if !self.menu_open && !self.typing() {
             let b = &self.binds;
             let inp = &self.input;
             // Pan: WASD / arrows (held), Shift = fast.
@@ -661,8 +982,8 @@ impl Game {
     /// Map clicks (after the UI had its chance).
     fn map_input(&mut self) {
         let m = self.mouse();
-        self.hover = if self.ui.over_ui || self.menu_open { None } else { self.tile_at(m) };
-        if self.menu_open {
+        self.hover = if self.ui.over_ui || self.menu_open || self.screen != Screen::None { None } else { self.tile_at(m) };
+        if self.menu_open || self.screen != Screen::None {
             return;
         }
         let lp = self.ui.lpressed && !self.ui.click_used && !self.ui.over_ui;
@@ -672,7 +993,10 @@ impl Game {
             // Right click backs out: pending rectangle, then tool, then selection.
             if self.drag.is_some() {
                 self.drag = None;
-            } else if self.tool != Tool::None {
+            } else if matches!(self.tool, Tool::Build(_) | Tool::Zone(_)) {
+                // Back to the build/zone menu, like DF.
+                self.tool = Tool::None;
+            } else if self.tool != Tool::None || self.submenu != Submenu::None {
                 self.tool = Tool::None;
                 self.submenu = Submenu::None;
             } else {
@@ -687,11 +1011,23 @@ impl Game {
                     self.select_at(h);
                 }
             }
-            Tool::Designate(_) | Tool::Stockpile(_) => {
+            Tool::Designate(_) | Tool::Stockpile(_) | Tool::Zone(_) => {
                 let (d, done) = drag_step(self.drag, h, lp, lr);
                 self.drag = d;
                 if let Some((a, b)) = done {
                     self.apply_tool(a, b);
+                }
+            }
+            Tool::Build(i) => {
+                let dragged = self.build_opts.get(i).map(|o| o.dragged).unwrap_or(false);
+                if dragged {
+                    let (d, done) = drag_step(self.drag, h, lp, lr);
+                    self.drag = d;
+                    if let Some((a, b)) = done {
+                        self.apply_tool(a, b);
+                    }
+                } else if lp {
+                    self.apply_tool(h, h);
                 }
             }
         }
@@ -699,6 +1035,7 @@ impl Game {
 
     fn select_at(&mut self, p: Pos) {
         let w = &self.sim.world;
+        let zone_mode = self.submenu == Submenu::Zone;
         let units: Vec<i32> = w.units.iter().filter(|u| u.pos == p && !u.flags.dead).map(|u| u.id).collect();
         if !units.is_empty() {
             // Clicking the same tile again cycles through the units on it.
@@ -710,6 +1047,9 @@ impl Game {
                 _ => units[0],
             };
             self.selected = Selected::Unit(next);
+        } else if let Some(id) = building_at(w, p, zone_mode) {
+            self.selected = Selected::Building(id);
+            self.bui = BuildingUi { repeat: self.bui.repeat, ..Default::default() };
         } else {
             self.selected = Selected::Tile(p);
         }
@@ -727,6 +1067,23 @@ impl Game {
                 let a2 = Pos::new(a.x, a.y, b.z);
                 let id = self.sim.create_stockpile(a2, b, p.categories);
                 self.set_status(format!("{} stockpile #{id}: {dx}x{dy}", p.label));
+            }
+            Tool::Zone(k) => {
+                let kind = rf_sim::ZONE_KINDS[k.min(rf_sim::ZONE_KINDS.len() - 1)];
+                let a2 = Pos::new(a.x, a.y, b.z);
+                let id = self.sim.create_zone(a2, b, kind);
+                self.set_status(format!("{} zone #{id}: {dx}x{dy}", crate::ui::words(kind)));
+                self.tool = Tool::None;
+                self.selected = Selected::Building(id);
+            }
+            Tool::Build(i) => {
+                let Some(o) = self.build_opts.get(i).cloned() else { return };
+                let (lo, hi) = crate::ui::build::footprint(&o, a, Pos::new(b.x, b.y, a.z));
+                match self.sim.place_building(i, lo, hi) {
+                    Ok(id) => self.set_status(format!("{} placed (#{id}), needs {}", o.label, o.needs)),
+                    Err(e) => self.set_status(format!("Cannot place {}: {e}", o.label)),
+                }
+                self.build_check = None;
             }
             Tool::None => {}
         }
@@ -750,6 +1107,21 @@ pub fn drag_step(drag: Option<Drag>, hover: Pos, lpressed: bool, lreleased: bool
         }
         other => (other, None),
     }
+}
+
+/// The building a click on `p` selects: furniture/workshops first, then stockpiles; zones
+/// only in zone mode (DF hides zones otherwise).
+pub fn building_at(w: &World, p: Pos, zones: bool) -> Option<i32> {
+    let rank = |k: &str| match k {
+        "Civzone" => 2,
+        "Stockpile" => 1,
+        _ => 0,
+    };
+    w.buildings
+        .iter()
+        .filter(|b| b.contains(p) && (zones || b.kind != "Civzone"))
+        .min_by_key(|b| (rank(&b.kind), (b.x2 - b.x1 + 1) as i32 * (b.y2 - b.y1 + 1) as i32))
+        .map(|b| b.id)
 }
 
 fn initial_camera(w: &World) -> Camera {
@@ -810,6 +1182,10 @@ pub async fn run(args: Args, loaded: Loaded) {
             g.input.wheel_used = true;
         }
         g.global_keys();
+        if args.screenshot.is_some() {
+            // Screenshot runs are reproducible: saves finish within the frame.
+            g.finish_save();
+        }
         g.update_sim(dt);
         g.update_camera(dt);
 
@@ -843,6 +1219,7 @@ pub async fn run(args: Args, loaded: Loaded) {
             }
         }
         if g.quit {
+            g.finish_save();
             break;
         }
         if !args.vsync && args.gfps > 0 {

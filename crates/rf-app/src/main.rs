@@ -4,7 +4,9 @@
 //! rustfort play  [--export DIR] [--synthetic] [--seed N]
 //!                [--screenshot out.png --frames N] [--view x,y,z,zoom] [--ui a,b,..] [--mouse x,y] [--speed 1|2|5|max]
 //! rustfort bench [--export DIR] [--synthetic] [--ticks N] [--seed N]
+//! rustfort savebench [--export DIR]      # save + load timing and size
 //! ```
+//! `--load FILE.rfsave` starts from a save instead of the export (play and bench).
 
 mod bench;
 mod font;
@@ -12,6 +14,7 @@ mod game;
 mod keys;
 mod load;
 mod render;
+mod save;
 mod script;
 mod ui;
 
@@ -43,13 +46,17 @@ pub struct Args {
     pub vsync: bool,
     /// UI scale (1 = DF's 100 % interface: 8x12 font, 32x36 buttons).
     pub ui_scale: f32,
+    /// Start from a save game (`saves/*.rfsave`).
+    pub load: Option<PathBuf>,
 }
 
 const USAGE: &str = "usage:
   rustfort play  [--export DIR] [--synthetic] [--seed N] [--speed 1|2|5|max]
                  [--screenshot out.png --frames N] [--view x,y,z,zoom] [--ui citizens,unit,dig,stockpile,menu,tile]
                  [--mouse x,y] [--script \"frame:cmd; ...\"] [--ui-scale 2] [--gfps 60] [--size x,y,z]
-  rustfort bench [--export DIR] [--synthetic] [--ticks N] [--seed N]";
+  rustfort bench [--export DIR] [--synthetic] [--ticks N] [--seed N]
+  rustfort savebench [--export DIR]
+  --load FILE.rfsave   start from a save game (play, bench)";
 
 fn parse_args() -> Result<Args, String> {
     let mut a = Args { cmd: "play".into(), seed: 1, ticks: 10_000, frames: 3, gfps: 60, ui_scale: 1.0, size: (96, 96, 40), ..Default::default() };
@@ -63,6 +70,7 @@ fn parse_args() -> Result<Args, String> {
         let mut val = |name: &str| it.next().ok_or_else(|| format!("{name} needs a value"));
         match arg.as_str() {
             "--export" => a.export = Some(PathBuf::from(val("--export")?)),
+            "--load" => a.load = Some(PathBuf::from(val("--load")?)),
             "--synthetic" => a.synthetic = true,
             "--size" => {
                 let v = val("--size")?;
@@ -118,9 +126,13 @@ fn main() {
         }
     };
     match args.cmd.as_str() {
-        "bench" => bench::run(args.export.as_deref(), args.synthetic, args.size, args.ticks, args.seed),
+        "bench" => bench::run(&args),
+        "savebench" => {
+            let loaded = load::load(&args);
+            save::bench(loaded.world, args.seed);
+        }
         "play" => {
-            let loaded = load::load_world(args.export.as_deref(), args.synthetic, args.size);
+            let loaded = load::load(&args);
             let mut conf = macroquad::window::Conf {
                 window_title: format!("Rustfort - {}", loaded.label),
                 window_width: 1600,

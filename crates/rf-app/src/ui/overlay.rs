@@ -3,7 +3,7 @@
 use super::panels::{unit_name, unit_profession};
 use super::{col, panel, text_button, BtnState};
 use crate::font::GH;
-use crate::game::{Game, Tool};
+use crate::game::{Game, MenuPage, Screen, Tool};
 use crate::render::tile_desc;
 use macroquad::prelude::*;
 use rf_sim::AnnouncementKind;
@@ -20,6 +20,8 @@ pub fn draw_ui(g: &mut Game) {
     super::panels::draw_sheet(g, top, toolbar_top.min(tb_y) - 6.0 * s, right);
     let ann_h = draw_announcements(g, toolbar_top.min(tb_y));
     super::panels::draw_citizens(g, top, toolbar_top.min(tb_y) - ann_h - 6.0 * s);
+    super::orders::draw_orders(g);
+    super::labor::draw_labor(g);
     draw_status(g, toolbar_top.min(tb_y));
     if g.menu_open {
         draw_menu(g);
@@ -27,7 +29,7 @@ pub fn draw_ui(g: &mut Game) {
     // Button tooltips win over the map tooltip.
     if let Some((t, p)) = g.ui.tooltip.take() {
         tooltip_box(g, &[(t, col::TEXT)], p, true);
-    } else if !g.ui.over_ui && !g.menu_open {
+    } else if !g.ui.over_ui && !g.menu_open && g.screen == Screen::None {
         map_tooltip(g);
     }
 }
@@ -165,28 +167,104 @@ fn draw_menu(g: &mut Game) {
     let (sw, sh) = (screen_width(), screen_height());
     draw_rectangle(0.0, 0.0, sw, sh, Color::new(0.0, 0.0, 0.0, 0.5));
     g.ui.block(Rect::new(0.0, 0.0, sw, sh));
-    let (w, h) = (360.0 * s, 200.0 * s);
-    let r = Rect::new((sw - w) / 2.0, (sh - h) / 2.0, w, h);
-    panel(&mut g.ui, r);
-    let title = "Rustfort";
-    g.font.draw(title, r.x + (w - g.font.width(title, 2.0 * s)) / 2.0, r.y + 14.0 * s, 2.0 * s, col::TEXT_HI);
-    let bw = w - 60.0 * s;
-    let bh = 28.0 * s;
-    let bx = r.x + 30.0 * s;
-    let sub = crate::ui::clip(&g.label, ((w - 20.0 * s) / (8.0 * s)) as usize);
-    g.font.draw(&sub, r.x + (w - g.font.width(&sub, s)) / 2.0, r.y + 42.0 * s, s, col::TEXT_DIM);
-    let mut by = r.y + 64.0 * s;
-    if text_button(&mut g.ui, &g.font, Rect::new(bx, by, bw, bh), "Return to game", BtnState::Normal) {
-        g.menu_open = false;
-    }
-    by += bh + 10.0 * s;
-    text_button(&mut g.ui, &g.font, Rect::new(bx, by, bw, bh), "Save game (not yet)", BtnState::Disabled);
-    by += bh + 10.0 * s;
-    if text_button(&mut g.ui, &g.font, Rect::new(bx, by, bw, bh), "Quit to desktop", BtnState::Normal) {
-        g.quit = true;
+    if g.menu.page == MenuPage::Load {
+        draw_load_menu(g);
+    } else {
+        let (w, h) = (380.0 * s, 270.0 * s);
+        let r = Rect::new((sw - w) / 2.0, (sh - h) / 2.0, w, h);
+        panel(&mut g.ui, r);
+        let title = "Rustfort";
+        g.font.draw(title, r.x + (w - g.font.width(title, 2.0 * s)) / 2.0, r.y + 14.0 * s, 2.0 * s, col::TEXT_HI);
+        let bw = w - 60.0 * s;
+        let bh = 28.0 * s;
+        let bx = r.x + 30.0 * s;
+        let sub = crate::ui::clip(&g.label, ((w - 20.0 * s) / (8.0 * s)) as usize);
+        g.font.draw(&sub, r.x + (w - g.font.width(&sub, s)) / 2.0, r.y + 42.0 * s, s, col::TEXT_DIM);
+        let mut by = r.y + 64.0 * s;
+        if text_button(&mut g.ui, &g.font, Rect::new(bx, by, bw, bh), "Return to game", BtnState::Normal) {
+            g.menu_open = false;
+        }
+        by += bh + 10.0 * s;
+        let saving = g.saving.is_some();
+        let save_label = if saving { "Saving..." } else { "Save game (F5)" };
+        if text_button(&mut g.ui, &g.font, Rect::new(bx, by, bw, bh), save_label, if saving { BtnState::Disabled } else { BtnState::Normal }) {
+            g.start_save();
+        }
+        by += bh + 10.0 * s;
+        if text_button(&mut g.ui, &g.font, Rect::new(bx, by, bw, bh), "Load game", BtnState::Normal) {
+            g.open_load_menu();
+        }
+        by += bh + 10.0 * s;
+        if text_button(&mut g.ui, &g.font, Rect::new(bx, by, bw, bh), "Quit to desktop", BtnState::Normal) {
+            g.quit = true;
+        }
+        by += bh + 8.0 * s;
+        let dir = crate::save::save_dir();
+        let note = crate::ui::clip(&format!("Saves: {}", dir.display()), ((w - 20.0 * s) / (8.0 * s)) as usize);
+        g.font.draw(&note, r.x + (w - g.font.width(&note, s)) / 2.0, by, s, col::TEXT_DIM);
     }
     // Swallow clicks on the dimmed background.
     if g.ui.lpressed {
         g.ui.click_used = true;
+    }
+}
+
+/// "Load game": the saves folder, newest first.
+fn draw_load_menu(g: &mut Game) {
+    let s = g.ui.scale;
+    let lh = g.ui.line_h();
+    let (sw, sh) = (screen_width(), screen_height());
+    let (w, h) = ((720.0 * s).min(sw - 40.0), (480.0 * s).min(sh - 80.0));
+    let r = Rect::new((sw - w) / 2.0, (sh - h) / 2.0, w, h);
+    panel(&mut g.ui, r);
+    let pad = 14.0 * s;
+    let (x, mut y) = (r.x + pad, r.y + pad);
+    g.font.draw("Load game", x, y, 1.5 * s, col::TEXT_HI);
+    let dir = crate::save::save_dir();
+    let dt = crate::ui::clip(&format!("{}", dir.display()), 50);
+    g.font.draw(&dt, r.x + r.w - pad - g.font.width(&dt, s), y + 4.0 * s, s, col::TEXT_DIM);
+    y += 2.0 * lh;
+    for (i, hd) in ["Fort", "Game date", "Saved", "Size"].iter().enumerate() {
+        g.font.draw(hd, x + [0.0, 0.32, 0.56, 0.86][i] * (w - 2.0 * pad), y, s, col::BORDER_HI);
+    }
+    y += lh;
+    draw_line(x, y, r.x + r.w - pad, y, 1.0, col::BORDER);
+    y += 4.0 * s;
+    let row_h = lh + 6.0 * s;
+    let area = Rect::new(x, y, w - 2.0 * pad, r.y + r.h - pad - 36.0 * s - y);
+    let rows = ((area.h / row_h) as usize).max(1);
+    let n = g.menu.saves.len();
+    let step = crate::ui::wheel_over(&g.ui, &mut g.input, area);
+    g.menu.scroll = (g.menu.scroll as i32 + step * 2).clamp(0, n.saturating_sub(rows) as i32) as usize;
+    if n == 0 {
+        g.font.draw("No saves yet. Save with F5 or \"Save game\".", x, y + 4.0 * s, s, col::TEXT_DIM);
+    }
+    let mut load = None;
+    for (k, sv) in g.menu.saves.iter().enumerate().skip(g.menu.scroll).take(rows) {
+        let rr = Rect::new(x, y, area.w, row_h - 2.0 * s);
+        if k % 2 == 0 {
+            draw_rectangle(rr.x, rr.y, rr.w, rr.h, Color::new(1.0, 1.0, 1.0, 0.04));
+        }
+        if crate::ui::list_row(&mut g.ui, rr, false) {
+            load = Some(sv.path.clone());
+        }
+        let ty = y + 3.0 * s;
+        let cx = |i: usize| x + [0.0, 0.32, 0.56, 0.86][i] * area.w;
+        let fort = if sv.header.fort_native.is_empty() { sv.header.fort.clone() } else { format!("{} ({})", sv.header.fort, sv.header.fort_native) };
+        g.font.draw(&crate::ui::clip(&fort, 26), cx(0) + 4.0 * s, ty, s, col::TEXT);
+        g.font.draw(&crate::ui::clip(&sv.header.date, 20), cx(1), ty, s, col::TEXT);
+        g.font.draw(&crate::save::fmt_unix(sv.header.saved_unix), cx(2), ty, s, col::TEXT_DIM);
+        g.font.draw(&crate::save::fmt_bytes(sv.bytes), cx(3), ty, s, col::TEXT_DIM);
+        if g.ui.hovered(rr) {
+            g.ui.tooltip = Some((format!("{} - click to load", sv.path.display()), vec2(rr.x, rr.y - 4.0)));
+        }
+        y += row_h;
+    }
+    let bh = 26.0 * s;
+    if text_button(&mut g.ui, &g.font, Rect::new(x, r.y + r.h - pad - bh, 14.0 * 8.0 * s, bh), "Back", BtnState::Normal) {
+        g.menu.page = MenuPage::Main;
+    }
+    if let Some(p) = load {
+        g.load_save(&p);
     }
 }

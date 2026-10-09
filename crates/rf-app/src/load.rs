@@ -13,6 +13,25 @@ pub struct Loaded {
     pub warning: Option<String>,
 }
 
+/// World for `play`/`bench`: `--load` save, else the export, else synthetic.
+pub fn load(args: &crate::Args) -> Loaded {
+    if let Some(p) = &args.load {
+        match crate::save::load_world(p) {
+            Ok((world, info)) => {
+                let label = format!("{} - {} - save {}", world.meta.fort_name, info.header.date, p.display());
+                eprintln!("loaded save {} ({}) in {:.2}s", p.display(), crate::save::fmt_bytes(info.bytes), info.secs);
+                return Loaded { world, label, report: None, warning: None };
+            }
+            Err(e) => {
+                let mut l = load_world(args.export.as_deref(), args.synthetic, args.size);
+                l.warning = Some(format!("could not load {}: {e}", p.display()));
+                return l;
+            }
+        }
+    }
+    load_world(args.export.as_deref(), args.synthetic, args.size)
+}
+
 pub fn load_world(export: Option<&Path>, synthetic: bool, size: (u16, u16, u16)) -> Loaded {
     let synth = |warning: Option<String>| {
         let world = World::synthetic(size.0, size.1, size.2);
