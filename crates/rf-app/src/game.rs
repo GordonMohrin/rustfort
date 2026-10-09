@@ -191,6 +191,8 @@ pub struct Game {
     pub follow: Option<i32>,
     /// Real-time budget per frame for sim ticks (seconds).
     pub sim_budget: f64,
+    /// Time of the last `Gfx::prepare` (new items/units need palette variants).
+    pub prepared_at: f64,
 }
 
 pub fn ordinal(d: i32) -> String {
@@ -253,7 +255,7 @@ pub fn compute_zclass(w: &World) -> Vec<ZClass> {
 impl Game {
     pub fn new(args: &Args, loaded: Loaded) -> Game {
         let df = rf_gfx::df_dir();
-        let gfx = match Gfx::load(&df) {
+        let mut gfx = match Gfx::load(&df) {
             Ok(g) => g,
             Err(e) => {
                 eprintln!("graphics: {e}; using fallback tiles");
@@ -263,6 +265,8 @@ impl Game {
         let font = Font::load(&df);
         let binds = Bindings::load(&df);
         let world = loaded.world;
+        // Bake the palette variants (stone colors, dwarf looks) this world needs.
+        gfx.prepare(&world);
         let zclass = compute_zclass(&world);
         let cam = initial_camera(&world);
         let sim = Sim::new(world, args.seed);
@@ -303,6 +307,7 @@ impl Game {
             status: None,
             follow: None,
             sim_budget: SIM_BUDGET_S.min(0.75 / args.gfps.max(10) as f64),
+            prepared_at: 0.0,
         };
         let now = get_time();
         if let Some(w) = loaded.warning {
@@ -452,6 +457,10 @@ impl Game {
             if b.0 - a.0 > 0.2 {
                 self.tps = (b.1 - a.1) as f64 / (b.0 - a.0);
             }
+        }
+        if now - self.prepared_at > 1.0 {
+            self.prepared_at = now;
+            self.gfx.prepare(&self.sim.world);
         }
         for a in self.sim.drain_announcements() {
             self.log.push(LogLine { text: a.text, pos: a.pos, kind: a.kind, born: now });

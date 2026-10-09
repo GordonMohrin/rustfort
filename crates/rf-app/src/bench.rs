@@ -28,10 +28,21 @@ pub fn run(export: Option<&std::path::Path>, synthetic: bool, size: (u16, u16, u
     let start = Instant::now();
     let mut done = 0u64;
     let mut last_report = Instant::now();
+    let citizens0 = sim.world.citizens().count();
+    let mut deaths: Vec<String> = Vec::new();
+    let mut ann_counts: std::collections::BTreeMap<String, usize> = Default::default();
     while done < ticks {
         let n = chunk.min(ticks - done);
         sim.run_ticks(n as u32);
         done += n;
+        for a in sim.drain_announcements() {
+            if a.kind == rf_sim::AnnouncementKind::Death {
+                deaths.push(format!("tick {}: {}", a.tick, a.text));
+            }
+            // Group by the text after the unit name (e.g. "cancels Dig: Could not find path.").
+            let key = a.text.split_once(" cancels ").map(|(_, r)| format!("cancels {r}")).unwrap_or_else(|| format!("{:?}", a.kind));
+            *ann_counts.entry(key).or_default() += 1;
+        }
         for (name, s) in sim.stats().phase_times {
             match phases.iter_mut().find(|(p, _)| *p == name) {
                 Some(e) => e.1 += s,
@@ -65,6 +76,17 @@ pub fn run(export: Option<&std::path::Path>, synthetic: bool, size: (u16, u16, u
         println!("phase times:");
         for (name, s) in &phases {
             println!("  {name:<16} {:>9.3} ms  {:>5.1}%  ({:.2} us/tick)", s * 1000.0, s / total * 100.0, s / done as f64 * 1e6);
+        }
+    }
+    let alive = sim.world.citizens().count();
+    println!("citizens: {citizens0} at start, {alive} alive at end, {} deaths", deaths.len());
+    for d in deaths.iter().take(15) {
+        println!("  {d}");
+    }
+    if !ann_counts.is_empty() {
+        println!("announcements:");
+        for (k, n) in &ann_counts {
+            println!("  {n:>6}  {k}");
         }
     }
     println!("state hash: {:016x}", sim.state_hash());

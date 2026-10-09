@@ -218,11 +218,16 @@ pub enum TtSpecial {
     Furrowed,
     Wet,
     Dead,
+    #[serde(rename = "WORN_1", alias = "WORN1")]
     Worn1,
+    #[serde(rename = "WORN_2", alias = "WORN2")]
     Worn2,
+    #[serde(rename = "WORN_3", alias = "WORN3")]
     Worn3,
     Track,
     SmoothDead,
+    /// DF 53: badly built constructions.
+    Shoddy,
 }
 
 impl TtSpecial {
@@ -241,6 +246,7 @@ impl TtSpecial {
             "WORN_3" => Worn3,
             "TRACK" => Track,
             "SMOOTH_DEAD" => SmoothDead,
+            "SHODDY" => Shoddy,
             _ => None,
         }
     }

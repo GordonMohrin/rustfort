@@ -300,7 +300,9 @@ pub fn draw_map(g: &mut Game) {
         g.gfx.unit(&g.sim.world, u, &mut sprites);
         let mut drawn = false;
         for s in &sprites {
-            drawn |= g.rend.draw_sprite(&g.gfx, s, r.x, r.y, tp);
+            // Wide unit sprites (2-tile weapons, big creatures) are centered on their tile.
+            let off = s.unit_center_px(32) as f32 * tp / 32.0;
+            drawn |= g.rend.draw_sprite(&g.gfx, s, r.x + off, r.y, tp);
         }
         if !drawn {
             draw_unit_fallback(&g.font, u, r);
