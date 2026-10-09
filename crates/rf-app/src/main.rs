@@ -12,6 +12,7 @@ mod game;
 mod keys;
 mod load;
 mod render;
+mod script;
 mod ui;
 
 use std::path::PathBuf;
@@ -33,6 +34,8 @@ pub struct Args {
     /// Fake mouse position (screenshot mode).
     pub mouse: Option<(f32, f32)>,
     pub speed: Option<String>,
+    /// Scripted input, see `script.rs`.
+    pub script: Option<String>,
     /// Frame cap when vsync is off (DF's G_FPS_CAP).
     pub gfps: u32,
     pub vsync: bool,
@@ -80,6 +83,7 @@ fn parse_args() -> Result<Args, String> {
                 a.mouse = Some((p[0], p[1]));
             }
             "--speed" => a.speed = Some(val("--speed")?),
+            "--script" => a.script = Some(val("--script")?),
             "--gfps" => a.gfps = val("--gfps")?.parse().map_err(|e| format!("--gfps: {e}"))?,
             "-h" | "--help" => return Err(String::new()),
             other => return Err(format!("unknown argument {other}")),

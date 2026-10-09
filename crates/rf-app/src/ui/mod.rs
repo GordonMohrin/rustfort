@@ -49,11 +49,11 @@ pub struct UiCtx {
 }
 
 impl UiCtx {
-    pub fn begin(&mut self, mouse: Vec2, scale: f32) {
-        self.mouse = mouse;
-        self.lpressed = is_mouse_button_pressed(MouseButton::Left);
-        self.rpressed = is_mouse_button_pressed(MouseButton::Right);
-        self.ldown = is_mouse_button_down(MouseButton::Left);
+    pub fn begin(&mut self, input: &crate::keys::InputFrame, scale: f32) {
+        self.mouse = input.mouse;
+        self.lpressed = input.lpressed;
+        self.rpressed = input.rpressed;
+        self.ldown = input.ldown;
         self.over_ui = false;
         self.click_used = false;
         self.scale = scale;

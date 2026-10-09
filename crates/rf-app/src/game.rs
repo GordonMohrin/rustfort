@@ -184,7 +184,6 @@ pub struct Game {
     pub label: String,
     pub ui_scale: f32,
     pub quit: bool,
-    pub mouse_override: Option<Vec2>,
     pan_drag: Option<(Vec2, f32, f32)>,
     /// Last feedback message of a tool (shown above the toolbar).
     pub status: Option<(String, f64)>,
@@ -298,7 +297,6 @@ impl Game {
             label: loaded.label,
             ui_scale: 1.0,
             quit: false,
-            mouse_override: args.mouse.map(|(x, y)| vec2(x, y)),
             pan_drag: None,
             status: None,
             sim_budget: SIM_BUDGET_S.min(0.75 / args.gfps.max(10) as f64),
@@ -398,10 +396,7 @@ impl Game {
     }
 
     pub fn mouse(&self) -> Vec2 {
-        self.mouse_override.unwrap_or_else(|| {
-            let (x, y) = mouse_position();
-            vec2(x, y)
-        })
+        self.input.mouse
     }
 
     /// Tile under a screen position at the current z-level.
@@ -608,11 +603,11 @@ impl Game {
         }
         // Middle mouse drag pans 1:1.
         let m = self.mouse();
-        if is_mouse_button_pressed(MouseButton::Middle) && !self.ui.over_ui {
+        if self.input.mpressed && !self.ui.over_ui {
             self.pan_drag = Some((m, self.cam.x, self.cam.y));
         }
         if let Some((start, cx, cy)) = self.pan_drag {
-            if is_mouse_button_down(MouseButton::Middle) {
+            if self.input.mdown {
                 let tp = self.cam.tile_px();
                 self.cam.x = cx - (m.x - start.x) / tp;
                 self.cam.y = cy - (m.y - start.y) / tp;
@@ -653,7 +648,7 @@ impl Game {
             return;
         }
         let lp = self.ui.lpressed && !self.ui.click_used && !self.ui.over_ui;
-        let lr = is_mouse_button_released(MouseButton::Left);
+        let lr = self.input.lreleased;
         let rp = self.ui.rpressed && !self.ui.over_ui;
         if rp {
             // Right click backs out: pending rectangle, then tool, then selection.
@@ -772,11 +767,26 @@ pub async fn run(args: Args, loaded: Loaded) {
     let mut g = Game::new(&args, loaded);
     let mut frame: u32 = 0;
     let mut deadline = Instant::now();
+    // Scripted input (screenshot tests); `--mouse` alone is a script that only parks the mouse.
+    let mut script = match (&args.script, args.mouse) {
+        (Some(s), m) => match crate::script::Script::parse(s, m) {
+            Ok(sc) => Some(sc),
+            Err(e) => {
+                eprintln!("{e}");
+                return;
+            }
+        },
+        (None, Some(m)) => crate::script::Script::parse("", Some(m)).ok(),
+        (None, None) => None,
+    };
     loop {
         let f0 = Instant::now();
         let dt = get_frame_time().min(0.1);
         g.fps = g.fps * 0.95 + (1.0 / dt.max(1e-4)) * 0.05;
         g.input = g.input_state.collect(&g.binds);
+        if let Some(sc) = script.as_mut() {
+            sc.apply(frame + 1, &mut g.input);
+        }
         // The wheel over a UI panel scrolls the panel, not the z-level (state of last frame).
         if g.ui.over_ui {
             g.input.wheel_used = true;
@@ -787,13 +797,8 @@ pub async fn run(args: Args, loaded: Loaded) {
 
         clear_background(Color::from_rgba(0, 0, 0, 255));
         crate::render::draw_map(&mut g);
-        let m = g.mouse();
         let scale = g.ui_scale;
-        g.ui.begin(m, scale);
-        if g.mouse_override.is_some() {
-            g.ui.lpressed = false;
-            g.ui.rpressed = false;
-        }
+        g.ui.begin(&g.input, scale);
         crate::ui::overlay::draw_ui(&mut g);
         g.map_input();
         g.frame_ms = f0.elapsed().as_secs_f64() * 1000.0;

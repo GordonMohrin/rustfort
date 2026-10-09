@@ -292,6 +292,13 @@ pub struct InputFrame {
     pub wheel: i32,
     /// Set by UI code to stop map/global handling of the wheel (e.g. scrolling a list).
     pub wheel_used: bool,
+    pub mouse: Vec2,
+    pub lpressed: bool,
+    pub lreleased: bool,
+    pub ldown: bool,
+    pub rpressed: bool,
+    pub mpressed: bool,
+    pub mdown: bool,
 }
 
 #[derive(Default)]
@@ -334,6 +341,14 @@ impl InputState {
         } else if wy < 0.0 {
             f.wheel = -1;
         }
+        let (mx, my) = mouse_position();
+        f.mouse = vec2(mx, my);
+        f.lpressed = is_mouse_button_pressed(MouseButton::Left);
+        f.lreleased = is_mouse_button_released(MouseButton::Left);
+        f.ldown = is_mouse_button_down(MouseButton::Left);
+        f.rpressed = is_mouse_button_pressed(MouseButton::Right);
+        f.mpressed = is_mouse_button_pressed(MouseButton::Middle);
+        f.mdown = is_mouse_button_down(MouseButton::Middle);
         f
     }
 }
