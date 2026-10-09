@@ -46,7 +46,16 @@ fn main() {
     if args.iter().any(|a| a == "--cook-brewables") {
         sim.set_cook_brewables(true);
     }
-    println!("sim init {:.2}s", t1.elapsed().as_secs_f64());
+    let r0 = sim.production_report();
+    println!(
+        "sim init {:.2}s  |  {} workshops/furnaces, {} working wells, {} farm tiles ({} planted), {} work orders",
+        t1.elapsed().as_secs_f64(),
+        r0.workshops,
+        r0.wells,
+        r0.farm_tiles,
+        r0.planted_tiles,
+        sim.world.work_orders.len()
+    );
     for n in sim.production_notes() {
         println!("note: {n}");
     }

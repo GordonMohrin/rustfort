@@ -372,6 +372,8 @@ pub struct ProductionReport {
     pub open_orders: usize,
     pub queued_jobs: usize,
     pub workshops: usize,
+    /// Wells with water below (dwarves drink there when there is no booze).
+    pub wells: usize,
     pub farm_tiles: usize,
     pub planted_tiles: usize,
     /// Completed jobs since the start, by DF-style label.
@@ -2335,6 +2337,7 @@ impl Sim {
             open_orders: self.world.work_orders.iter().filter(|o| o.amount_left > 0).count(),
             queued_jobs: self.prod.shops.iter().map(|s| self.world.buildings.get(s.bi).map(|b| b.jobs.len()).unwrap_or(0)).sum(),
             workshops: self.prod.shops.len(),
+            wells: self.prod.wells.len(),
             farm_tiles: self.prod.farms.iter().map(|f| f.tiles.len()).sum(),
             planted_tiles: self.prod.farms.iter().map(|f| f.tiles.iter().filter(|t| t.plant != NO_PLANT).count()).sum(),
             jobs_done,
