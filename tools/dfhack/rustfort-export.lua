@@ -20,7 +20,7 @@
 --     progress.json is rewritten about once per second; error.json is written if the export aborts.
 
 local VERSION = 1
-local SCRIPT_REV = '2026-10-09a'
+local SCRIPT_REV = '2026-10-09c'
 
 -- ------------------------------------------------------------------------------------------- args
 local args = { ... }
@@ -188,12 +188,15 @@ local function progress(force)
 end
 
 -- yield to DF when the slice budget is used up
+-- returns true if it yielded (callers must re-fetch DF pointers they hold)
 local function checkpoint()
   if now() >= deadline then
     progress(false)
     coroutine.yield()
     if cancelled then error('cancelled by user (cancel file)') end
+    return true
   end
+  return false
 end
 
 -- vectors change between frames: snapshot the ids in one cheap pass, then re-find each object by id
@@ -372,6 +375,8 @@ local C_STONE, C_SOIL, C_MINERAL, C_FEATURE, C_LAVA, C_FROZEN, C_CONS = TM.STONE
   TM.LAVA_STONE, TM.FROZEN_LIQUID, TM.CONSTRUCTION
 local C_GL, C_GD, C_GY, C_GX = TM.GRASS_LIGHT, TM.GRASS_DARK, TM.GRASS_DRY, TM.GRASS_DEAD
 local C_TREE, C_ROOT, C_MUSH, C_PLANT = TM.TREE, TM.ROOT, TM.MUSHROOM, TM.PLANT
+local C_MAGMA, C_POOL, C_BROOK, C_RIVER = TM.MAGMA, TM.POOL, TM.BROOK, TM.RIVER
+local getPlantAtTile = dfhack.maps.getPlantAtTile
 
 local geo_cache = {}
 local function layer_mat(x, y, z, layer)
@@ -469,6 +474,7 @@ local function nearest_tree(cands, x, y, z)
 end
 
 local unresolved = {}
+local stat = { tree_exact = 0, tree_nearest = 0 }
 local function export_map()
   phase = 'map'
   local bt = df.new('uint16_t', 256)
@@ -551,16 +557,29 @@ local function export_map()
                   mat = grass[i]
                   if not mat then mat = 0xFFFF; unresolved.grass = (unresolved.grass or 0) + 1 end
                 elseif cls == C_TREE or cls == C_ROOT or cls == C_MUSH then
-                  trees = trees or tree_candidates(bx, by)
-                  mat = nearest_tree(trees, x0 + lx, y, z)
-                  if not mat then mat = 0xFFFF; unresolved.tree = (unresolved.tree or 0) + 1 end
+                  -- exact: DFHack resolves the tree whose body covers the tile; else nearest trunk
+                  local pl = getPlantAtTile and try(getPlantAtTile, x0 + lx, y, z)
+                  if pl then mat = plant_wood(pl.material); stat.tree_exact = stat.tree_exact + 1
+                  else
+                    trees = trees or tree_candidates(bx, by)
+                    mat = nearest_tree(trees, x0 + lx, y, z)
+                    if mat then stat.tree_nearest = stat.tree_nearest + 1
+                    else mat = 0xFFFF; unresolved.tree = (unresolved.tree or 0) + 1 end
+                  end
                 elseif cls == C_PLANT then
                   mat = plant_at[(z * YC + y) * XC + x0 + lx]
                   if not mat then mat = 0xFFFF; unresolved.plant = (unresolved.plant or 0) + 1 end
                 elseif cls == C_FROZEN then
                   mat = WATER
-                elseif cls == C_LAVA then
-                  mat = OBSIDIAN
+                elseif cls == C_LAVA or cls == C_MAGMA then
+                  mat = OBSIDIAN   -- lava stone / semi-molten rock (approximation)
+                elseif cls == C_POOL or cls == C_BROOK or cls == C_RIVER then
+                  local key = ((d >> 17) & 15) * 16 + ((d >> 10) & 15)
+                  mat = lcache[key]
+                  if not mat then
+                    mat = try(layer_mat, x0 + lx, y, z, (d >> 10) & 15) or 0xFFFF
+                    lcache[key] = mat
+                  end
                 elseif cls == C_FEATURE then
                   feat = feat or feature_mat(blk, d)
                   mat = feat
@@ -584,6 +603,15 @@ local function export_map()
                 recs[lx + 1] = pack('<I2I2I2BB', tt & 0xFFFF, mat, fl, liq, (d >> 4) & 7)
               end
               rows[y][bx + 1] = table.concat(recs)
+              -- blocks full of tree tiles are slow (getPlantAtTile): allow a yield per row; the
+              -- tile data is already copied, only the block pointer must be fetched again
+              if ly < 15 and checkpoint() then
+                blk = dfhack.maps.getBlock(bx, by, z)
+                if not blk then
+                  for ry = ly + 1, 15 do rows[y0 + ry][bx + 1] = VOID_SEG end
+                  break
+                end
+              end
             end
             tiles = tiles + 256
           end
@@ -891,7 +919,9 @@ local function main()
   for k, v in pairs(unresolved) do note(('map: %d %s tiles without resolvable material'):format(v, k)) end
   for k, v in pairs(warn_count) do if v > 3 then note(('%s: %d errors in total'):format(k, v)) end end
   note('walk_speed is always 900 (gait raws not reachable from caste_raw in 53.16 DFHack structures)')
-  note('LAVA_STONE tiles -> INORGANIC:OBSIDIAN; TREE/ROOT/MUSHROOM tiles -> wood of the nearest tree (approx.)')
+  note('LAVA_STONE and MAGMA (semi-molten rock) tiles -> INORGANIC:OBSIDIAN (approx.); POOL/BROOK/RIVER tiles -> geo layer')
+  note(('TREE/ROOT/MUSHROOM tiles: %d resolved exactly (getPlantAtTile), %d via nearest tree trunk (approx.)')
+       :format(stat.tree_exact, stat.tree_nearest))
   note('GRASS tiles -> STRUCTURAL material of the grass event with the largest amount; PLANT tiles -> plant at the tile')
 end
 

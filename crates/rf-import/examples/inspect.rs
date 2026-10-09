@@ -195,6 +195,17 @@ fn main() {
         z0 = z1;
     }
 
+    // tiles without material, by tiletype material class (open air etc. excluded)
+    let mut nomat: BTreeMap<String, usize> = BTreeMap::new();
+    for t in &w.tiles {
+        let info = w.tiletypes.get(t.tt);
+        if t.mat == NO_MAT && !info.shape.is_open() && info.material != TtMaterial::Air {
+            *nomat.entry(format!("{:?}/{:?}", info.material, info.shape)).or_default() += 1;
+        }
+    }
+    let nm: Vec<String> = top(&nomat, 12).into_iter().map(|(k, c)| format!("{k} {c}")).collect();
+    println!("\nnon-open tiles without material: {}", if nm.is_empty() { "none".into() } else { nm.join(", ") });
+
     // ASCII map
     let mut per_z: BTreeMap<i16, usize> = BTreeMap::new();
     for u in &cits {
