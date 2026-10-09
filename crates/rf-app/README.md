@@ -40,7 +40,7 @@ The defaults below are Steam DF's. Your own `interface.txt` overrides them.
 | Dig menu | toolbar pickaxe | `m`, then `m` mine, `t` up/down stair, `r` ramp, `u` channel, `x` remove |
 | Chop / gather / erase | toolbar | `l` / `g` / `x` |
 | Stockpile | toolbar crate, then pick a preset (Stone, Wood, Food, Furniture, All) | `p` |
-| Citizens list | toolbar (first button); sort by Name / Profession / Stress | `u` |
+| Creatures list | toolbar (first button): Citizens (sort by Name / Profession / Stress), Pets/livestock, Others (visitors, wild animals, hostiles) | `u` |
 | Unit sheet tabs | Overview, Thoughts, Needs, Personality, Health, Relations, Skills, Labor, Items (wheel scrolls) | |
 | Squads | toolbar (right group, red arrow) | `c` |
 | Burrows | toolbar (middle group, after Zones) | `Shift+u` |
@@ -161,7 +161,7 @@ rustfort play --screenshot target/shots/a.png --frames 20 --view 48,48,22,1 \
 ```
 
 - `--view x,y,z,zoom` sets the camera.
-- `--ui` opens states: `citizens`, `sort:<name|profession|stress>`, `unit[:id]`, `skills`,
+- `--ui` opens states: `citizens`, `pets`, `others`, `sort:<name|profession|stress>`, `unit[:id]`, `skills`,
   `labor`, `items`, `thoughts`, `needs`, `personality`, `health`, `relations`, `dig`, `chop`,
   `stockpile`, `menu`, `loadmenu`, `tile`, `drag`, `build[:category]`, `place:<label|subtype|index>`
   (build tool with a ghost), `zone[:kind index]`, `orders`, `neworder[:template]`,

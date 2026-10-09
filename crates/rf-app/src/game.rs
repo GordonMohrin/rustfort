@@ -378,6 +378,8 @@ pub struct Game {
     pub civ_alert: Option<i32>,
     /// Next hostile the top bar's hostile counter centers on.
     pub hostile_cycle: usize,
+    /// Tab of the creatures list: 0 citizens, 1 pets/livestock, 2 others.
+    pub creatures_tab: usize,
 }
 
 pub fn ordinal(d: i32) -> String {
@@ -516,6 +518,7 @@ impl Game {
             alert: None,
             civ_alert: None,
             hostile_cycle: 0,
+            creatures_tab: 0,
         };
         g.reset_hostiles();
         g.build_opts = g.sim.build_options();
@@ -583,6 +586,14 @@ impl Game {
             let (k, v) = u.split_once(':').unwrap_or((u.as_str(), ""));
             match k {
                 "citizens" => self.citizens_open = true,
+                "pets" => {
+                    self.citizens_open = true;
+                    self.creatures_tab = 1;
+                }
+                "others" => {
+                    self.citizens_open = true;
+                    self.creatures_tab = 2;
+                }
                 "dig" => {
                     self.submenu = Submenu::Dig;
                     self.tool = Tool::Designate(DesignationKind::Mine);
