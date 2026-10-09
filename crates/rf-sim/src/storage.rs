@@ -391,59 +391,71 @@ impl Sim {
     /// Send empty containers to piles below their maximum.
     fn bring_containers(&mut self, now: u64) {
         let np = self.store.piles.len().min(self.piles.len());
+        // Piles that want a container class: (pile, class).
+        let mut wants: Vec<(usize, u8)> = Vec::new();
         for pi in 0..np {
             let classes = self.pile_classes(pi);
             if classes == 0 || self.piles[pi].free == 0 {
                 continue;
             }
-            let ps = self.store.piles[pi].clone();
-            let mut want: Vec<u8> = Vec::new();
+            let ps = &self.store.piles[pi];
             if classes & (1 << CL_BIN) != 0 && ps.bins + ps.bringing < ps.max_bins {
-                want.push(CL_BIN);
+                wants.push((pi, CL_BIN));
             }
             if classes & (1 << CL_BARREL) != 0 && ps.barrels + ps.bags + ps.bringing < ps.max_barrels {
-                want.push(CL_BARREL);
+                wants.push((pi, CL_BARREL));
                 // Seeds and flour go into bags; bring one when the pile has none.
                 if ps.bags == 0 {
-                    want.push(CL_BAG);
+                    wants.push((pi, CL_BAG));
                 }
             }
-            for cl in want {
-                let Some(cat) = self.pile_cat_for(pi, cl) else { continue };
-                // Nearest free empty container of that class not already serving a pile.
-                let pt = self.piles[pi].tiles[0] as usize;
-                let near = self.nav.xyz(pt);
-                let c = self.nav.comp_root(pt);
-                let mut best = (i32::MAX, -1i32, 0usize);
-                for idx in 0..self.world.items.len() {
-                    let it = &self.world.items[idx];
-                    if container_class(&it.kind, &it.subtype) != cl || self.store.cont_ix.contains_key(&it.id) || self.store.bring.contains_key(&it.id) {
-                        continue;
-                    }
-                    if !self.haulable(idx) || self.imeta[idx].reserved > 0 || self.imeta[idx].hauling || self.imeta[idx].blocked_until > now || !self.container_empty_pub(it.id) {
-                        continue;
-                    }
-                    let Some(t) = self.world.idx(it.pos) else { continue };
-                    let d = manhattan(near, self.nav.xyz(t));
-                    if d < best.0 && self.nav.comp_near(t) == c {
-                        best = (d, it.id, idx);
-                    }
-                }
-                if best.1 < 0 {
+        }
+        if wants.is_empty() {
+            return;
+        }
+        // Free empty containers not serving a pile, by class (one item scan).
+        let mut cands: Vec<(u8, i32, usize, usize)> = Vec::new();
+        for idx in 0..self.world.items.len() {
+            let it = &self.world.items[idx];
+            let cl = container_class(&it.kind, &it.subtype);
+            if cl == CL_NONE || self.store.cont_ix.contains_key(&it.id) || self.store.bring.contains_key(&it.id) {
+                continue;
+            }
+            if !self.haulable(idx) || self.imeta[idx].reserved > 0 || self.imeta[idx].hauling || self.imeta[idx].blocked_until > now || !self.container_empty_pub(it.id) {
+                continue;
+            }
+            let Some(t) = self.world.idx(it.pos) else { continue };
+            cands.push((cl, it.id, idx, t));
+        }
+        for (pi, cl) in wants {
+            let Some(cat) = self.pile_cat_for(pi, cl) else { continue };
+            let pt = self.piles[pi].tiles[0] as usize;
+            let near = self.nav.xyz(pt);
+            let c = self.nav.comp_root(pt);
+            let mut best = (i32::MAX, usize::MAX);
+            for (k, &(ccl, _, _, t)) in cands.iter().enumerate() {
+                if ccl != cl {
                     continue;
                 }
-                let (id, idx) = (best.1, best.2);
-                self.store.bring.insert(id, pi as u32);
-                self.store.piles[pi].bringing += 1;
-                // Retag it so the haulers see it as belonging to this pile's category.
-                let queued = self.haul_pos.contains_key(&id);
-                if queued {
-                    self.haul_remove(id);
+                let d = manhattan(near, self.nav.xyz(t));
+                if d < best.0 && self.nav.comp_near(t) == c {
+                    best = (d, k);
                 }
-                self.imeta[idx].cat = cat;
-                self.haul_add(id);
-                self.store.brought += 1;
             }
+            if best.1 == usize::MAX {
+                continue;
+            }
+            let (_, id, idx, _) = cands.swap_remove(best.1);
+            self.store.bring.insert(id, pi as u32);
+            self.store.piles[pi].bringing += 1;
+            // Retag it so the haulers see it as belonging to this pile's category.
+            let queued = self.haul_pos.contains_key(&id);
+            if queued {
+                self.haul_remove(id);
+            }
+            self.imeta[idx].cat = cat;
+            self.haul_add(id);
+            self.store.brought += 1;
         }
     }
 

@@ -1390,7 +1390,10 @@ impl Sim {
         })
     }
 
-    fn count_condition(&self, c: &OrderCondition) -> i32 {
+    /// Count the items an order condition refers to, over candidate item indices (all items if
+    /// None). [industry] indexed by kind.
+    fn count_condition_in(&self, c: &OrderCondition, cands: Option<&[u32]>) -> i32 {
+        let pre = format!("{}:", c.mat);
         let mat_idx: Option<Vec<u16>> = if c.mat.is_empty() {
             None
         } else {
@@ -1399,13 +1402,16 @@ impl Sim {
                     .materials
                     .iter()
                     .enumerate()
-                    .filter(|(_, m)| m.token == c.mat || m.token.starts_with(&format!("{}:", c.mat)))
+                    .filter(|(_, m)| m.token == c.mat || m.token.starts_with(&pre))
                     .map(|(i, _)| i as u16)
                     .collect(),
             )
         };
         let mut n = 0;
-        for idx in 0..self.world.items.len() {
+        let all = cands.is_none();
+        let len = cands.map(|v| v.len()).unwrap_or(self.world.items.len());
+        for k in 0..len {
+            let idx = if all { k } else { cands.unwrap()[k] as usize };
             let it = &self.world.items[idx];
             let m = &self.imeta[idx];
             if m.dead || it.flags.in_building || it.building >= 0 || it.flags.construction {
@@ -1444,6 +1450,12 @@ impl Sim {
 
     fn run_orders(&mut self) {
         let mut done_orders: Vec<i32> = Vec::new();
+        // [industry] Many orders share conditions (e.g. "at least 22 boulders"): count each once.
+        let mut memo: HashMap<String, i32> = HashMap::new();
+        let mut by_kind: HashMap<u64, Vec<u32>> = HashMap::new();
+        for (i, it) in self.world.items.iter().enumerate() {
+            by_kind.entry(crate::industry::kind_key(&it.kind)).or_default().push(i as u32);
+        }
         for oi in 0..self.world.work_orders.len() {
             let (id, freq) = (self.world.work_orders[oi].id, self.world.work_orders[oi].frequency.clone());
             if let Some(p) = self.period_index(&freq) {
@@ -1471,7 +1483,19 @@ impl Sim {
                 self.note_unsupported(&name);
                 continue;
             };
-            let conds_ok = o.conditions.iter().all(|c| compare(&c.compare, self.count_condition(c), c.value));
+            let conds_ok = o.conditions.iter().all(|c| {
+                let key = format!("{}|{}|{}|{}", c.item_type, c.item_subtype, c.mat, c.flags.join(","));
+                let n = match memo.get(&key) {
+                    Some(&n) => n,
+                    None => {
+                        let cands = if c.item_type.is_empty() { None } else { Some(by_kind.get(&crate::industry::kind_key(&c.item_type)).map(|v| v.as_slice()).unwrap_or(&[])) };
+                        let n = self.count_condition_in(c, cands);
+                        memo.insert(key, n);
+                        n
+                    }
+                };
+                compare(&c.compare, n, c.value)
+            }); // [industry] memoized
             if !conds_ok {
                 continue;
             }

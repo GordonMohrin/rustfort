@@ -136,6 +136,16 @@ const MATERIAL_SIZE: &[(&str, i32)] = &[
 /// Body size used for butchering when the creature raws do not know the race (estimate).
 const DEFAULT_BODY_SIZE: i32 = 50_000;
 
+/// FNV-1a hash of an item kind (index key for order conditions).
+pub(crate) fn kind_key(s: &str) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in s.bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100_0000_01b3);
+    }
+    h
+}
+
 /// Is `mat` (a job material token like `INORGANIC:IRON`) a metal?
 pub fn is_metal_token(mat: &str) -> bool {
     mat.strip_prefix("INORGANIC:").map(|m| METALS.contains(&m)).unwrap_or(false)
@@ -195,6 +205,7 @@ pub(crate) struct Ind {
     pub cmat: HashMap<String, u16>,
     /// Items made, by DF item kind.
     pub made: Vec<(String, i64)>,
+    pub last_census: u64,
 }
 
 /// Industry overview for the bench/acceptance report.
@@ -328,6 +339,12 @@ impl Sim {
     /// [industry] Count free reagents (once per production pass).
     pub(crate) fn ind_census(&mut self, now: u64) {
         self.ind_setup();
+        // Reagent availability is refreshed every 4th production pass (DF checks jobs
+        // periodically too); the claim itself always looks at the real items.
+        if self.ind.last_census > 0 && now < self.ind.last_census + 4 * crate::production::PROD_PERIOD {
+            return;
+        }
+        self.ind.last_census = now;
         let mut c = IndCensus::default();
         for idx in 0..self.world.items.len() {
             let p = self.imeta[idx].pc;
