@@ -133,7 +133,7 @@ fn draw_announcements(g: &mut Game, bottom: f32, right: f32) -> f32 {
             AnnouncementKind::Warning => col::TEXT_HI,
             AnnouncementKind::Death => col::TEXT_BAD,
             // Kinds the sim adds later (e.g. combat) use the Reports colors.
-            k => super::reports::kind_color(k, &l.text),
+            k => super::reports::cat_color(k, l.cat as usize),
         };
         let maxc = (((right - 8.0 * s) / (crate::font::GW * s)) as usize).clamp(10, 90);
         let text = super::clip(&l.text, maxc);

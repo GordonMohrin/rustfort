@@ -84,6 +84,16 @@ impl Game {
         self.hostiles_seen = h.clone();
         self.hostiles = h;
         self.alert_tick = None;
+        // A siege already in progress gets an announcement (no pop-up, like loading in DF).
+        let w = &self.sim.world;
+        let active: Vec<&Unit> = self.hostiles.iter().filter_map(|id| w.unit(*id)).filter(|u| !u.flags.caged && !u.flags.dead).collect();
+        if !active.is_empty() {
+            let n = active.len();
+            let text = format!("{n} hostile creature{} on the map!", if n == 1 { " is" } else { "s are" });
+            let pos = active.first().map(|u| u.pos);
+            let date = date_string(&w.calendar);
+            self.log.push(LogLine::new(text, pos, AnnouncementKind::Warning, get_time(), date));
+        }
     }
 
     /// Called once per frame after the sim ran.
@@ -122,7 +132,7 @@ impl Game {
         let (title, text, pause) = alert_text(w, &units);
         let pos = units.first().map(|u| u.pos);
         let date = date_string(&w.calendar);
-        self.log.push(LogLine { text: text.clone(), pos, kind: AnnouncementKind::Warning, born: get_time(), date });
+        self.log.push(LogLine::new(text.clone(), pos, AnnouncementKind::Warning, get_time(), date));
         self.alert_tick = Some(self.sim.ticks());
         if pause {
             self.paused = true;
@@ -163,6 +173,7 @@ pub fn draw_alert(g: &mut Game) {
     let (w, h) = (tw.clamp(460.0 * s, sw - 40.0), 168.0 * s);
     let r = Rect::new((sw - w) / 2.0, (sh - h) / 2.5, w, h);
     draw_rectangle(0.0, 0.0, sw, sh, Color::new(0.15, 0.0, 0.0, 0.25));
+    draw_rectangle(r.x, r.y, r.w, r.h, Color::new(0.04, 0.03, 0.03, 1.0));
     panel(&mut g.ui, r);
     draw_rectangle_lines(r.x + 1.0, r.y + 1.0, r.w - 2.0, r.h - 2.0, 2.0, Color::from_rgba(200, 40, 30, 255));
     let mut y = r.y + 14.0 * s;

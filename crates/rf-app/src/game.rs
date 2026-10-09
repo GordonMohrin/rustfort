@@ -275,6 +275,15 @@ pub struct LogLine {
     pub born: f64,
     /// Game date when it arrived (`15th Granite, 274`).
     pub date: String,
+    /// Reports category (`ui::reports::category`), computed once.
+    pub cat: u8,
+}
+
+impl LogLine {
+    pub fn new(text: String, pos: Option<Pos>, kind: AnnouncementKind, born: f64, date: String) -> LogLine {
+        let cat = crate::ui::reports::category(kind, &text) as u8;
+        LogLine { text, pos, kind, born, date, cat }
+    }
 }
 
 /// Drag state of a rectangle tool (designations, stockpiles).
@@ -367,6 +376,8 @@ pub struct Game {
     pub alert: Option<Alert>,
     /// Burrow of the active civilian alert.
     pub civ_alert: Option<i32>,
+    /// Next hostile the top bar's hostile counter centers on.
+    pub hostile_cycle: usize,
 }
 
 pub fn ordinal(d: i32) -> String {
@@ -504,45 +515,46 @@ impl Game {
             alert_tick: None,
             alert: None,
             civ_alert: None,
+            hostile_cycle: 0,
         };
         g.reset_hostiles();
         g.build_opts = g.sim.build_options();
         g.stocks = crate::ui::topbar::count_stocks(&g.sim.world, 0.0);
         let now = get_time();
         if let Some(w) = loaded.warning {
-            g.log.push(LogLine { text: w, pos: None, kind: AnnouncementKind::Warning, born: now, date: date_string(&g.sim.world.calendar) });
+            g.log.push(LogLine::new(w, None, AnnouncementKind::Warning, now, date_string(&g.sim.world.calendar)));
         }
         if let Some(r) = &loaded.report {
-            g.log.push(LogLine {
-                text: format!(
+            g.log.push(LogLine::new(
+                format!(
                     "Imported {} units ({} citizens), {} items, {} buildings in {:.1}s; {} warnings",
                     r.units, r.citizens, r.items, r.buildings, r.seconds, r.warnings.len()
                 ),
-                pos: None,
-                kind: AnnouncementKind::Info,
-                born: now,
-                date: date_string(&g.sim.world.calendar),
-            });
+                None,
+                AnnouncementKind::Info,
+                now,
+                date_string(&g.sim.world.calendar),
+            ));
         }
-        g.log.push(LogLine {
-            text: format!(
+        g.log.push(LogLine::new(
+            format!(
                 "Welcome to {}. Space unpauses. Keys: {}",
                 g.sim.world.meta.fort_name,
                 if g.binds.source.contains("Roaming") { "your DF prefs" } else { g.binds.source.as_str() }
             ),
-            pos: None,
-            kind: AnnouncementKind::Info,
-            born: now,
-            date: date_string(&g.sim.world.calendar),
-        });
+            None,
+            AnnouncementKind::Info,
+            now,
+            date_string(&g.sim.world.calendar),
+        ));
         if g.gfx.pages.is_empty() {
-            g.log.push(LogLine {
-                text: "Premium tileset not loaded yet (rf-gfx stub): drawing fallback tiles".into(),
-                pos: None,
-                kind: AnnouncementKind::Info,
-                born: now,
-                date: date_string(&g.sim.world.calendar),
-            });
+            g.log.push(LogLine::new(
+                "Premium tileset not loaded yet (rf-gfx stub): drawing fallback tiles".into(),
+                None,
+                AnnouncementKind::Info,
+                now,
+                date_string(&g.sim.world.calendar),
+            ));
         }
         g.apply_args(args);
         g
@@ -674,6 +686,7 @@ impl Game {
                 "station" => {
                     if let Some(sq) = self.mil.squad.or_else(|| self.sim.world.squads.first().map(|s| s.id)) {
                         self.tool = Tool::SquadStation(sq);
+                        self.screen = Screen::None;
                     }
                 }
                 "burrows" => {
@@ -772,7 +785,7 @@ impl Game {
         self.poll_save();
         let date = date_string(&self.sim.world.calendar);
         for a in self.sim.drain_announcements() {
-            self.log.push(LogLine { text: a.text, pos: a.pos, kind: a.kind, born: now, date: date.clone() });
+            self.log.push(LogLine::new(a.text, a.pos, a.kind, now, date.clone()));
         }
         // [round 3] The Reports screen keeps a long history.
         if self.log.len() > LOG_KEEP {
@@ -972,7 +985,7 @@ impl Game {
             Err(e) => (format!("Save failed: {e}"), AnnouncementKind::Warning),
         };
         self.set_status(text.clone());
-        self.log.push(LogLine { text, pos: None, kind, born: now, date: date_string(&self.sim.world.calendar) });
+        self.log.push(LogLine::new(text, None, kind, now, date_string(&self.sim.world.calendar)));
         if self.menu_open && self.menu.page == MenuPage::Load {
             self.menu.saves = crate::save::list_saves(&crate::save::save_dir());
         }
@@ -1020,12 +1033,12 @@ impl Game {
                     t.elapsed().as_secs_f64()
                 );
                 self.set_status(text.clone());
-                self.log.push(LogLine { text, pos: None, kind: AnnouncementKind::Info, born: now, date: date_string(&self.sim.world.calendar) });
+                self.log.push(LogLine::new(text, None, AnnouncementKind::Info, now, date_string(&self.sim.world.calendar)));
             }
             Err(e) => {
                 let text = format!("Load failed: {e}");
                 self.set_status(text.clone());
-                self.log.push(LogLine { text, pos: None, kind: AnnouncementKind::Warning, born: now, date: date_string(&self.sim.world.calendar) });
+                self.log.push(LogLine::new(text, None, AnnouncementKind::Warning, now, date_string(&self.sim.world.calendar)));
             }
         }
     }

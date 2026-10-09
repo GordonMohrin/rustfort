@@ -35,8 +35,9 @@ pub fn category(kind: AnnouncementKind, text: &str) -> usize {
     }
 }
 
-pub fn kind_color(kind: AnnouncementKind, text: &str) -> Color {
-    match category(kind, text) {
+/// Color of a line of category `cat`.
+pub fn cat_color(kind: AnnouncementKind, cat: usize) -> Color {
+    match cat {
         1 => Color::from_rgba(255, 110, 90, 255),
         2 => col::TEXT_BAD,
         3 => col::TEXT_CYAN,
@@ -51,7 +52,7 @@ pub fn kind_color(kind: AnnouncementKind, text: &str) -> Color {
 }
 
 fn matches(f: usize, l: &LogLine) -> bool {
-    f == 0 || category(l.kind, &l.text) == f
+    f == 0 || l.cat as usize == f
 }
 
 pub fn draw_reports(g: &mut Game) {
@@ -127,7 +128,7 @@ pub fn draw_reports(g: &mut Game) {
         g.font.draw(&clip(&l.date, 21), x, y, s, col::TEXT_DIM);
         let mark = if l.pos.is_some() { "»" } else { " " };
         g.font.draw(mark, x + date_w - 12.0 * s, y, s, col::BORDER_HI);
-        let tc = kind_color(l.kind, &l.text);
+        let tc = cat_color(l.kind, l.cat as usize);
         g.font.draw(&clip(&l.text, maxc.saturating_sub(23)), x + date_w, y, s, tc);
         y += lh;
     }
