@@ -177,6 +177,7 @@ local T0 = now()
 local START_YEAR, START_TICK = df.global.cur_year, df.global.cur_year_tick
 local deadline = 0
 local frames, max_slice, total_lua = 0, 0, 0
+local phase_max = {}   -- longest slice per phase (ms), reported in manifest.json max_slice_by_phase
 local phase, phase_detail = 'start', ''
 local last_progress = 0
 local cancelled = false
@@ -1836,7 +1837,7 @@ local function main()
   local i = 1
   while i <= #pal do       -- palette may still grow? no: all palidx calls are done; loop by index anyway
     mats[#mats + 1] = material_json(pal[i][1], pal[i][2])
-    if i % 32 == 0 then phase_detail = i .. '/' .. #pal; checkpoint() end
+    if i % 8 == 0 then phase_detail = i .. '/' .. #pal; checkpoint() end
     i = i + 1
   end
   write_file(OUT .. '/materials.json', '[\n' .. table.concat(mats, ',\n') .. '\n]\n')
@@ -1900,6 +1901,12 @@ local function finish()
     'map_complete', jb(not opt.skip_map and not opt.zmin and not opt.zmax),
     'mods', jarr(mods), 'mods_detail', '[\n  ' .. table.concat(mods_detail, ',\n  ') .. '\n]',
     'stress_cutoffs', jarr(cutoffs),
+    'max_slice_by_phase', (function()
+      local kv = {}
+      for k, v in pairs(phase_max) do kv[#kv + 1] = '"' .. k .. '":' .. ji(v) end
+      table.sort(kv)
+      return '{' .. table.concat(kv, ',') .. '}'
+    end)(),
     'notes', '[\n  ' .. table.concat(nl, ',\n  ') .. '\n]' })
   write_file(OUT .. '/manifest.json', manifest .. '\n')
   phase = 'done'
@@ -1927,11 +1934,13 @@ local function step()
   end
   local t = now()
   deadline = t + opt.budget
+  local ph = phase
   local ok, err = coroutine.resume(co)
   local dt = now() - t
   frames = frames + 1
   total_lua = total_lua + dt
   if dt > max_slice then max_slice = dt end
+  if dt > (phase_max[ph] or 0) then phase_max[ph] = dt end
   if not ok then fail(err) return end
   if coroutine.status(co) == 'dead' then
     local fok, ferr = pcall(finish)

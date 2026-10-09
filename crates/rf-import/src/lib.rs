@@ -8,8 +8,8 @@
 //! or `tiletypes.json` is a hard error.
 
 use rf_core::{
-    tile_flags, Building, Calendar, Dims, Item, MaterialInfo, Meta, Plant, Shape, Tile, TiletypeInfo, TiletypeTable,
-    TtMaterial, TtSpecial, Unit, World, NO_MAT,
+    tile_flags, ArmorRaw, Building, Burrow, Calendar, CreatureRaw, Dims, Item, MaterialInfo, Meta, Plant, Pos, Shape, Squad,
+    Tile, TiletypeInfo, TiletypeTable, TtMaterial, TtSpecial, Unit, WeaponRaw, World, NO_MAT,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -53,9 +53,21 @@ pub struct ImportReport {
     pub plant_raws: usize,
     /// Jobs in workshop/furnace queues (sum of `Building::jobs`).
     pub building_jobs: usize,
+    /// Round-3 data (0 when the export predates it).
+    pub creature_raws: usize,
+    pub weapon_raws: usize,
+    pub armor_raws: usize,
+    pub squads: usize,
+    pub burrows: usize,
+    /// Sum of `Burrow::tiles` (0 for round-2 exports, which only had tile counts).
+    pub burrow_tiles: usize,
     pub warnings: Vec<String>,
     pub seconds: f64,
 }
+
+/// Tile flag bit 14 of the export (round 3): DF `tile_occupancy.heavy_aquifer`. Not in
+/// `rf_core::tile_flags` yet; see docs/EXPORT_FORMAT.md.
+pub const TILE_FLAG_HEAVY_AQUIFER: u16 = 1 << 14;
 
 /// One mod of `manifest.json` `mods_detail` (display data; `Meta::mods` holds `id:numeric_version`).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -106,15 +118,101 @@ pub struct Extras {
 }
 
 /// Read `burrows.json`, `squads.json` and the manifest's `mods_detail` (all optional; missing
-/// or broken files give empty lists).
+/// or broken files give empty lists). Since round 3 the burrows and squads are also first-class
+/// (`World::burrows`, `World::squads`); this summary view reads both the round-2 and the
+/// round-3 file layout.
 pub fn load_extras(dir: &Path) -> Extras {
     fn opt<T: DeserializeOwned + Default>(p: &Path) -> T {
         std::fs::read_to_string(p).ok().and_then(|t| serde_json::from_str(strip_bom(&t)).ok()).unwrap_or_default()
     }
+    let burrows: Vec<RawBurrow> = opt(&dir.join("burrows.json"));
+    let squads: Vec<RawSquad> = opt(&dir.join("squads.json"));
     Extras {
-        burrows: opt(&dir.join("burrows.json")),
-        squads: opt(&dir.join("squads.json")),
+        burrows: burrows
+            .into_iter()
+            .map(|b| BurrowInfo {
+                id: b.id,
+                tiles: b.tile_count(),
+                blocks: b.blocks,
+                units: b.units.clone(),
+                name: b.name,
+            })
+            .collect(),
+        squads: squads.into_iter().map(RawSquad::info).collect(),
         mods: load_manifest(dir).map(|m| m.mods_detail).unwrap_or_default(),
+    }
+}
+
+/// `tiles` of a burrows.json entry: a tile count (round 2) or the tile list (round 3).
+#[derive(Clone, Debug, Deserialize)]
+#[serde(untagged)]
+enum BurrowTiles {
+    Count(i32),
+    List(Vec<Pos>),
+}
+
+impl Default for BurrowTiles {
+    fn default() -> Self {
+        BurrowTiles::List(Vec::new())
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+struct RawBurrow {
+    id: i32,
+    name: String,
+    tiles: BurrowTiles,
+    units: Vec<i32>,
+    /// Round-3 extra: number of tiles (same as `tiles.len()`).
+    tile_count: Option<i32>,
+    blocks: i32,
+}
+
+impl RawBurrow {
+    fn tile_count(&self) -> i32 {
+        match &self.tiles {
+            BurrowTiles::Count(n) => *n,
+            BurrowTiles::List(v) => self.tile_count.unwrap_or(v.len() as i32).max(v.len() as i32),
+        }
+    }
+    fn into_burrow(self) -> Burrow {
+        let tiles = match self.tiles {
+            BurrowTiles::Count(_) => Vec::new(),
+            BurrowTiles::List(v) => v,
+        };
+        Burrow { id: self.id, name: self.name, tiles, units: self.units }
+    }
+}
+
+/// A squads.json entry: rf_core::Squad plus the extras the summary view needs.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+struct RawSquad {
+    #[serde(flatten)]
+    squad: Squad,
+    member_hfs: Vec<i32>,
+    positions: i32,
+}
+
+impl RawSquad {
+    /// Round 2 listed only filled positions; round 3 lists every position (-1 = empty, hf -1).
+    fn info(self) -> SquadInfo {
+        let s = self.squad;
+        let name = if s.alias.is_empty() { s.name.clone() } else { s.alias.clone() };
+        let (mut members, mut member_hfs) = (Vec::new(), Vec::new());
+        if self.member_hfs.len() == s.members.len() {
+            for (u, h) in s.members.iter().zip(&self.member_hfs) {
+                if *h >= 0 {
+                    members.push(*u);
+                    member_hfs.push(*h);
+                }
+            }
+        } else {
+            members = s.members.iter().copied().filter(|&u| u >= 0).collect();
+            member_hfs = self.member_hfs.clone();
+        }
+        SquadInfo { id: s.id, name, members, member_hfs, positions: self.positions }
     }
 }
 
@@ -159,6 +257,20 @@ pub struct Manifest {
     pub mods: Vec<String>,
     /// The same mods with display name and version.
     pub mods_detail: Vec<ModInfo>,
+    /// Round 3: DF's stress category cutoffs (`dfhack.units.getStressCutoffs`), descending, e.g.
+    /// `[50000, 25000, 10000, -10000, -25000, -50000, -100000]`. A unit's category (0 = most
+    /// stressed .. 6 = happiest) is the number of cutoffs strictly greater than its stress.
+    pub stress_cutoffs: Vec<i32>,
+    /// Round 3: longest frame slice per exporter phase (ms).
+    pub max_slice_by_phase: BTreeMap<String, u32>,
+}
+
+impl Manifest {
+    /// DF stress category (0 = most stressed .. `stress_cutoffs.len()` = happiest) of a stress
+    /// value, from this export's cutoffs. `None` if the export has no cutoffs (before round 3).
+    pub fn stress_category(&self, stress: i32) -> Option<usize> {
+        (!self.stress_cutoffs.is_empty()).then(|| self.stress_cutoffs.iter().filter(|&&c| c > stress).count())
+    }
 }
 
 impl Manifest {
@@ -473,6 +585,40 @@ pub fn load_export(dir: &Path) -> Result<(World, ImportReport), ImportError> {
     } else {
         Vec::new()
     };
+    // Round-3 files (optional): creature/weapon/armor raws; squads and burrows (round 2 already had
+    // these two files with less data, they load too).
+    fn optional<T: DeserializeOwned + Default>(dir: &Path, name: &str, kind: &'static str, w: &mut Warnings) -> T {
+        let p = dir.join(name);
+        if !p.exists() {
+            return T::default();
+        }
+        match read_json::<T>(&p, kind, false) {
+            Ok((v, ww)) => {
+                w.merge(ww);
+                v
+            }
+            Err(_) => T::default(),
+        }
+    }
+    let creature_raws: Vec<CreatureRaw> = optional(dir, "creature_raws.json", "creature_raws", &mut w);
+    let weapon_raws: Vec<WeaponRaw> = optional(dir, "weapon_raws.json", "weapon_raws", &mut w);
+    let armor_raws: Vec<ArmorRaw> = optional(dir, "armor_raws.json", "armor_raws", &mut w);
+    let squads: Vec<Squad> =
+        optional::<Vec<RawSquad>>(dir, "squads.json", "squads", &mut w).into_iter().map(|s| s.squad).collect();
+    let raw_burrows: Vec<RawBurrow> = optional(dir, "burrows.json", "burrows", &mut w);
+    let mut count_only_burrows = 0usize;
+    let burrows: Vec<Burrow> = raw_burrows
+        .into_iter()
+        .map(|b| {
+            if matches!(b.tiles, BurrowTiles::Count(n) if n > 0) {
+                count_only_burrows += 1;
+            }
+            b.into_burrow()
+        })
+        .collect();
+    if count_only_burrows > 0 {
+        w.add("burrows", format!("{count_only_burrows} burrows without tile lists (round-2 export); imported with no tiles"));
+    }
 
     let mut world = World {
         meta: Meta {
@@ -506,6 +652,11 @@ pub fn load_export(dir: &Path) -> Result<(World, ImportReport), ImportError> {
         plants,
         work_orders,
         plant_raws,
+        creature_raws,
+        weapon_raws,
+        armor_raws,
+        squads,
+        burrows,
         ..Default::default()
     };
     validate(&mut world, &manifest, &mut w);
@@ -520,6 +671,12 @@ pub fn load_export(dir: &Path) -> Result<(World, ImportReport), ImportError> {
         work_orders: world.work_orders.len(),
         plant_raws: world.plant_raws.len(),
         building_jobs: world.buildings.iter().map(|b| b.jobs.len()).sum(),
+        creature_raws: world.creature_raws.len(),
+        weapon_raws: world.weapon_raws.len(),
+        armor_raws: world.armor_raws.len(),
+        squads: world.squads.len(),
+        burrows: world.burrows.len(),
+        burrow_tiles: world.burrows.iter().map(|b| b.tiles.len()).sum(),
         warnings: {
             let mut list = w.finish();
             for n in &manifest.notes {
@@ -581,9 +738,46 @@ fn validate(world: &mut World, m: &Manifest, w: &mut Warnings) {
             b.crops.resize(4, String::new());
         }
     }
+    // Round-3 data: tissue materials, body part parents, burrow tiles inside the map.
+    let mut bad_tissue = 0usize;
+    let mut bad_parent = 0usize;
+    for cr in &mut world.creature_raws {
+        for c in &mut cr.castes {
+            let n = c.body_parts.len() as i32;
+            for p in &mut c.body_parts {
+                if p.parent < -1 || p.parent >= n {
+                    p.parent = -1;
+                    bad_parent += 1;
+                }
+                for l in &mut p.layers {
+                    if fix_mat(&mut l.mat) {
+                        bad_tissue += 1;
+                    }
+                }
+            }
+        }
+    }
+    if bad_tissue > 0 {
+        w.add("creature_raws", format!("{bad_tissue} tissue layer material indices out of palette range (set to none)"));
+    }
+    if bad_parent > 0 {
+        w.add("creature_raws", format!("{bad_parent} body parts with an out-of-range parent (set to root)"));
+    }
+    let dims = world.dims;
+    let inside = |p: &Pos| p.x >= 0 && p.y >= 0 && p.z >= 0 && (p.x as u16) < dims.x && (p.y as u16) < dims.y && (p.z as u16) < dims.z;
+    let mut bad_tiles = 0usize;
+    for b in &mut world.burrows {
+        let before = b.tiles.len();
+        b.tiles.retain(|p| inside(p));
+        bad_tiles += before - b.tiles.len();
+    }
+    if bad_tiles > 0 {
+        w.add("burrows", format!("{bad_tiles} burrow tiles outside the map dropped"));
+    }
     let cit = world.units.iter().filter(|u| u.flags.citizen && !u.flags.dead).count();
     let farm_plots = world.buildings.iter().filter(|b| b.kind == "FarmPlot").count();
     let building_jobs = world.buildings.iter().map(|b| b.jobs.len()).sum::<usize>();
+    let sum = |f: fn(&Unit) -> usize| world.units.iter().map(f).sum::<usize>();
     for (key, got) in [
         ("units", world.units.len()),
         ("citizens", cit),
@@ -596,6 +790,17 @@ fn validate(world: &mut World, m: &Manifest, w: &mut Warnings) {
         ("plant_raws", world.plant_raws.len()),
         ("building_jobs", building_jobs),
         ("farm_plots", farm_plots),
+        ("creature_raws", world.creature_raws.len()),
+        ("weapon_raws", world.weapon_raws.len()),
+        ("armor_raws", world.armor_raws.len()),
+        ("squads", world.squads.len()),
+        ("burrows", world.burrows.len()),
+        ("burrow_tiles", world.burrows.iter().map(|b| b.tiles.len()).sum()),
+        ("unit_needs", sum(|u| u.needs.len())),
+        ("unit_emotions", sum(|u| u.emotions.len())),
+        ("unit_values", sum(|u| u.values.len())),
+        ("unit_relationships", sum(|u| u.relationships.len())),
+        ("unit_wounds", sum(|u| u.wounds.len())),
     ] {
         if let Some(want) = m.count(key) {
             if want != got as i64 {
@@ -637,6 +842,12 @@ pub fn write_export(world: &World, dir: &Path) -> Result<(), ImportError> {
     // Round-2 files (optional for the importer; always written here).
     jsonl(dir, "work_orders.jsonl", &world.work_orders)?;
     write_json("plant_raws.json", to_json(&world.plant_raws))?;
+    // Round-3 files (optional for the importer; always written here).
+    write_json("creature_raws.json", to_json(&world.creature_raws))?;
+    write_json("weapon_raws.json", to_json(&world.weapon_raws))?;
+    write_json("armor_raws.json", to_json(&world.armor_raws))?;
+    write_json("squads.json", to_json(&world.squads))?;
+    write_json("burrows.json", to_json(&world.burrows))?;
     let plane = world.dims.x as usize * world.dims.y as usize;
     for z in 0..world.dims.z as usize {
         let mut buf = Vec::with_capacity(plane * TILE_RECORD_BYTES);
@@ -666,6 +877,17 @@ pub fn write_export(world: &World, dir: &Path) -> Result<(), ImportError> {
         ("plant_raws", world.plant_raws.len()),
         ("building_jobs", world.buildings.iter().map(|b| b.jobs.len()).sum()),
         ("farm_plots", world.buildings.iter().filter(|b| b.kind == "FarmPlot").count()),
+        ("creature_raws", world.creature_raws.len()),
+        ("weapon_raws", world.weapon_raws.len()),
+        ("armor_raws", world.armor_raws.len()),
+        ("squads", world.squads.len()),
+        ("burrows", world.burrows.len()),
+        ("burrow_tiles", world.burrows.iter().map(|b| b.tiles.len()).sum()),
+        ("unit_needs", world.units.iter().map(|u| u.needs.len()).sum()),
+        ("unit_emotions", world.units.iter().map(|u| u.emotions.len()).sum()),
+        ("unit_values", world.units.iter().map(|u| u.values.len()).sum()),
+        ("unit_relationships", world.units.iter().map(|u| u.relationships.len()).sum()),
+        ("unit_wounds", world.units.iter().map(|u| u.wounds.len()).sum()),
     ] {
         counts.insert(k.to_string(), v as i64);
     }
@@ -987,6 +1209,266 @@ mod tests {
         std::fs::write(dir.join("squads.json"), "{broken").unwrap();
         assert!(load_extras(&dir).squads.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A synthetic world with round-3 data: a dwarf raw with a small expanded body, a weapon and
+    /// an armor raw, unit psychology/relationships/wounds, a squad, a burrow with tiles, a corpse
+    /// with its creature token and a heavy-aquifer tile.
+    fn round3_world() -> World {
+        use rf_core::{
+            AttackRaw, BodyPartRaw, CasteRaw, Emotion, Relationship, TissueLayerRaw, UnitNeed, ValueStrength, Wound,
+        };
+        let mut w = round2_world();
+        let skin = w.materials.iter().position(|m| m.token == "CREATURE:DWARF:SKIN").unwrap() as u16;
+        let layer = |t: &str, mat: u16, th: i32| TissueLayerRaw {
+            tissue: t.into(),
+            material: format!("CREATURE:DWARF:{t}"),
+            mat,
+            thickness: th,
+            flags: vec!["CONNECTS".into()],
+        };
+        let caste = CasteRaw {
+            token: "FEMALE".into(),
+            name: "dwarf".into(),
+            body_size: 60_000,
+            walk_speed: 900,
+            attacks: vec![AttackRaw {
+                name: "PUNCH".into(),
+                verb: "punch".into(),
+                body_part: "RH".into(),
+                contact_area: 100,
+                penetration: 100,
+                velocity_multiplier: 1000,
+                prepare_ticks: 3,
+                recover_ticks: 3,
+                main: true,
+                flags: vec!["WITH".into()],
+            }],
+            body_parts: vec![
+                BodyPartRaw {
+                    token: "UB".into(),
+                    name: "upper body".into(),
+                    category: "BODY_UPPER".into(),
+                    parent: -1,
+                    relsize: 1000,
+                    flags: vec!["UPPERBODY".into()],
+                    layers: vec![layer("SKIN", skin, 17), layer("MUSCLE", NO_MAT, 892)],
+                },
+                BodyPartRaw {
+                    token: "RH".into(),
+                    name: "right hand".into(),
+                    category: "HAND".into(),
+                    parent: 0,
+                    relsize: 80,
+                    flags: vec!["GRASP".into(), "RIGHT".into()],
+                    layers: vec![layer("SKIN", skin, 10)],
+                },
+            ],
+            flags: vec!["CAN_SPEAK".into(), "EQUIPS".into()],
+        };
+        w.creature_raws = vec![rf_core::CreatureRaw {
+            token: "DWARF".into(),
+            name: "dwarf".into(),
+            name_plural: "dwarves".into(),
+            castes: vec![caste.clone(), CasteRaw { token: "MALE".into(), ..caste }],
+            flags: vec!["CASTE_CAN_LEARN".into()],
+        }];
+        w.weapon_raws = vec![WeaponRaw {
+            token: "ITEM_WEAPON_AXE_BATTLE".into(),
+            name: "battle axe".into(),
+            skill: "AXE".into(),
+            size: 800,
+            two_handed: 47_500,
+            minimum_size: 42_500,
+            attacks: vec![AttackRaw {
+                name: "hack".into(),
+                verb: "hack".into(),
+                contact_area: 40_000,
+                penetration: 6_000,
+                velocity_multiplier: 1250,
+                prepare_ticks: 3,
+                recover_ticks: 3,
+                flags: vec!["EDGE".into()],
+                ..Default::default()
+            }],
+            ..Default::default()
+        }];
+        w.armor_raws = vec![ArmorRaw {
+            token: "ITEM_ARMOR_BREASTPLATE".into(),
+            name: "breastplate".into(),
+            kind: "ARMOR".into(),
+            layer: "ARMOR".into(),
+            coverage: 100,
+            flags: vec!["HARD".into(), "METAL".into()],
+        }];
+        let u = &mut w.units[0];
+        u.needs = vec![UnitNeed { id: "DrinkAlcohol".into(), deity_id: -1, focus_level: 333, need_level: 10 }];
+        u.emotions = vec![Emotion {
+            emotion: "SATISFACTION".into(),
+            thought: "ImproveSkill".into(),
+            subthought: 84,
+            severity: 0,
+            year: 275,
+            year_tick: 103_314,
+            flags: vec!["VOCALIZED".into()],
+            ..Default::default()
+        }];
+        u.values = vec![ValueStrength { id: "PEACE".into(), strength: 45 }];
+        u.relationships = vec![
+            Relationship { kind: "Spouse".into(), hist_fig_id: 3888, unit_id: 2 },
+            Relationship { kind: "KindredSpirit".into(), hist_fig_id: 3841, unit_id: -1 },
+        ];
+        u.wounds = vec![Wound {
+            body_part: "RH".into(),
+            layer: "SKIN".into(),
+            flags: vec!["SCAR_CUT".into(), "DIAGNOSED".into()],
+            severity: 600,
+            age: 15_283_194,
+            ..Default::default()
+        }];
+        u.blood = 4740;
+        u.blood_max = 4740;
+        u.squad_id = 72;
+        u.squad_position = 1;
+        u.invader_civ = -1;
+        w.squads = vec![Squad {
+            id: 72,
+            name: String::new(),
+            alias: "Wache".into(),
+            members: vec![1, -1, 3],
+            orders: vec!["Train".into()],
+            uniform: vec!["ARMOR@Armor".into(), "WEAPON:ITEM_WEAPON_AXE_BATTLE@INORGANIC:IRON".into()],
+            schedule: "Constant training".into(),
+        }];
+        w.burrows = vec![Burrow {
+            id: 1,
+            name: "Zuflucht".into(),
+            tiles: vec![Pos::new(1, 1, 2), Pos::new(2, 1, 2), Pos::new(3, 1, 2)],
+            units: vec![1, 2],
+        }];
+        let corpse = rf_core::Item { id: 9000, kind: "CORPSE".into(), subtype: "CAT".into(), mat: NO_MAT, stack: 1, container: -1, holder: -1, building: -1, ..Default::default() };
+        w.items.push(corpse);
+        w.tiles[5].flags |= TILE_FLAG_HEAVY_AQUIFER | tile_flags::AQUIFER;
+        w
+    }
+
+    #[test]
+    fn round3_data_round_trip() {
+        let w = round3_world();
+        let dir = temp_dir("round3");
+        write_export(&w, &dir).unwrap();
+        let (got, rep) = load_export(&dir).unwrap();
+        assert!(rep.warnings.is_empty(), "{:?}", rep.warnings);
+        assert_eq!((rep.creature_raws, rep.weapon_raws, rep.armor_raws, rep.squads, rep.burrows, rep.burrow_tiles), (1, 1, 1, 1, 1, 3));
+        // creature raws: expanded body with tissue layers and palette materials
+        let d = &got.creature_raws[0];
+        assert_eq!(d.castes.len(), 2);
+        let c = &d.castes[0];
+        assert_eq!((c.body_size, c.walk_speed, c.body_parts.len()), (60_000, 900, 2));
+        assert_eq!(c.body_parts[1].parent, 0);
+        assert_eq!(got.material(c.body_parts[0].layers[0].mat).unwrap().token, "CREATURE:DWARF:SKIN");
+        assert_eq!(c.body_parts[0].layers[1].mat, NO_MAT);
+        assert!(c.attacks[0].main && c.attacks[0].body_part == "RH");
+        assert_eq!(got.weapon_raws[0].attacks[0].flags, vec!["EDGE"]);
+        assert_eq!(got.armor_raws[0].layer, "ARMOR");
+        // unit psychology, relationships, wounds, blood, squad
+        let u = &got.units[0];
+        assert_eq!(u.needs[0].need_level, 10);
+        assert_eq!(u.emotions[0].thought, "ImproveSkill");
+        assert_eq!(u.values[0].strength, 45);
+        assert_eq!(u.relationships.len(), 2);
+        assert_eq!(u.relationships[0].unit_id, 2);
+        assert_eq!(u.wounds[0].body_part, "RH");
+        assert_eq!((u.blood, u.blood_max, u.squad_position, u.invader_civ), (4740, 4740, 1, -1));
+        // squads and burrows are first-class
+        assert_eq!(got.squads[0].alias, "Wache");
+        assert_eq!(got.squads[0].members, vec![1, -1, 3]);
+        assert_eq!(got.squads[0].orders, vec!["Train"]);
+        assert_eq!(got.burrows[0].tiles, w.burrows[0].tiles);
+        // corpse token, heavy aquifer bit
+        assert_eq!(got.item(9000).unwrap().subtype, "CAT");
+        assert_ne!(got.tiles[5].flags & TILE_FLAG_HEAVY_AQUIFER, 0);
+        // the summary view still works on round-3 files
+        let e = load_extras(&dir);
+        assert_eq!((e.burrows[0].tiles, e.squads[0].name.as_str()), (3, "Wache"));
+        assert_eq!(e.squads[0].members, vec![1, 3]); // filled positions only, as in round 2
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn round3_bad_data_is_repaired() {
+        let mut w = round3_world();
+        w.creature_raws[0].castes[0].body_parts[1].layers[0].mat = 60_000;
+        w.creature_raws[0].castes[0].body_parts[1].parent = 99;
+        w.burrows[0].tiles.push(Pos::new(-3, 0, 0));
+        w.burrows[0].tiles.push(Pos::new(0, 0, 999));
+        let dir = temp_dir("round3bad");
+        write_export(&w, &dir).unwrap();
+        std::fs::write(dir.join("weapon_raws.json"), "[{broken").unwrap();
+        let (got, rep) = load_export(&dir).unwrap();
+        let all = rep.warnings.join("\n");
+        assert!(all.contains("tissue layer material indices"), "{all}");
+        assert!(all.contains("out-of-range parent"), "{all}");
+        assert!(all.contains("2 burrow tiles outside the map"), "{all}");
+        assert!(all.contains("weapon_raws"), "{all}");
+        assert!(got.weapon_raws.is_empty());
+        assert_eq!(got.creature_raws[0].castes[0].body_parts[1].layers[0].mat, NO_MAT);
+        assert_eq!(got.creature_raws[0].castes[0].body_parts[1].parent, -1);
+        assert_eq!(got.burrows[0].tiles.len(), 3);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn round2_burrows_and_squads_load_into_world() {
+        let w = round2_world();
+        let dir = temp_dir("round2bs");
+        write_export(&w, &dir).unwrap();
+        std::fs::write(dir.join("burrows.json"), r#"[{"id":1,"name":"Zuflucht","tiles":1716,"blocks":18,"units":[5]}]"#).unwrap();
+        std::fs::write(dir.join("squads.json"), r#"[{"id":72,"name":"Wache","members":[13957,13834],"member_hfs":[3898,3889],"positions":10}]"#).unwrap();
+        let (got, rep) = load_export(&dir).unwrap();
+        let all = rep.warnings.join("\n");
+        assert!(all.contains("burrows without tile lists"), "{all}");
+        assert_eq!(got.burrows.len(), 1);
+        assert!(got.burrows[0].tiles.is_empty() && got.burrows[0].units == vec![5]);
+        assert_eq!(got.squads[0].name, "Wache");
+        assert_eq!(got.squads[0].members, vec![13957, 13834]);
+        let e = load_extras(&dir);
+        assert_eq!(e.burrows[0].tiles, 1716);
+        assert_eq!(e.squads[0].member_hfs, vec![3898, 3889]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn exporter_style_round3_lines_parse() {
+        // As rustfort-export.lua rev 2026-10-10b writes them (extras included, shortened).
+        let u: Unit = serde_json::from_str(r#"{"id":13834,"race":"DWARF","caste":"MALE","blood":4740,"blood_max":4740,"squad_position":1,"invader_civ":-1,"body_size":78770,"body_size_raw":7877,"stress_category":6,"needs":[{"id":"BeCreative","deity_id":-1,"focus_level":-20011,"need_level":1}],"emotions":[{"emotion":"PLEASURE","thought":"Spar","subthought":-1,"strength":0,"severity":0,"year":275,"year_tick":293566,"flags":["VOCALIZED","REMEMBERED_SHORTTERM"],"relative_strength":0}],"values":[{"id":"INDEPENDENCE","strength":-8}],"relationships":[{"kind":"KindredSpirit","hist_fig_id":3841,"unit_id":-1,"unit_id_any":13608,"dead":true,"source":"visual","love":100,"trust":0,"respect":0,"loyalty":0,"fear":0,"meet_count":28,"first_year":215,"last_meet_year":258,"last_meet_tick":185940},{"kind":"Deity","hist_fig_id":45,"unit_id":-1,"unit_id_any":-1,"dead":false,"source":"family","strength":14}],"wounds":[{"body_part":"RLA","layer":"SKIN","flags":["DIAGNOSED","SUTURED","SCAR_CUT","EDGED_DAMAGE"],"severity":600,"pain":0,"bleeding":0,"age":15340894,"wound_id":427,"wound_pain":0,"attacker_unit_id":15230,"attacker_hist_figure_id":-1,"syndrome_id":-1,"fever":0,"part_id":6,"layer_idx":0,"global_layer_idx":28,"contact_area":2,"surface_perc":6,"strain":0,"cur_penetration_perc":0,"max_penetration_perc":100,"swelling":0,"impaired":0,"numbness":0,"paralysis":0,"nausea":0,"dizziness":0}]}"#).unwrap();
+        assert_eq!((u.needs[0].id.as_str(), u.needs[0].focus_level), ("BeCreative", -20011));
+        assert_eq!(u.emotions[0].flags, vec!["VOCALIZED", "REMEMBERED_SHORTTERM"]);
+        assert_eq!((u.relationships[0].kind.as_str(), u.relationships[0].hist_fig_id), ("KindredSpirit", 3841));
+        assert_eq!((u.wounds[0].body_part.as_str(), u.wounds[0].severity), ("RLA", 600));
+        assert_eq!((u.body_size, u.squad_position), (78770, 1));
+        let c: CreatureRaw = serde_json::from_str(r#"{"token":"DWARF","name":"dwarf","name_plural":"dwarves","castes":[{"token":"FEMALE","name":"dwarf","body_size":60000,"walk_speed":900,"attacks":[{"name":"PUNCH","verb":"punch","body_part":"LH","contact_area":100,"penetration":100,"velocity_multiplier":1000,"prepare_ticks":3,"recover_ticks":3,"main":true,"flags":["WITH"],"verb_3rd":"punches","skill":"GRASP_STRIKE","perc":true,"body_parts":["LH"],"tissue_layers":[-1]}],"body_parts":[{"token":"UB","name":"upper body","category":"BODY_UPPER","parent":-1,"relsize":1000,"flags":["UPPERBODY","HAS_PREVENTS_PARENT_COLLAPSE_CHILD"],"layers":[{"tissue":"SKIN","material":"CREATURE:DWARF:SKIN","mat":1468,"thickness":17,"flags":["CONNECTS","SCARS"],"tissue_id":"SKIN","healing_rate":100,"vascular":1,"pain_receptors":5,"layer_depth":-1,"relative_thickness":1}],"name_plural":"upper bodies","number":1,"fraction_total":998}],"flags":["CAN_SPEAK"],"body_size_by_age":[[0,3000],[504,15000],[4032,60000]],"total_relsize":5546}],"flags":[],"index":572,"source":["civ","unit"],"tissues":26}"#).unwrap();
+        assert_eq!(c.castes[0].body_parts[0].layers[0].mat, 1468);
+        assert_eq!(c.castes[0].attacks[0].body_part, "LH");
+        let wr: WeaponRaw = serde_json::from_str(r#"{"token":"ITEM_WEAPON_AXE_BATTLE","name":"battle axe","skill":"AXE","size":800,"two_handed":47500,"minimum_size":42500,"ranged_ammo":"","attacks":[{"name":"hack","verb":"hack","body_part":"","contact_area":40000,"penetration":6000,"velocity_multiplier":1250,"prepare_ticks":3,"recover_ticks":3,"main":false,"flags":["EDGE"],"verb_3rd":"hacks","noun":"NO_SUB","edged":true,"perc":false}],"kind":"WEAPON","material_size":4,"value":10,"flags":["HAS_EDGE_ATTACK"]}"#).unwrap();
+        assert_eq!((wr.size, wr.attacks[0].contact_area), (800, 40_000));
+        let ar: ArmorRaw = serde_json::from_str(r#"{"token":"ITEM_ARMOR_BREASTPLATE","name":"breastplate","kind":"ARMOR","layer":"ARMOR","coverage":100,"flags":["HARD","METAL","SHAPED"],"armorlevel":3,"layer_size":20,"layer_permit":50}"#).unwrap();
+        assert_eq!(ar.coverage, 100);
+        let s: RawSquad = serde_json::from_str(r#"{"id":72,"name":"","alias":"Wache","members":[13957,13834,-1],"orders":["Train"],"uniform":["ARMOR@Armor","WEAPON:ITEM_WEAPON_AXE_TRAINING"],"schedule":"Constant training","display_name":"Wache","member_hfs":[3898,3889,-1],"positions":3,"explicit_orders":[],"schedule_orders":["Train"],"schedule_month":{"month":8,"name":"","sleep_mode":0,"uniform_mode":0,"orders":[{"order":"Train","min_count":10}]},"routine_id":2,"barracks":[10611]}"#).unwrap();
+        assert_eq!(s.squad.members, vec![13957, 13834, -1]);
+        let info = s.info();
+        assert_eq!((info.name.as_str(), info.members.len()), ("Wache", 2));
+        let b: RawBurrow = serde_json::from_str(r#"{"id":0,"name":"Einzel-Versorgung","tiles":[{"x":103,"y":99,"z":101},{"x":104,"y":99,"z":101}],"units":[],"tile_count":2,"blocks":2,"flags":[]}"#).unwrap();
+        assert_eq!(b.tile_count(), 2);
+        assert_eq!(b.into_burrow().tiles[1], Pos::new(104, 99, 101));
+        let m: MaterialInfo = serde_json::from_str(r#"{"mat_type":0,"mat_index":0,"token":"INORGANIC:IRON","name":"iron","density":7850,"shear_yield":155000,"shear_fracture":310000,"shear_strain_at_yield":189,"impact_yield":542500,"impact_fracture":1085000,"impact_strain_at_yield":319,"max_edge":10000,"value":10,"strength":{"SHEAR":[155000,310000,189]},"heat":{"melting_point":12768}}"#).unwrap();
+        assert_eq!((m.density, m.impact_fracture, m.max_edge), (7850, 1_085_000, 10_000));
+        let man: Manifest = serde_json::from_str(r#"{"stress_cutoffs":[50000,25000,10000,-10000,-25000,-50000,-100000],"max_slice_by_phase":{"units":32}}"#).unwrap();
+        assert_eq!(man.stress_category(98_940), Some(0));
+        assert_eq!(man.stress_category(-2_850), Some(3));
+        assert_eq!(man.stress_category(-82_464), Some(6));
+        assert_eq!(man.stress_category(-100_000), Some(6));
+        assert_eq!(Manifest::default().stress_category(0), None);
     }
 
     #[test]

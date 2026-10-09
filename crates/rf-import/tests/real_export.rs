@@ -85,6 +85,52 @@ fn real_export_matches_manifest() {
         assert!(w.units.iter().all(|u| u.walk_speed > 0));
     }
 
+    // round-3 data (exporter rev 2026-10-10b and later)
+    if m.count("creature_raws").is_some() {
+        assert_eq!(rep.creature_raws as i64, m.count("creature_raws").unwrap());
+        // every unit's race has a raw with its caste, and wounds name body parts of that caste
+        for u in w.units.iter().filter(|u| !u.flags.dead) {
+            let cr = w.creature_raws.iter().find(|c| c.token == u.race).unwrap_or_else(|| panic!("no raw for {}", u.race));
+            let caste = cr.castes.iter().find(|c| c.token == u.caste).unwrap_or_else(|| panic!("no caste {} {}", u.race, u.caste));
+            for wd in u.wounds.iter().filter(|wd| !wd.body_part.is_empty()) {
+                assert!(caste.body_parts.iter().any(|p| p.token == wd.body_part), "unit {} wound on {}", u.id, wd.body_part);
+            }
+            assert!(u.blood <= u.blood_max || u.blood_max == 0, "unit {} blood {}/{}", u.id, u.blood, u.blood_max);
+        }
+        let dwarf = w.creature_raws.iter().find(|c| c.token == "DWARF").expect("dwarf raw");
+        let c = &dwarf.castes[0];
+        assert_eq!(c.body_size, 60_000, "dwarf adult body size in cm3");
+        assert!(c.body_parts.len() > 50 && !c.attacks.is_empty());
+        for p in &c.body_parts {
+            assert!(p.parent >= -1 && (p.parent as usize) < c.body_parts.len() || p.parent == -1);
+            for l in &p.layers {
+                assert!(l.mat != NO_MAT, "{} {} without material", p.token, l.tissue);
+                assert!(w.materials[l.mat as usize].token.starts_with("CREATURE:DWARF:"), "{}", l.material);
+            }
+        }
+        assert!(w.weapon_raws.iter().any(|x| x.token == "ITEM_WEAPON_AXE_BATTLE" && x.size == 800));
+        assert!(w.armor_raws.iter().any(|x| x.token == "ITEM_ARMOR_BREASTPLATE" && x.layer == "ARMOR"));
+        // material mechanics: most solid materials have a density
+        let iron = w.materials.iter().find(|x| x.token == "INORGANIC:IRON");
+        if let Some(iron) = iron {
+            assert_eq!(iron.density, 7850);
+            assert!(iron.impact_fracture > iron.impact_yield && iron.max_edge > 0);
+        }
+        // squads: members are squad members, burrows have tiles
+        for s in &w.squads {
+            for (pos, &uid) in s.members.iter().enumerate() {
+                if let Some(u) = (uid >= 0).then(|| w.unit(uid)).flatten() {
+                    assert_eq!(u.squad_id, s.id, "unit {uid} in squad {}", s.id);
+                    assert_eq!(u.squad_position, pos as i32, "unit {uid} position");
+                }
+            }
+        }
+        assert_eq!(rep.burrow_tiles as i64, m.count("burrow_tiles").unwrap_or(0));
+        let cits_with_needs = w.citizens().filter(|u| !u.needs.is_empty()).count();
+        assert!(cits_with_needs * 10 >= w.citizens().count() * 9, "citizens with needs: {cits_with_needs}");
+        assert!(!m.stress_cutoffs.is_empty());
+    }
+
     // it is a fort: citizens exist, stand inside the map on walkable tiles (most of them)
     if m.map_complete {
         assert!(rep.citizens > 0);
