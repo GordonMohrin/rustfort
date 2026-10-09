@@ -3,6 +3,8 @@
 //!   dfhack-run lua -f <repo>/tools/dfhack/rustfort-verify.lua <samples.txt> <result.txt>
 //!   cargo run -p rf-import --release --example spotcheck -- compare <dir> <result.txt>
 //! `pick` chooses tiles stratified by tiletype material class (deterministic) plus 3 citizens.
+//! `compare` also checks the round-2 lines the verify script writes: work orders, job counts per
+//! workshop/furnace, farm crops, mods and the plant raw count.
 
 use rf_core::{Pos, TtMaterial, World, NO_MAT};
 use std::collections::BTreeMap;

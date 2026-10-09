@@ -43,6 +43,48 @@ fn real_export_matches_manifest() {
         assert!(i.mat == NO_MAT || (i.mat as usize) < w.materials.len());
     }
 
+    // round-2 data (exporter rev 2026-10-10a and later)
+    if m.count("plant_raws").is_some() {
+        assert!(!w.meta.mods.is_empty(), "round-2 export without mods");
+        assert!(w.meta.mods.iter().all(|s| s.contains(':')), "{:?}", w.meta.mods);
+        assert!(!w.plant_raws.is_empty());
+        for p in &w.plant_raws {
+            for mat in [p.mat_structural, p.mat_drink, p.mat_seed] {
+                if mat != NO_MAT {
+                    let tok = &w.materials[mat as usize].token;
+                    assert!(tok.starts_with(&format!("PLANT:{}:", p.token)), "{}: material {tok}", p.token);
+                }
+            }
+            if p.brewable && !p.is_tree {
+                assert!(p.mat_drink != NO_MAT, "{} brewable without drink material", p.token);
+            }
+        }
+        for b in w.buildings.iter().filter(|b| b.kind == "FarmPlot") {
+            assert_eq!(b.crops.len(), 4, "farm plot {}", b.id);
+            for c in b.crops.iter().filter(|c| !c.is_empty()) {
+                assert!(w.plant_raws.iter().any(|p| &p.token == c), "farm plot {} crop {c} not in plant raws", b.id);
+            }
+        }
+        for b in &w.buildings {
+            if !b.jobs.is_empty() {
+                assert!(b.kind == "Workshop" || b.kind == "Furnace", "jobs on {} {}", b.kind, b.id);
+                assert!(b.jobs.iter().all(|j| !j.job.is_empty() && j.job != "ConstructBuilding"));
+            }
+        }
+        for o in &w.work_orders {
+            assert!(!o.job.is_empty() && !o.frequency.is_empty(), "order {}", o.id);
+            for c in &o.conditions {
+                assert!(
+                    ["AtLeast", "AtMost", "GreaterThan", "LessThan", "Exactly", "Not"].contains(&c.compare.as_str()),
+                    "order {} compare {}",
+                    o.id,
+                    c.compare
+                );
+            }
+        }
+        assert!(w.units.iter().all(|u| u.walk_speed > 0));
+    }
+
     // it is a fort: citizens exist, stand inside the map on walkable tiles (most of them)
     if m.map_complete {
         assert!(rep.citizens > 0);
