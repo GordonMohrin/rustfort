@@ -2516,6 +2516,7 @@ impl Sim {
             && it.holder < 0
             && it.building < 0
             && !self.imeta[idx].dead
+            && !(it.kind == "THREAD" && it.desc.contains(" web")) // [industry] webs are collected at a loom, not hauled
     }
 
     fn rebuild_haul(&mut self) {

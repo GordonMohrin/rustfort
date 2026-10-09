@@ -1019,7 +1019,7 @@ impl Sim {
                 if !info.shape.has_floor() || !soil {
                     continue;
                 }
-                tiles.push(FTile { tile: i as u32, plant: NO_PLANT, ready: 0, claimed: false, blocked_until: 0, poor: sub && info.material == TtMaterial::Soil, skill: 0 });
+                tiles.push(FTile { tile: i as u32, plant: NO_PLANT, ready: 0, claimed: false, blocked_until: 0, poor: sub && info.material == TtMaterial::Soil && !self.is_cavern_floor(i), skill: 0 }); // [industry] cavern soil is not poor
             }
         }
         Farm { bid: b.id, bi, under, tiles }

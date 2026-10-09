@@ -703,6 +703,23 @@ impl Sim {
         self.set_item_cat(ci, crate::items::Cat::Food);
     }
 
+    /// [industry] Is this underground floor part of a cavern (wiki "Farming": cavern soil is
+    /// not "poor")? Estimate: DF's cavern feature flag is not exported, so a tile counts as
+    /// cavern when it has natural grass/moss (only caverns have it underground) or no ceiling
+    /// for two levels (caverns are tall open spaces; dug rooms have rock or a floor above).
+    pub(crate) fn is_cavern_floor(&self, i: usize) -> bool {
+        let t = self.world.tiles[i];
+        if t.flags & rf_core::tile_flags::SUBTERRANEAN == 0 {
+            return false;
+        }
+        if self.world.tiletypes.get(t.tt).material.is_grass() {
+            return true;
+        }
+        let layer = self.nav.layer;
+        let open = |q: usize| q < self.world.tiles.len() && self.world.tiletypes.get(self.world.tiles[q].tt).shape == rf_core::Shape::Empty;
+        open(i + layer) && open(i + 2 * layer)
+    }
+
     // ------------------------------------------------------------------ public API
 
     /// Items made by the industries and the current stock by item kind.
