@@ -16,3 +16,4 @@ rf-raws.workspace = true
 rf-gfx.workspace = true
 rf-import.workspace = true
 rf-sim.workspace = true
+macroquad = { version = "0.4", default-features = false }
