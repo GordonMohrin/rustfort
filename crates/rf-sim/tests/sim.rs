@@ -33,6 +33,7 @@ fn deterministic_same_seed_and_thread_counts() {
         let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
         pool.install(|| {
             let mut sim = busy_sim(11);
+            sim.set_parallel_threshold(1);
             sim.run_ticks(20_000);
             sim.state_hash()
         })
@@ -53,6 +54,7 @@ fn deterministic_bench_world_with_parallel_paths() {
         let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
         pool.install(|| {
             let mut sim = Sim::new(gen::bench_world(64, 64, 30, 60, 3), 3);
+            sim.set_parallel_threshold(1);
             sim.run_ticks(5_000);
             (sim.state_hash(), sim.stats().paths, sim.stats().jobs_done)
         })

@@ -24,6 +24,25 @@ pub enum Cat {
 }
 
 impl Cat {
+    pub const ALL: [Cat; 17] = [
+        Cat::Animals,
+        Cat::Food,
+        Cat::Furniture,
+        Cat::Corpses,
+        Cat::Refuse,
+        Cat::Stone,
+        Cat::Ammo,
+        Cat::Coins,
+        Cat::BarsBlocks,
+        Cat::Gems,
+        Cat::FinishedGoods,
+        Cat::Leather,
+        Cat::Cloth,
+        Cat::Wood,
+        Cat::Weapons,
+        Cat::Armor,
+        Cat::Sheet,
+    ];
     pub fn bit(self) -> u32 {
         1 << self as u32
     }

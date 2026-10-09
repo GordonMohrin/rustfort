@@ -70,9 +70,20 @@ fn main() {
             after.jobs_done,
             after.items_hauled,
         );
+        let per = |a: u64, b: u64| (a - b) as f64 / tk;
         eprintln!(
-            "    (world build + nav init {build:.2}s; open jobs {}, dead {}, path failures {}, cache hits {}, nav rebuilds {}, items {})",
-            after.open_jobs, after.dead_units, after.path_failures, after.path_cache_hits, after.nav_rebuilds, after.items
+            "    (build {build:.2}s; open jobs {}, dead {}, path fail {}, cache hits {}, nav rebuilds {}, items {}; per tick: decisions {:.1}, steps {:.1}, job searches {:.2}, haul searches {:.2}, need searches {:.3})",
+            after.open_jobs,
+            after.dead_units,
+            after.path_failures,
+            after.path_cache_hits,
+            after.nav_rebuilds,
+            after.items,
+            per(after.decisions, before.decisions),
+            per(after.steps, before.steps),
+            per(after.job_searches, before.job_searches),
+            per(after.haul_searches, before.haul_searches),
+            per(after.need_searches, before.need_searches),
         );
     }
 }

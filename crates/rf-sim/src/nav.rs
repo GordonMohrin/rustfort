@@ -103,7 +103,10 @@ impl Nav {
 
     #[inline]
     pub fn xyz(&self, i: usize) -> (usize, usize, usize) {
-        (i % self.dx, (i / self.dx) % self.dy, i / self.layer)
+        // u32 division is much cheaper than u64 on x86; maps are far below 2^32 tiles.
+        let (i, dx, dy) = (i as u32, self.dx as u32, self.dy as u32);
+        let row = i / dx;
+        ((i - row * dx) as usize, (row % dy) as usize, (row / dy) as usize)
     }
 
     #[inline]
@@ -162,6 +165,20 @@ impl Nav {
             }
         }
         f
+    }
+
+    fn ramp_next_to(&self, x: usize, y: usize, z: usize) -> bool {
+        for &(ddx, ddy) in &DIRS8 {
+            let nx = x as isize + ddx;
+            let ny = y as isize + ddy;
+            if nx < 0 || ny < 0 || nx >= self.dx as isize || ny >= self.dy as isize {
+                continue;
+            }
+            if self.flags[self.idx(nx as usize, ny as usize, z)] & RAMP != 0 {
+                return true;
+            }
+        }
+        false
     }
 
     /// All tiles a walker can move to from `i` in one step. Returns the count written to `out`.
@@ -320,7 +337,11 @@ impl Nav {
                     let new = self.compute(tiles, q);
                     self.flags[q] = new;
                     let removed = old & !new;
-                    if removed & (WALK | UP | DOWN | RAMP | SOLID) != 0 || (new & SOLID != 0 && old & SOLID == 0) {
+                    if removed & (WALK | UP | DOWN | RAMP) != 0 || (new & SOLID != 0 && old & SOLID == 0) {
+                        lost = true;
+                    }
+                    // A wall that disappears only removes edges if a ramp leans against it.
+                    if removed & SOLID != 0 && self.ramp_next_to(xx, yy, zz) {
                         lost = true;
                     }
                     if new & WALK == 0 {

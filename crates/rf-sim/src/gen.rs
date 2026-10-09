@@ -84,9 +84,9 @@ pub fn bench_world(dx: u16, dy: u16, dz: u16, units: usize, seed: u64) -> World 
             t.desig = 0;
         }
     }
-    // Mining ring around the hall (6 tiles thick).
-    for y in y1 - 6..=y2 + 6 {
-        for x in x1 - 6..=x2 + 6 {
+    // Mining ring around the hall (10 tiles thick).
+    for y in y1 - 10..=y2 + 10 {
+        for x in x1 - 10..=x2 + 10 {
             if x >= x1 && x <= x2 && y >= y1 && y <= y2 {
                 continue;
             }
@@ -95,12 +95,27 @@ pub fn bench_world(dx: u16, dy: u16, dz: u16, units: usize, seed: u64) -> World 
             }
         }
     }
-    // Up/down stair columns going down from the hall floor.
+    // Up/down stair columns going down from the hall floor, and two lower levels to dig out
+    // around them (only reachable once the stairs are dug).
     for k in 0..4i16 {
         let (sx, sy) = (x1 + 12 + k * 20, y1 + 30);
         for z in (hz - 8).max(0)..=hz {
             if let Some(t) = w.tile_mut(Pos::new(sx, sy, z)) {
                 t.desig = Dig::UpDownStair as u8;
+            }
+        }
+    }
+    for lz in [hz - 4, hz - 8] {
+        if lz < 1 {
+            continue;
+        }
+        for y in y1 + 20..=y1 + 40 {
+            for x in x1 + 2..=x1 + 76 {
+                if let Some(t) = w.tile_mut(Pos::new(x, y, lz)) {
+                    if t.desig == 0 {
+                        t.desig = Dig::Dig as u8;
+                    }
+                }
             }
         }
     }
@@ -228,10 +243,18 @@ pub fn bench_world(dx: u16, dy: u16, dz: u16, units: usize, seed: u64) -> World 
     let (fa, fb) = l.food_pile;
     let fw = (fb.x - fa.x + 1) as u32;
     let fh = (fb.y - fa.y + 1) as u32;
+    let pile_floor = |w: &World, r: &mut Rng| -> Pos {
+        loop {
+            let p = Pos::new(fa.x + r.below(fw) as i16, fa.y + r.below(fh) as i16, hz);
+            if w.shape(p) == Shape::Floor {
+                return p;
+            }
+        }
+    };
     for k in 0..units * 2 {
-        let p = Pos::new(fa.x + r.below(fw) as i16, fa.y + r.below(fh) as i16, hz);
+        let p = pile_floor(&w, &mut r);
         add(&mut w, "DRINK", wine, 5, p, "dwarven wine");
-        let p = if k % 2 == 0 { free_floor(&w, &mut r) } else { Pos::new(fa.x + r.below(fw) as i16, fa.y + r.below(fh) as i16, hz) };
+        let p = if k % 2 == 0 { free_floor(&w, &mut r) } else { pile_floor(&w, &mut r) };
         add(&mut w, "PLANT", helmet, 5, p, "plump helmet");
     }
     for _ in 0..units {
