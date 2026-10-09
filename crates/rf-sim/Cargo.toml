@@ -10,6 +10,13 @@ publish.workspace = true
 rf-core.workspace = true
 rayon = "1"
 
+[dev-dependencies]
+rf-import.workspace = true
+
 [[example]]
 name = "bench"
 path = "examples/bench.rs"
+
+[[example]]
+name = "fort"
+path = "examples/fort.rs"
