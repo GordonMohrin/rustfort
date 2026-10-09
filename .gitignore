@@ -10,3 +10,4 @@
 /rustfort.toml
 *.bak
 .claude/
+/saves/

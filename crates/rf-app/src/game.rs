@@ -350,7 +350,9 @@ pub fn compute_zclass(w: &World) -> Vec<ZClass> {
 impl Game {
     pub fn new(args: &Args, loaded: Loaded) -> Game {
         let df = rf_gfx::df_dir();
-        let mut gfx = match Gfx::load(&df) {
+        let world = loaded.world;
+        // Graphics of exactly the save's active mods (vanilla only if the list is empty).
+        let mut gfx = match Gfx::load_for_world(&df, &world) {
             Ok(g) => g,
             Err(e) => {
                 eprintln!("graphics: {e}; using fallback tiles");
@@ -359,7 +361,6 @@ impl Game {
         };
         let font = Font::load(&df);
         let binds = Bindings::load(&df);
-        let world = loaded.world;
         // Bake the palette variants (stone colors, dwarf looks) this world needs.
         gfx.prepare(&world);
         let zclass = compute_zclass(&world);

@@ -431,11 +431,11 @@ mod tests {
         let s = rf_sim::Sim::new(rf_core::World::synthetic(24, 24, 12), 1);
         let t = s.order_templates();
         let d = |job, reaction, it, sub, mat, cat: &'static [String]| JobDesc { job, reaction, item_type: it, item_subtype: sub, mat, mat_category: cat };
-        assert_eq!(job_label(&t, &d("BrewDrink", "", "", "", "", &[])), "Brew drink from plant");
+        assert_eq!(job_label(&t, &d("CustomReaction", "BREW_DRINK_FROM_PLANT", "", "", "", &[])), "Brew drink from plant");
         let stone = vec!["stone".to_string()];
         let stone: &'static [String] = Box::leak(stone.into_boxed_slice());
         assert_eq!(job_label(&t, &d("MakeCrafts", "", "", "", "", stone)), "Make crafts (stone)");
         assert_eq!(job_label(&t, &d("MakeWeapon", "", "WEAPON", "ITEM_WEAPON_PICK", "INORGANIC:IRON", &[])), "Make weapon (pick, iron)");
-        assert_eq!(job_label(&t, &d("CustomReaction", "BREW_DRINK_FROM_PLANT_GROWTH", "", "", "", &[])), "Brew drink from plant growth");
+        assert_eq!(job_label(&t, &d("CustomReaction", "BREW_DRINK_FROM_PLANT_GROWTH", "", "", "", &[])), "Brew drink from fruit");
     }
 }

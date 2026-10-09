@@ -1,5 +1,46 @@
 # Rustfort: progress
 
+## v0.2.0 (2026-10-10): the fort survives and produces
+
+**Works (new since 0.1):**
+- **Round-2 export** of the live fort (year 274; read-only, no pause). It adds:
+  - 43 work orders with conditions
+  - workshop job queues and farm crops
+  - 225 plant raws and the active mod list
+  - real gait speeds, burrows and squads
+
+  Spot-checked against the live DF.
+- **Production simulation:**
+  - **Workshops:** still (brew from plant or fruit into barrels or pots, seed returned), kitchen (easy, fine and lavish meals; brewables are never cooked, Gordon's rule), carpenter and mason furniture, barrels, bins, blocks, craftsdwarf pots.
+  - **Farming** per the wiki: crops by season, plant growdur, harvest skill rolls, poor underground soil.
+  - **Wells** as an emergency water source, as in DF.
+  - **Work orders:** checked daily, with conditions, frequencies and workshop limits. Workshop queues with repeat.
+  - **Construction:** placed buildings are hauled and built.
+- **Result:** with your real orders, crops and stock, the fort survives **2 game years headless with 89/89 citizens alive**, at about 67-71k ticks/s.
+  - Your orders contain no brew order (your scripts used to queue brews). After about 7 months the booze runs out and the dwarves drink from the well.
+  - Add a *Brew drink* work order in the Work orders screen, or run `--standing-orders` in the sim example.
+- **UI:**
+  - Build menu with a ghost preview (green/red); zones in the DF style.
+  - Building sheet with the workshop queue (add, repeat, suspend, cancel), farm crop picker per season, stockpile categories and remove.
+  - Work orders screen (all 43 real orders, new order with amount and frequency); labor grid (89 citizens x labors, with skill levels).
+  - Save/Load (bincode+zstd, 1.4 MB, about 0.1 s; F5 quicksave; Esc menu); Drink/Food readout in the top bar.
+- **Graphics:**
+  - Missing sprites dropped from 17,525 to 4 on the real fort.
+  - Trees with trunks, branches, canopies and caps; per-plant shrubs, saplings and crops.
+  - Corpses and remains, typed items, 1x1/5x5 workshops, traps, wells, bridges, wall shadows.
+  - Exactly the save's active mods are loaded (your save currently uses vanilla only).
+
+**Known gaps (next):**
+- **Not simulated yet:**
+  - no thoughts, stress or moods
+  - no combat, military or sieges
+  - no fluids or temperature
+  - no bins or wheelbarrows: one item per stockpile tile
+  - no butchery, fishing, milling, threshing or trade
+  - furnaces and metal industry have no recipes yet
+- Caverns are not detected (all underground soil counts as poor), and animals have no needs.
+- **UI:** no material choice when building; no zone assignment (bedroom owners).
+
 ## v0.1.0 (2026-10-09): first playable prototype
 
 **Works:**
