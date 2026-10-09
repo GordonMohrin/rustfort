@@ -124,6 +124,43 @@ pub fn draw_topbar(g: &mut Game) {
     g.font.draw(&ztxt, rx, ty, s, col::TEXT_HI);
     let mut px = rx - pw - 22.0 * s;
     g.font.draw(&popt, px, ty, s, col::TEXT);
+    // [round 3] Hostiles on the map (click: center on the next one) and the civilian alert.
+    let active: Vec<(i32, rf_core::Pos)> = g
+        .hostiles
+        .iter()
+        .filter_map(|id| g.sim.world.unit(*id))
+        .filter(|u| !u.flags.caged && !u.flags.dead)
+        .map(|u| (u.id, u.pos))
+        .collect();
+    if !active.is_empty() {
+        let n = active.len();
+        let t = format!("! {n} hostile{}", if n == 1 { "" } else { "s" });
+        let tw = g.font.width(&t, s);
+        px -= tw + 22.0 * s;
+        let blink = (get_time() * 2.0) as i64 % 2 == 0;
+        let hr = Rect::new(px - 6.0 * s, 3.0 * s, tw + 12.0 * s, h - 6.0 * s);
+        draw_rectangle(hr.x, hr.y, hr.w, hr.h, Color::new(0.45, 0.02, 0.02, if blink { 0.9 } else { 0.6 }));
+        draw_rectangle_lines(hr.x, hr.y, hr.w, hr.h, 1.0, col::TEXT_BAD);
+        g.font.draw(&t, px, ty, s, Color::from_rgba(255, 220, 210, 255));
+        if g.ui.hovered(hr) {
+            g.ui.tooltip = Some(("Hostile creatures on the map: click to center on the next one".into(), vec2(hr.x, h + 26.0 * s)));
+        }
+        if g.ui.clicked(hr) {
+            let k = g.hostile_cycle % n;
+            g.hostile_cycle = k + 1;
+            let (id, p) = active[k];
+            g.cam.focus(p);
+            g.selected = crate::game::Selected::Unit(id);
+            g.unit_tab = 0;
+        }
+    }
+    if let Some(b) = g.civ_alert {
+        let name = g.sim.world.burrows.iter().find(|x| x.id == b).map(|x| x.name.clone()).unwrap_or_default();
+        let t = format!("Civilian alert: {name}");
+        let tw = g.font.width(&t, s);
+        px -= tw + 22.0 * s;
+        g.font.draw(&t, px, ty, s, col::TEXT_BAD);
+    }
     // Stocks: drinks and food (red when below 2 per citizen).
     let st = g.stocks;
     let low = (pop as i32 * 2).max(10);

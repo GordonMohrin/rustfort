@@ -17,6 +17,8 @@ use std::time::Instant;
 pub const BASE_TILE: f32 = 32.0;
 /// Real-time budget per frame for simulation ticks (keeps 60 fps at "max").
 pub const SIM_BUDGET_S: f64 = 0.012;
+/// Announcements kept for the Reports screen.
+pub const LOG_KEEP: usize = 5000;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Speed {
@@ -57,6 +59,12 @@ pub enum Tool {
     Build(usize),
     /// Index into [`rf_sim::ZONE_KINDS`].
     Zone(usize),
+    /// Drag a box to create a burrow.
+    Burrow,
+    /// Click a tile to station this squad there.
+    SquadStation(i32),
+    /// Click a creature for this squad to kill.
+    SquadKill(i32),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -66,6 +74,7 @@ pub enum Submenu {
     Stockpile,
     Build,
     Zone,
+    Burrow,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -82,6 +91,59 @@ pub enum Screen {
     None,
     WorkOrders,
     Labor,
+    /// Squads (DF hotkey `c`).
+    Military,
+    /// Reports / announcement history (DF `Shift+n`).
+    Reports,
+}
+
+/// Sort order of the citizens list.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum CitSort {
+    #[default]
+    Name,
+    Profession,
+    /// Most stressed first.
+    Stress,
+}
+
+/// Military (squads) screen state.
+#[derive(Default)]
+pub struct MilitaryUi {
+    /// Selected squad id.
+    pub squad: Option<i32>,
+    /// Squad position whose citizen picker is open.
+    pub picker: Option<usize>,
+    pub scroll: usize,
+    pub pscroll: usize,
+    /// The "Kill" target list is open.
+    pub kill_list: bool,
+}
+
+/// Burrow menu state.
+#[derive(Default)]
+pub struct BurrowUi {
+    pub selected: Option<i32>,
+    pub scroll: usize,
+}
+
+/// Reports screen state.
+#[derive(Default)]
+pub struct ReportsUi {
+    /// Index into `ui::reports::FILTERS`.
+    pub filter: usize,
+    /// Lines scrolled up from the newest.
+    pub scroll: usize,
+}
+
+/// A DF-style pop-up alert (siege, ambush, monster): the game pauses until it is closed.
+#[derive(Clone, Debug)]
+pub struct Alert {
+    pub title: String,
+    pub text: String,
+    /// Hostile units of this wave.
+    pub units: Vec<i32>,
+    pub pos: Option<Pos>,
 }
 
 /// Work orders screen state.
@@ -211,6 +273,17 @@ pub struct LogLine {
     pub kind: AnnouncementKind,
     /// Real time (seconds) when it arrived.
     pub born: f64,
+    /// Game date when it arrived (`15th Granite, 274`).
+    pub date: String,
+    /// Reports category (`ui::reports::category`), computed once.
+    pub cat: u8,
+}
+
+impl LogLine {
+    pub fn new(text: String, pos: Option<Pos>, kind: AnnouncementKind, born: f64, date: String) -> LogLine {
+        let cat = crate::ui::reports::category(kind, &text) as u8;
+        LogLine { text, pos, kind, born, date, cat }
+    }
 }
 
 /// Drag state of a rectangle tool (designations, stockpiles).
@@ -288,6 +361,25 @@ pub struct Game {
     pub stocks: Stocks,
     /// Save running in a background thread.
     pub saving: Option<std::thread::JoinHandle<Result<crate::save::SaveInfo, String>>>,
+    /// Scroll offset of the current unit sheet tab.
+    pub unit_scroll: usize,
+    pub citizens_sort: CitSort,
+    pub mil: MilitaryUi,
+    pub burrow_ui: BurrowUi,
+    pub reports: ReportsUi,
+    /// `Sim::hostiles()` of this frame, sorted.
+    pub hostiles: Vec<i32>,
+    /// Hostile ids already seen (so only new arrivals raise an alert), sorted.
+    pub hostiles_seen: Vec<i32>,
+    /// Sim tick of the last hostile alert (waves arriving over a few ticks raise one alert).
+    pub alert_tick: Option<u64>,
+    pub alert: Option<Alert>,
+    /// Burrow of the active civilian alert.
+    pub civ_alert: Option<i32>,
+    /// Next hostile the top bar's hostile counter centers on.
+    pub hostile_cycle: usize,
+    /// Tab of the creatures list: 0 citizens, 1 pets/livestock, 2 others.
+    pub creatures_tab: usize,
 }
 
 pub fn ordinal(d: i32) -> String {
@@ -415,41 +507,57 @@ impl Game {
             menu: MenuUi::default(),
             stocks: Stocks::default(),
             saving: None,
+            unit_scroll: 0,
+            citizens_sort: CitSort::Name,
+            mil: MilitaryUi::default(),
+            burrow_ui: BurrowUi::default(),
+            reports: ReportsUi::default(),
+            hostiles: Vec::new(),
+            hostiles_seen: Vec::new(),
+            alert_tick: None,
+            alert: None,
+            civ_alert: None,
+            hostile_cycle: 0,
+            creatures_tab: 0,
         };
+        g.reset_hostiles();
         g.build_opts = g.sim.build_options();
         g.stocks = crate::ui::topbar::count_stocks(&g.sim.world, 0.0);
         let now = get_time();
         if let Some(w) = loaded.warning {
-            g.log.push(LogLine { text: w, pos: None, kind: AnnouncementKind::Warning, born: now });
+            g.log.push(LogLine::new(w, None, AnnouncementKind::Warning, now, date_string(&g.sim.world.calendar)));
         }
         if let Some(r) = &loaded.report {
-            g.log.push(LogLine {
-                text: format!(
+            g.log.push(LogLine::new(
+                format!(
                     "Imported {} units ({} citizens), {} items, {} buildings in {:.1}s; {} warnings",
                     r.units, r.citizens, r.items, r.buildings, r.seconds, r.warnings.len()
                 ),
-                pos: None,
-                kind: AnnouncementKind::Info,
-                born: now,
-            });
+                None,
+                AnnouncementKind::Info,
+                now,
+                date_string(&g.sim.world.calendar),
+            ));
         }
-        g.log.push(LogLine {
-            text: format!(
+        g.log.push(LogLine::new(
+            format!(
                 "Welcome to {}. Space unpauses. Keys: {}",
                 g.sim.world.meta.fort_name,
                 if g.binds.source.contains("Roaming") { "your DF prefs" } else { g.binds.source.as_str() }
             ),
-            pos: None,
-            kind: AnnouncementKind::Info,
-            born: now,
-        });
+            None,
+            AnnouncementKind::Info,
+            now,
+            date_string(&g.sim.world.calendar),
+        ));
         if g.gfx.pages.is_empty() {
-            g.log.push(LogLine {
-                text: "Premium tileset not loaded yet (rf-gfx stub): drawing fallback tiles".into(),
-                pos: None,
-                kind: AnnouncementKind::Info,
-                born: now,
-            });
+            g.log.push(LogLine::new(
+                "Premium tileset not loaded yet (rf-gfx stub): drawing fallback tiles".into(),
+                None,
+                AnnouncementKind::Info,
+                now,
+                date_string(&g.sim.world.calendar),
+            ));
         }
         g.apply_args(args);
         g
@@ -478,6 +586,14 @@ impl Game {
             let (k, v) = u.split_once(':').unwrap_or((u.as_str(), ""));
             match k {
                 "citizens" => self.citizens_open = true,
+                "pets" => {
+                    self.citizens_open = true;
+                    self.creatures_tab = 1;
+                }
+                "others" => {
+                    self.citizens_open = true;
+                    self.creatures_tab = 2;
+                }
                 "dig" => {
                     self.submenu = Submenu::Dig;
                     self.tool = Tool::Designate(DesignationKind::Mine);
@@ -546,6 +662,61 @@ impl Game {
                 "skills" => self.unit_tab = 1,
                 "labor" => self.unit_tab = 2,
                 "items" => self.unit_tab = 3,
+                "thoughts" => self.unit_tab = 4,
+                "needs" => self.unit_tab = 5,
+                "personality" => self.unit_tab = 6,
+                "health" => self.unit_tab = 7,
+                "relations" => self.unit_tab = 8,
+                "sort" => {
+                    self.citizens_sort = match v {
+                        "profession" => CitSort::Profession,
+                        "stress" => CitSort::Stress,
+                        _ => CitSort::Name,
+                    }
+                }
+                "squads" | "military" => {
+                    self.screen = Screen::Military;
+                    let w = &self.sim.world;
+                    self.mil.squad = v.parse::<i32>().ok().filter(|id| w.squads.iter().any(|s| s.id == *id)).or_else(|| w.squads.first().map(|s| s.id));
+                }
+                "assign" => {
+                    // Citizen picker for squad position `v` (screenshot tests).
+                    self.screen = Screen::Military;
+                    if self.mil.squad.is_none() {
+                        self.mil.squad = self.sim.world.squads.first().map(|s| s.id);
+                    }
+                    self.mil.picker = Some(v.parse::<usize>().unwrap_or(0));
+                }
+                "killlist" => {
+                    self.screen = Screen::Military;
+                    if self.mil.squad.is_none() {
+                        self.mil.squad = self.sim.world.squads.first().map(|s| s.id);
+                    }
+                    self.mil.kill_list = true;
+                }
+                "station" => {
+                    if let Some(sq) = self.mil.squad.or_else(|| self.sim.world.squads.first().map(|s| s.id)) {
+                        self.tool = Tool::SquadStation(sq);
+                        self.screen = Screen::None;
+                    }
+                }
+                "burrows" => {
+                    self.open_burrows();
+                    if let Ok(id) = v.parse::<i32>() {
+                        self.burrow_ui.selected = Some(id);
+                    }
+                }
+                "burrow-tool" => {
+                    if self.submenu != Submenu::Burrow {
+                        self.open_burrows();
+                    }
+                    self.tool = Tool::Burrow;
+                }
+                "reports" => {
+                    self.screen = Screen::Reports;
+                    self.reports.filter = v.parse::<usize>().unwrap_or(0);
+                }
+                "spawn-hostile" => crate::ui::alerts::debug_spawn_hostile(self),
                 "tile" => {
                     let c = self.cam;
                     self.selected = Selected::Tile(Pos::new(c.x as i16, c.y as i16, c.z as i16));
@@ -579,7 +750,7 @@ impl Game {
 
     fn update_sim(&mut self, dt: f32) {
         let t0 = Instant::now();
-        if !self.paused && !self.menu_open {
+        if !self.paused && !self.menu_open && self.alert.is_none() {
             match self.speed.tps() {
                 Some(tps) => {
                     self.tick_accum = (self.tick_accum + dt as f64 * tps).min(tps * 0.25);
@@ -623,12 +794,15 @@ impl Game {
             self.stocks = crate::ui::topbar::count_stocks(&self.sim.world, now);
         }
         self.poll_save();
+        let date = date_string(&self.sim.world.calendar);
         for a in self.sim.drain_announcements() {
-            self.log.push(LogLine { text: a.text, pos: a.pos, kind: a.kind, born: now });
+            self.log.push(LogLine::new(a.text, a.pos, a.kind, now, date.clone()));
         }
-        if self.log.len() > 500 {
-            self.log.drain(..self.log.len() - 500);
+        // [round 3] The Reports screen keeps a long history.
+        if self.log.len() > LOG_KEEP {
+            self.log.drain(..self.log.len() - LOG_KEEP);
         }
+        self.update_hostiles();
     }
 
     /// Keep each `run_ticks` call around 1 ms so the frame budget is respected.
@@ -648,6 +822,11 @@ impl Game {
         let inp = &self.input;
         if inp.hit(b, "LEAVESCREEN") {
             self.escape();
+            return;
+        }
+        // [round 3] Enter closes a pop-up alert, like DF.
+        if self.alert.is_some() && inp.fired.contains(&KeyCode::Enter) {
+            self.alert = None;
             return;
         }
         if self.menu_open || self.typing() {
@@ -697,7 +876,21 @@ impl Game {
             self.toggle_screen(Screen::WorkOrders);
         } else if inp.hit(b, "D_LABOR") {
             self.toggle_screen(Screen::Labor);
+        } else if inp.hit(b, "D_SQUADS") {
+            self.toggle_screen(Screen::Military);
+        } else if inp.hit(b, "D_BURROWS") {
+            self.open_burrows();
+        } else if inp.hit(b, "D_ANNOUNCE") {
+            self.toggle_screen(Screen::Reports);
         }
+    }
+
+    /// Select a unit and show its sheet (tab kept, scroll reset).
+    pub fn select_unit(&mut self, id: i32) {
+        if self.selected != Selected::Unit(id) {
+            self.unit_scroll = 0;
+        }
+        self.selected = Selected::Unit(id);
     }
 
     /// A text field has keyboard focus: hotkeys and WASD are off.
@@ -708,6 +901,11 @@ impl Game {
     pub fn toggle_screen(&mut self, s: Screen) {
         self.screen = if self.screen == s { Screen::None } else { s };
         self.labor.typing = false;
+        self.mil.picker = None;
+        self.mil.kill_list = false;
+        if self.screen == Screen::Military && self.mil.squad.is_none() {
+            self.mil.squad = self.sim.world.squads.first().map(|s| s.id);
+        }
         if self.screen != Screen::None {
             self.tool = Tool::None;
             self.submenu = Submenu::None;
@@ -726,6 +924,21 @@ impl Game {
             self.screen = Screen::None;
         }
         self.build_check = None;
+        self.drag = None;
+    }
+
+    pub fn open_burrows(&mut self) {
+        if self.submenu == Submenu::Burrow {
+            self.submenu = Submenu::None;
+            self.tool = Tool::None;
+        } else {
+            self.submenu = Submenu::Burrow;
+            self.tool = Tool::None;
+            self.screen = Screen::None;
+            if self.burrow_ui.selected.is_none() {
+                self.burrow_ui.selected = self.sim.world.burrows.first().map(|b| b.id);
+            }
+        }
         self.drag = None;
     }
 
@@ -783,7 +996,7 @@ impl Game {
             Err(e) => (format!("Save failed: {e}"), AnnouncementKind::Warning),
         };
         self.set_status(text.clone());
-        self.log.push(LogLine { text, pos: None, kind, born: now });
+        self.log.push(LogLine::new(text, None, kind, now, date_string(&self.sim.world.calendar)));
         if self.menu_open && self.menu.page == MenuPage::Load {
             self.menu.saves = crate::save::list_saves(&crate::save::save_dir());
         }
@@ -817,6 +1030,11 @@ impl Game {
                 self.build_opts = self.sim.build_options();
                 self.build_check = None;
                 self.stocks = crate::ui::topbar::count_stocks(&self.sim.world, now);
+                self.reset_hostiles();
+                self.alert = None;
+                self.civ_alert = None;
+                self.mil = MilitaryUi::default();
+                self.burrow_ui = BurrowUi::default();
                 let text = format!(
                     "Loaded {} ({}): {} in {:.2}s + sim {:.2}s",
                     info.header.fort,
@@ -826,12 +1044,12 @@ impl Game {
                     t.elapsed().as_secs_f64()
                 );
                 self.set_status(text.clone());
-                self.log.push(LogLine { text, pos: None, kind: AnnouncementKind::Info, born: now });
+                self.log.push(LogLine::new(text, None, AnnouncementKind::Info, now, date_string(&self.sim.world.calendar)));
             }
             Err(e) => {
                 let text = format!("Load failed: {e}");
                 self.set_status(text.clone());
-                self.log.push(LogLine { text, pos: None, kind: AnnouncementKind::Warning, born: now });
+                self.log.push(LogLine::new(text, None, AnnouncementKind::Warning, now, date_string(&self.sim.world.calendar)));
             }
         }
     }
@@ -861,7 +1079,9 @@ impl Game {
     /// Esc backs out one level, like DF: menu, rectangle, tool, panels, selection, then the
     /// options menu.
     pub fn escape(&mut self) {
-        if self.menu_open {
+        if self.alert.is_some() {
+            self.alert = None;
+        } else if self.menu_open {
             if self.menu.page != MenuPage::Main {
                 self.menu.page = MenuPage::Main;
             } else {
@@ -874,6 +1094,13 @@ impl Game {
             self.bui.crop_season = None;
         } else if self.orders.new_open {
             self.orders.new_open = false;
+        } else if self.screen == Screen::Military && (self.mil.picker.is_some() || self.mil.kill_list) {
+            self.mil.picker = None;
+            self.mil.kill_list = false;
+        } else if matches!(self.tool, Tool::SquadStation(_) | Tool::SquadKill(_)) {
+            // Back to the squads screen, like DF.
+            self.tool = Tool::None;
+            self.screen = Screen::Military;
         } else if self.screen != Screen::None {
             self.screen = Screen::None;
         } else if self.drag.is_some() {
@@ -994,9 +1221,12 @@ impl Game {
             // Right click backs out: pending rectangle, then tool, then selection.
             if self.drag.is_some() {
                 self.drag = None;
-            } else if matches!(self.tool, Tool::Build(_) | Tool::Zone(_)) {
-                // Back to the build/zone menu, like DF.
+            } else if matches!(self.tool, Tool::Build(_) | Tool::Zone(_) | Tool::Burrow) {
+                // Back to the build/zone/burrow menu, like DF.
                 self.tool = Tool::None;
+            } else if matches!(self.tool, Tool::SquadStation(_) | Tool::SquadKill(_)) {
+                self.tool = Tool::None;
+                self.screen = Screen::Military;
             } else if self.tool != Tool::None || self.submenu != Submenu::None {
                 self.tool = Tool::None;
                 self.submenu = Submenu::None;
@@ -1012,7 +1242,7 @@ impl Game {
                     self.select_at(h);
                 }
             }
-            Tool::Designate(_) | Tool::Stockpile(_) | Tool::Zone(_) => {
+            Tool::Designate(_) | Tool::Stockpile(_) | Tool::Zone(_) | Tool::Burrow => {
                 let (d, done) = drag_step(self.drag, h, lp, lr);
                 self.drag = d;
                 if let Some((a, b)) = done {
@@ -1031,6 +1261,30 @@ impl Game {
                     self.apply_tool(h, h);
                 }
             }
+            Tool::SquadStation(sq) => {
+                if lp {
+                    self.sim.order_squad(sq, rf_sim::SquadOrder::Station(h));
+                    let name = crate::ui::military::squad_name(&self.sim.world, sq);
+                    self.set_status(format!("{name}: station at {}, {}, z {}", h.x, h.y, h.z));
+                    self.tool = Tool::None;
+                    self.screen = Screen::Military;
+                }
+            }
+            Tool::SquadKill(sq) => {
+                if lp {
+                    match crate::ui::military::kill_target_at(self, h) {
+                        Some(uid) => {
+                            self.sim.order_squad(sq, rf_sim::SquadOrder::Kill(uid));
+                            let name = crate::ui::military::squad_name(&self.sim.world, sq);
+                            let who = self.sim.world.unit(uid).map(crate::ui::panels::unit_name).unwrap_or_default();
+                            self.set_status(format!("{name}: kill {who}"));
+                            self.tool = Tool::None;
+                            self.screen = Screen::Military;
+                        }
+                        None => self.set_status("No creature to attack there (citizens cannot be targeted)".into()),
+                    }
+                }
+            }
         }
     }
 
@@ -1047,7 +1301,7 @@ impl Game {
                 },
                 _ => units[0],
             };
-            self.selected = Selected::Unit(next);
+            self.select_unit(next);
         } else if let Some(id) = building_at(w, p, zone_mode) {
             self.selected = Selected::Building(id);
             self.bui = BuildingUi { repeat: self.bui.repeat, ..Default::default() };
@@ -1077,6 +1331,14 @@ impl Game {
                 self.tool = Tool::None;
                 self.selected = Selected::Building(id);
             }
+            Tool::Burrow => {
+                let n = self.sim.world.burrows.len() + 1;
+                let id = self.sim.create_burrow(&format!("Burrow {n}"), a, b);
+                self.set_status(format!("Burrow {n} (#{id}): {dx}x{dy}x{dz} = {} tiles", dx as i32 * dy as i32 * dz as i32));
+                self.burrow_ui.selected = Some(id);
+                self.tool = Tool::None;
+            }
+            Tool::SquadStation(_) | Tool::SquadKill(_) => {}
             Tool::Build(i) => {
                 let Some(o) = self.build_opts.get(i).cloned() else { return };
                 let (lo, hi) = crate::ui::build::footprint(&o, a, Pos::new(b.x, b.y, a.z));

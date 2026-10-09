@@ -2,7 +2,9 @@
 
 use super::{bar, clip, col, panel, pretty, skill_level_name, text_button, BtnState};
 use crate::font::GH;
-use crate::game::{Game, Selected};
+use super::psyche::{stress_color, stress_face, stress_rank};
+use crate::game::{CitSort, Game, Selected};
+use rf_sim::StressLevel;
 use crate::render::tile_desc;
 use macroquad::prelude::*;
 use rf_core::{Pos, Unit, NO_MAT};
@@ -89,18 +91,41 @@ fn unit_sheet(g: &mut Game, id: i32, r: Rect) {
     let act = if status.activity.is_empty() { "No Job".to_string() } else { status.activity.clone() };
     g.font.draw(&clip(&act, tmax), tx, y + 2.0 * lh, s, col::TEXT_CYAN);
     y += 3.0 * lh + 6.0 * s;
-    // Tabs.
-    let tabs = ["Overview", "Skills", "Labor", "Items"];
-    let tw = (r.w - 2.0 * pad - 3.0 * 4.0 * s) / 4.0;
-    for (i, t) in tabs.iter().enumerate() {
-        let tr = Rect::new(x + i as f32 * (tw + 4.0 * s), y, tw, GH * s + 8.0 * s);
-        let st = if g.unit_tab == i { BtnState::Active } else { BtnState::Normal };
-        if text_button(&mut g.ui, &g.font, tr, t, st) {
-            g.unit_tab = i;
+    // Tabs in two rows like the Steam sheet. Indices: 0 Overview, 1 Skills, 2 Labor, 3 Items,
+    // 4 Thoughts, 5 Needs, 6 Personality, 7 Health, 8 Relations (`--ui` names them).
+    const TAB_ROWS: [&[(usize, &str)]; 2] = [
+        &[(0, "Overview"), (4, "Thoughts"), (5, "Needs"), (6, "Personality")],
+        &[(7, "Health"), (8, "Relations"), (1, "Skills"), (2, "Labor"), (3, "Items")],
+    ];
+    let th = GH * s + 8.0 * s;
+    for row in TAB_ROWS {
+        let n = row.len() as f32;
+        let tw = (r.w - 2.0 * pad - (n - 1.0) * 4.0 * s) / n;
+        for (k, (i, t)) in row.iter().enumerate() {
+            let tr = Rect::new(x + k as f32 * (tw + 4.0 * s), y, tw, th);
+            let st = if g.unit_tab == *i { BtnState::Active } else { BtnState::Normal };
+            if text_button(&mut g.ui, &g.font, tr, t, st) && g.unit_tab != *i {
+                g.unit_tab = *i;
+                g.unit_scroll = 0;
+            }
         }
+        y += th + 4.0 * s;
     }
-    y += GH * s + 16.0 * s;
+    y += 8.0 * s;
     let bw = r.w - 2.0 * pad;
+    // [round 3] Mind and body tabs (scrollable rows).
+    if (4..=8).contains(&g.unit_tab) {
+        let rows = match g.unit_tab {
+            4 => super::psyche::thoughts_rows(g, &u),
+            5 => super::psyche::needs_rows(g, &u),
+            6 => super::psyche::personality_rows(g, &u),
+            7 => super::psyche::health_rows(g, &u),
+            _ => super::psyche::relations_rows(g, &u),
+        };
+        let area = Rect::new(x, y, bw, r.y + r.h - pad - lh - y);
+        super::psyche::draw_rows(g, rows, area);
+        return;
+    }
     match g.unit_tab {
         0 => {
             let need = |v: u8| {
@@ -117,11 +142,40 @@ fn unit_sheet(g: &mut Game, id: i32, r: Rect) {
             bar(&g.font, s, x, y, bw, "Thirst", status.thirst as f32, need(status.thirst));
             y += lh;
             bar(&g.font, s, x, y, bw, "Tiredness", status.tiredness as f32, need(status.tiredness));
+            y += lh + 4.0 * s;
+            // [round 3] DF stress category with its face and color (Sim::stress_level).
+            let lvl = g.sim.stress_level(u.id);
+            let sc = super::psyche::stress_color(lvl);
+            g.font.draw("Stress", x, y, s, col::TEXT);
+            let sx = x + 12.0 * 8.0 * s;
+            g.font.draw(super::psyche::stress_face(lvl), sx, y, s, sc);
+            g.font.draw(lvl.label(), sx + 16.0 * s, y, s, sc);
+            let sv = format!("{}", u.stress);
+            g.font.draw(&sv, x + bw - g.font.width(&sv, s), y, s, col::TEXT_DIM);
             y += lh;
-            // DF stress: < 0 content, > 10000 stressed (rough UI scale).
-            let st = ((u.stress as f32 + 10_000.0) / 500.0).clamp(0.0, 100.0);
-            bar(&g.font, s, x, y, bw, "Stress", st, need(st as u8));
-            y += lh + 6.0 * s;
+            // Latest thought, like the summary line of DF's overview.
+            if let Some(e) = u.emotions.iter().filter(|e| super::psyche::shown_emotion(e)).max_by_key(|e| (e.year, e.year_tick)) {
+                let t = g.sim.describe_emotion(e);
+                let t = format!("{} {t}.", super::psyche::pronoun(&u));
+                for l in super::psyche::wrap(&t, maxc, 2).into_iter().take(2) {
+                    g.font.draw(&l, x, y, s, super::psyche::emotion_color(&e.emotion, e.strength));
+                    y += lh;
+                }
+            }
+            let open = u.wounds.iter().filter(|w| super::psyche::is_active_wound(w)).count();
+            if open > 0 {
+                let bleeding = super::psyche::is_bleeding(&u);
+                let t = format!("Wounded ({open} wound{}{})", if open == 1 { "" } else { "s" }, if bleeding { ", bleeding" } else { "" });
+                g.font.draw(&t, x, y, s, col::TEXT_BAD);
+                y += lh;
+            }
+            y += 6.0 * s;
+            let squad = if u.squad_id >= 0 {
+                let name = super::military::squad_name(&g.sim.world, u.squad_id);
+                if u.squad_position >= 0 { format!("Squad: {name}, position {}", u.squad_position + 1) } else { format!("Squad: {name}") }
+            } else {
+                String::new()
+            };
             let sex = match u.sex {
                 0 => "female",
                 1 => "male",
@@ -131,7 +185,7 @@ fn unit_sheet(g: &mut Game, id: i32, r: Rect) {
                 format!("{} {sex}, age {:.0}", pretty(&u.race), u.age),
                 format!("Position {}, {}, z {}", u.pos.x, u.pos.y, u.pos.z),
                 if u.mood.is_empty() { String::new() } else { format!("Mood: {}", pretty(&u.mood)) },
-                if u.squad_id >= 0 { format!("Squad #{}", u.squad_id) } else { String::new() },
+                squad,
                 format!("Unit id {}{}", u.id, if u.hist_fig_id >= 0 { format!(", hist. figure {}", u.hist_fig_id) } else { String::new() }),
             ];
             for l in lines.iter().filter(|l| !l.is_empty()) {
@@ -358,7 +412,10 @@ fn tile_sheet(g: &mut Game, p: Pos, r: Rect) {
     }
 }
 
-/// Citizens list (left side), like the Steam "Creatures > Citizens" tab.
+
+/// Creatures list (left side), like the Steam "Creatures" screen with its tabs: Citizens
+/// (stress face, name, profession, job, stress category; sortable by name, profession or
+/// stress), Pets & livestock, and Others (visitors, wild animals, hostiles).
 pub fn draw_citizens(g: &mut Game, top: f32, bottom: f32) {
     if !g.citizens_open {
         return;
@@ -375,17 +432,107 @@ pub fn draw_citizens(g: &mut Game, top: f32, bottom: f32) {
         g.citizens_open = false;
         return;
     }
-    let mut cits: Vec<(i32, String, String, Pos)> = g
-        .sim
-        .world
-        .citizens()
-        .map(|u| (u.id, unit_name(u), unit_profession(u), u.pos))
-        .collect();
-    cits.sort_by(|a, b| a.1.cmp(&b.1));
-    let animals = g.sim.world.units.iter().filter(|u| u.flags.animal && !u.flags.dead).count();
-    g.font.draw(&format!("Citizens ({})", cits.len()), x, y, s, col::TEXT_HI);
-    g.font.draw(&format!("Pets/livestock: {animals}"), x + 26.0 * 8.0 * s, y, s, col::TEXT_DIM);
-    y += lh + 6.0 * s;
+    struct Entry {
+        id: i32,
+        name: String,
+        prof: String,
+        pos: Pos,
+        lvl: Option<StressLevel>,
+        stress: i32,
+        tag: (String, Color),
+    }
+    let world = &g.sim.world;
+    let is_pet = |u: &Unit| u.flags.animal && !u.flags.hostile && (u.flags.tame || u.civ_id == world.meta.civ_id);
+    let alive = |u: &Unit| !u.flags.dead && !u.flags.inactive;
+    let n_cit = world.citizens().count();
+    let n_pet = world.units.iter().filter(|u| alive(u) && !u.flags.citizen && is_pet(u)).count();
+    let n_oth = world.units.iter().filter(|u| alive(u) && !u.flags.citizen && !is_pet(u)).count();
+    let tab = g.creatures_tab.min(2);
+    let mut list: Vec<Entry> = match tab {
+        0 => world
+            .citizens()
+            .map(|u| {
+                let lvl = g.sim.stress_level(u.id);
+                Entry { id: u.id, name: unit_name(u), prof: unit_profession(u), pos: u.pos, lvl: Some(lvl), stress: u.stress, tag: (lvl.label().to_string(), stress_color(lvl)) }
+            })
+            .collect(),
+        _ => world
+            .units
+            .iter()
+            .filter(|u| alive(u) && !u.flags.citizen && (is_pet(u) == (tab == 1)))
+            .map(|u| {
+                let hostile = g.hostiles.binary_search(&u.id).is_ok();
+                let tag = if hostile && u.flags.caged {
+                    ("Caged hostile".to_string(), col::TEXT_HI)
+                } else if hostile {
+                    ("Hostile".to_string(), col::TEXT_BAD)
+                } else if u.flags.caged {
+                    ("Caged".to_string(), col::TEXT_DIM)
+                } else if u.flags.merchant {
+                    ("Merchant".to_string(), col::TEXT_CYAN)
+                } else if u.flags.visitor {
+                    ("Visitor".to_string(), col::TEXT_CYAN)
+                } else if tab == 2 && u.flags.animal {
+                    ("Wild".to_string(), col::TEXT_DIM)
+                } else {
+                    (String::new(), col::TEXT_DIM)
+                };
+                Entry { id: u.id, name: unit_name(u), prof: unit_profession(u), pos: u.pos, lvl: None, stress: 0, tag }
+            })
+            .collect(),
+    };
+    let sort = if tab != 0 && g.citizens_sort == CitSort::Stress { CitSort::Name } else { g.citizens_sort };
+    match sort {
+        CitSort::Name => list.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id))),
+        CitSort::Profession => list.sort_by(|a, b| a.prof.cmp(&b.prof).then(a.name.cmp(&b.name)).then(a.id.cmp(&b.id))),
+        CitSort::Stress => list.sort_by(|a, b| {
+            let (ra, rb) = (a.lvl.map(stress_rank).unwrap_or(0), b.lvl.map(stress_rank).unwrap_or(0));
+            rb.cmp(&ra).then(b.stress.cmp(&a.stress)).then(a.name.cmp(&b.name)).then(a.id.cmp(&b.id))
+        }),
+    }
+    // Tabs.
+    let mut tx = x;
+    let mut new_tab = None;
+    for (i, label) in [(0usize, format!("Citizens ({n_cit})")), (1, format!("Pets/livestock ({n_pet})")), (2, format!("Others ({n_oth})"))] {
+        let tw = (label.chars().count() as f32 + 2.0) * 8.0 * s;
+        let st = if tab == i { BtnState::Active } else { BtnState::Normal };
+        if text_button(&mut g.ui, &g.font, Rect::new(tx, y - 2.0 * s, tw, GH * s + 8.0 * s), &label, st) {
+            new_tab = Some(i);
+        }
+        tx += tw + 4.0 * s;
+    }
+    if let Some(t) = new_tab {
+        g.creatures_tab = t;
+        g.citizens_scroll = 0;
+    }
+    y += lh + 10.0 * s;
+    // Sort buttons.
+    g.font.draw("Sort:", x, y + 3.0 * s, s, col::TEXT_DIM);
+    let mut bx = x + 6.0 * 8.0 * s;
+    let sorts: &[(CitSort, &str)] = if tab == 0 {
+        &[(CitSort::Name, "Name"), (CitSort::Profession, "Profession"), (CitSort::Stress, "Stress")]
+    } else {
+        &[(CitSort::Name, "Name"), (CitSort::Profession, "Kind")]
+    };
+    for (k, label) in sorts {
+        let bw = (label.len() as f32 + 2.0) * 8.0 * s;
+        let st = if sort == *k { BtnState::Active } else { BtnState::Normal };
+        if text_button(&mut g.ui, &g.font, Rect::new(bx, y, bw, GH * s + 6.0 * s), label, st) {
+            g.citizens_sort = *k;
+            g.citizens_scroll = 0;
+        }
+        bx += bw + 4.0 * s;
+    }
+    let flagged = if tab == 0 {
+        list.iter().filter(|c| c.lvl.map(stress_rank).unwrap_or(0) >= 4).count()
+    } else {
+        list.iter().filter(|c| c.tag.0 == "Hostile").count()
+    };
+    if flagged > 0 {
+        let (t, c) = if tab == 0 { (format!("{flagged} stressed"), col::TEXT_HI) } else { (format!("{flagged} hostile"), col::TEXT_BAD) };
+        g.font.draw(&t, r.x + r.w - pad - g.font.width(&t, s), y + 3.0 * s, s, c);
+    }
+    y += GH * s + 12.0 * s;
     let rows = (((r.y + r.h - pad) - y) / (lh * 2.0)).floor().max(1.0) as usize;
     // Scroll with the wheel while hovering the list.
     if g.ui.hovered(r) && g.input.wheel != 0 {
@@ -395,31 +542,53 @@ pub fn draw_citizens(g: &mut Game, top: f32, bottom: f32) {
             g.citizens_scroll = g.citizens_scroll.saturating_sub(3);
         }
     }
-    g.citizens_scroll = g.citizens_scroll.min(cits.len().saturating_sub(rows));
+    g.citizens_scroll = g.citizens_scroll.min(list.len().saturating_sub(rows));
     let maxc = ((r.w - 2.0 * pad) / (8.0 * s)) as usize;
-    for (id, name, prof, pos) in cits.iter().skip(g.citizens_scroll).take(rows) {
+    if list.is_empty() {
+        g.font.draw("Nobody.", x, y, s, col::TEXT_DIM);
+    }
+    let mut pick = None;
+    for e in list.iter().skip(g.citizens_scroll).take(rows) {
         let rr = Rect::new(r.x + 4.0 * s, y - 2.0 * s, r.w - 8.0 * s, lh * 2.0 - 2.0 * s);
-        let sel = g.selected == Selected::Unit(*id);
+        let sel = g.selected == Selected::Unit(e.id);
         if sel {
             draw_rectangle(rr.x, rr.y, rr.w, rr.h, col::BUTTON_ACTIVE);
         } else if g.ui.hovered(rr) {
             draw_rectangle(rr.x, rr.y, rr.w, rr.h, col::BUTTON_HOVER);
         }
-        let act = g.sim.unit_status(*id).activity;
-        g.font.draw("☺", x, y, s, col::TEXT_HI);
-        g.font.draw(&clip(name, 30), x + 16.0 * s, y, s, col::TEXT);
-        g.font.draw(&clip(prof, maxc.saturating_sub(34)), x + 34.0 * 8.0 * s, y, s, col::TEXT_DIM);
-        let act = if act.is_empty() { "No Job".to_string() } else { act };
-        g.font.draw(&clip(&act, maxc - 2), x + 16.0 * s, y + lh - 2.0 * s, s, col::TEXT_CYAN);
+        let act = g.sim.unit_status(e.id).activity;
+        match e.lvl {
+            Some(lvl) => {
+                g.font.draw(stress_face(lvl), x, y, s, stress_color(lvl));
+            }
+            None => {
+                g.font.draw(if e.tag.0.contains("ostile") { "!" } else { "·" }, x + 2.0 * s, y, s, e.tag.1);
+            }
+        }
+        g.font.draw(&clip(&e.name, 30), x + 16.0 * s, y, s, col::TEXT);
+        g.font.draw(&clip(&e.prof, maxc.saturating_sub(34)), x + 34.0 * 8.0 * s, y, s, col::TEXT_DIM);
+        let act = if e.tag.0.starts_with("Caged") {
+            "In a cage".to_string()
+        } else if act.is_empty() {
+            "No Job".to_string()
+        } else {
+            act
+        };
+        let lt = &e.tag.0;
+        let lw = g.font.width(lt, s);
+        g.font.draw(&clip(&act, maxc.saturating_sub(lt.len() + 4)), x + 16.0 * s, y + lh - 2.0 * s, s, col::TEXT_CYAN);
+        g.font.draw(lt, r.x + r.w - pad - lw, y + lh - 2.0 * s, s, e.tag.1);
         if g.ui.clicked(rr) {
-            g.selected = Selected::Unit(*id);
-            g.unit_tab = 0;
-            g.cam.focus(*pos);
+            pick = Some((e.id, e.pos));
         }
         y += lh * 2.0;
     }
-    if cits.len() > rows {
-        let t = format!("{}-{} of {} (wheel scrolls)", g.citizens_scroll + 1, (g.citizens_scroll + rows).min(cits.len()), cits.len());
+    if let Some((id, p)) = pick {
+        g.select_unit(id);
+        g.cam.focus(p);
+    }
+    if list.len() > rows {
+        let t = format!("{}-{} of {} (wheel scrolls)", g.citizens_scroll + 1, (g.citizens_scroll + rows).min(list.len()), list.len());
         g.font.draw(&t, x, r.y + r.h - pad - GH * s + 4.0 * s, s, col::TEXT_DIM);
     }
 }

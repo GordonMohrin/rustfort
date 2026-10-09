@@ -40,7 +40,12 @@ The defaults below are Steam DF's. Your own `interface.txt` overrides them.
 | Dig menu | toolbar pickaxe | `m`, then `m` mine, `t` up/down stair, `r` ramp, `u` channel, `x` remove |
 | Chop / gather / erase | toolbar | `l` / `g` / `x` |
 | Stockpile | toolbar crate, then pick a preset (Stone, Wood, Food, Furniture, All) | `p` |
-| Citizens list | toolbar (first button) | `u` |
+| Creatures list | toolbar (first button): Citizens (sort by Name / Profession / Stress), Pets/livestock, Others (visitors, wild animals, hostiles) | `u` |
+| Unit sheet tabs | Overview, Thoughts, Needs, Personality, Health, Relations, Skills, Labor, Items (wheel scrolls) | |
+| Squads | toolbar (right group, red arrow) | `c` |
+| Burrows | toolbar (middle group, after Zones) | `Shift+u` |
+| Reports | toolbar (right group, `‼`) | `Shift+n` |
+| Close a pop-up alert | "OK" / "Center on them" | Enter or Esc |
 | Build | toolbar hammer: pick a category, then a building; a green/red ghost follows the mouse, click to place (farm plots: drag) | `b` |
 | Zones | toolbar zone button: pick a type and drag, or click a zone to select it | `z` |
 | Building sheet | left click a workshop, farm plot, stockpile or piece of furniture | |
@@ -84,6 +89,42 @@ position to jump there.
   cell to toggle (`Sim::set_labor`), click a column header to toggle it for everyone shown, type
   in the filter box to filter by name or profession, wheel scrolls. The footer counts how many
   have each labor (red = nobody).
+- **Unit sheet** (click a creature): two rows of tabs like the Steam sheet.
+  - *Overview*: hunger/thirst/tiredness bars, the DF stress category with its face and color
+    (`Sim::stress_level`: Ecstatic, Happy, Content, Fine, Stressed, Very stressed, Breaking
+    down), the latest thought, open wounds and the squad.
+  - *Thoughts*: the remembered emotions newest first (`Sim::describe_emotion`), green for
+    pleasant, red for unpleasant emotions (brighter when strong), with "today / 5 days ago".
+    DF's placeholder memories (`ANYTHING`) are hidden, as in DF.
+  - *Needs*: one line per need with a focus gauge and DF's wording (Badly distracted,
+    Distracted, Unfocused, Not distracted, Untroubled, Level-headed, Unfettered), e.g.
+    "Distracted by being away from friends"; strongest needs first.
+  - *Personality*: facets as sentences for DF's non-average levels (0-9, 10-24, 25-39, 61-75,
+    76-90, 91-100; the sentences paraphrase DF's), then beliefs (values) with their strength.
+  - *Health*: status (bleeding, pain, infection, blood loss), blood bar, open wounds per body
+    part (names from the creature raws) and healed scars.
+  - *Relations*: family, worship, friends, kindred spirits, grudges, pets, acquaintances; click
+    a name to open that unit. Figures that are not on the map show their id.
+- **Squads** (`c`): squads with members, orders and uniforms. Orders: *Station* (click a tile),
+  *Kill* (pick a hostile from the list or "Pick on map"), *Train*, *Cancel orders*
+  (`Sim::order_squad`). "+ Assign" opens a citizen picker (best weapon skill first), "Remove"
+  empties a position, "+ Create squad" makes a new one. Right-click or Esc during Station/Kill
+  returns to the squads.
+- **Burrows** (`Shift+u`): the burrow list with tile and unit counts; burrow tiles of the
+  current z-level are drawn as a colored overlay (the selected burrow with its outline), like
+  DF only while the menu is open. "+ New burrow" and drag a box (3D like digging) creates one
+  (`Sim::create_burrow`). "Alert" turns the civilian alert on for that burrow
+  (`Sim::set_civilian_alert`); the top bar then says "Civilian alert: <burrow>".
+- **Reports** (`Shift+n`): every announcement of the session with its game date, newest first,
+  filtered by All / Combat / Deaths / Jobs / Info, plus the combat log (`Sim::combat_log`).
+  Click a line with `»` to jump there.
+- **Hostiles**: hostile creatures (`Sim::hostiles`) get a pulsing red frame with a `!` badge
+  (not when caged); creatures with open wounds get a blood drop. The top bar counts the
+  hostiles; click the counter to center on the next one. When new hostiles arrive, Rustfort
+  pauses and shows a pop-up like DF ("A vile force of darkness has arrived!" for a goblin
+  siege, "An ambush! Curse them!", "<Name> has come!" for megabeasts) with "Center on them".
+  Hostiles arriving within a day of the first belong to the same wave. Wild animals only get an
+  announcement. A siege already in progress when the fort is loaded only gets an announcement.
 - **Stocks** in the top bar: drink units, food units and distinct foods, recounted every second
   (red below 2 per citizen). Food = prepared meals, meat, fish, cheese, eggs and plants that
   are edible raw or cooked according to the save's plant raws; rotten and dumped items do not
@@ -120,11 +161,14 @@ rustfort play --screenshot target/shots/a.png --frames 20 --view 48,48,22,1 \
 ```
 
 - `--view x,y,z,zoom` sets the camera.
-- `--ui` opens states: `citizens`, `unit[:id]`, `skills`, `labor`, `items`, `dig`, `chop`,
+- `--ui` opens states: `citizens`, `pets`, `others`, `sort:<name|profession|stress>`, `unit[:id]`, `skills`,
+  `labor`, `items`, `thoughts`, `needs`, `personality`, `health`, `relations`, `dig`, `chop`,
   `stockpile`, `menu`, `loadmenu`, `tile`, `drag`, `build[:category]`, `place:<label|subtype|index>`
   (build tool with a ghost), `zone[:kind index]`, `orders`, `neworder[:template]`,
   `labor-screen`, `bld:<id|kind|subtype>` (select a building and center on it), `addjob`,
-  `crop:<season>`.
+  `crop:<season>`, `squads[:id]`, `assign:<position>` (citizen picker), `killlist`, `station`
+  (station tool), `burrows[:id]`, `burrow-tool`, `reports[:filter]`, and `spawn-hostile`
+  (test hook: the 8 non-citizens nearest the camera turn hostile, so the arrival alert fires).
 - `--mouse x,y` parks the cursor.
 - `--script` replays input per frame: `move`, `click`, `ldown`, `lup`, `rclick`, `mdown`,
   `mup`, `wheel n`, `key k` (also `f5`, `backspace`, `tab`), `char c`, `mods shift|ctrl|none`.
@@ -143,7 +187,12 @@ screenshots under `target/`, never in git.
 - `script.rs`: scripted input.
 - `bench.rs`: headless benchmark.
 - `save.rs`: save games (bincode + zstd), save list, `savebench`.
-- `ui/`: `topbar` (plus stocks), `toolbar` (data-driven button tables plus Dig/Stockpile
-  submenus), `build` (build and zone menus, placement ghost, zone overlay), `building` (building
-  sheet), `orders` (work orders), `labor` (labor grid), `panels` (unit sheet, tile info,
-  citizens) and `overlay` (announcements, tooltips, Esc menu with save/load).
+- `ui/`: `topbar` (plus stocks, hostile counter), `toolbar` (data-driven button tables plus
+  Dig/Stockpile submenus), `build` (build and zone menus, placement ghost, zone overlay),
+  `building` (building sheet), `orders` (work orders), `labor` (labor grid), `panels` (unit
+  sheet, tile info, citizens), `psyche` (Thoughts/Needs/Personality/Health/Relations tabs and
+  DF's wording), `military` (squads screen), `burrows` (burrow menu and overlay), `reports`
+  (announcement history), `alerts` (hostile markers and the arrival pop-up) and `overlay`
+  (announcements, tooltips, Esc menu with save/load).
+- `load.rs` also fills squads, burrows and creature/weapon/armor raws from the export's side
+  files when the importer left them empty (round-2 and round-3 formats).

@@ -33,6 +33,7 @@ pub enum Action {
     Burrow,
     Hauling,
     Squads,
+    Reports,
     World,
 }
 
@@ -71,12 +72,13 @@ pub const CENTER: &[ToolButton] = &[
     tb(Action::Build, "Build", "BUTTON_BUILDING", Ico::Hammer, "D_BUILDING", true),
     tb(Action::Stockpile, "Stockpiles", "BUTTON_STOCKPILE", Ico::Crate, "D_STOCKPILES", true),
     tb(Action::Zone, "Zones", "BUTTON_ZONE", Ico::Zone, "D_CIVZONE", true),
-    tb(Action::Burrow, "Burrows (not yet)", "BUTTON_BURROW", Ico::Glyph(176, [200, 160, 120]), "D_BURROWS", false),
+    tb(Action::Burrow, "Burrows", "BUTTON_BURROW", Ico::Glyph(176, [200, 160, 120]), "D_BURROWS", true),
     tb(Action::Hauling, "Hauling (not yet)", "BUTTON_HAULING", Ico::Glyph(26, [200, 200, 200]), "", false),
 ];
 
 pub const RIGHT: &[ToolButton] = &[
-    tb(Action::Squads, "Squads (not yet)", "BUTTON_SQUADS", Ico::Glyph(24, [230, 100, 90]), "D_SQUADS", false),
+    tb(Action::Squads, "Squads", "BUTTON_SQUADS", Ico::Glyph(24, [230, 100, 90]), "D_SQUADS", true),
+    tb(Action::Reports, "Reports", "", Ico::Glyph(19, [240, 200, 90]), "D_ANNOUNCE", true),
     tb(Action::World, "World (not yet)", "BUTTON_WORLD", Ico::Glyph(9, [120, 180, 240]), "", false),
 ];
 
@@ -119,6 +121,9 @@ fn is_active(g: &Game, a: Action) -> bool {
         Action::Zone => g.submenu == Submenu::Zone,
         Action::Labor => g.screen == Screen::Labor,
         Action::WorkOrders => g.screen == Screen::WorkOrders,
+        Action::Burrow => g.submenu == Submenu::Burrow,
+        Action::Squads => g.screen == Screen::Military || matches!(g.tool, Tool::SquadStation(_) | Tool::SquadKill(_)),
+        Action::Reports => g.screen == Screen::Reports,
         _ => false,
     }
 }
@@ -140,6 +145,14 @@ fn press(g: &mut Game, a: Action) {
         Action::Zone => g.open_zones(),
         Action::Labor => g.toggle_screen(Screen::Labor),
         Action::WorkOrders => g.toggle_screen(Screen::WorkOrders),
+        Action::Burrow => g.open_burrows(),
+        Action::Squads => {
+            if matches!(g.tool, Tool::SquadStation(_) | Tool::SquadKill(_)) {
+                g.tool = Tool::None;
+            }
+            g.toggle_screen(Screen::Military)
+        }
+        Action::Reports => g.toggle_screen(Screen::Reports),
         _ => {}
     }
 }
@@ -198,11 +211,21 @@ pub fn draw_toolbar(g: &mut Game) -> f32 {
         Submenu::Stockpile => top = draw_stock_menu(g, cx, y),
         Submenu::Build => top = super::build::draw_build_menu(g, y),
         Submenu::Zone => top = super::build::draw_zone_menu(g, y),
-        Submenu::None => {
-            if let Tool::Designate(k) = g.tool {
+        Submenu::Burrow => top = super::burrows::draw_burrow_menu(g, y),
+        Submenu::None => match g.tool {
+            Tool::Designate(k) => {
                 top = draw_hint(g, cx, y, &format!("{}: drag a rectangle. Right-click cancels.", kind_label(k)));
             }
-        }
+            Tool::SquadStation(sq) => {
+                let n = super::military::squad_name(&g.sim.world, sq);
+                top = draw_hint(g, cx, y, &format!("Station {n}: click a tile. Right-click: back to the squads."));
+            }
+            Tool::SquadKill(sq) => {
+                let n = super::military::squad_name(&g.sim.world, sq);
+                top = draw_hint(g, cx, y, &format!("{n}: click a creature to kill. Right-click: back to the squads."));
+            }
+            _ => {}
+        },
     }
     top
 }

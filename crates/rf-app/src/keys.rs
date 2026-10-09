@@ -224,7 +224,8 @@ impl Bindings {
             [BIND:DESIGNATE_RAMP:REPEAT_NOT][SYM:0:r][BIND:DESIGNATE_CHANNEL:REPEAT_NOT][SYM:0:u]\
             [BIND:DESIGNATE_DIG_REMOVE_STAIRS_RAMPS:REPEAT_NOT][SYM:0:x]\
             [BIND:D_BUILDING:REPEAT_NOT][SYM:0:b][BIND:D_CIVZONE:REPEAT_NOT][SYM:0:z]\
-            [BIND:D_ORDERS:REPEAT_NOT][SYM:0:o][BIND:D_LABOR:REPEAT_NOT][SYM:0:y]";
+            [BIND:D_ORDERS:REPEAT_NOT][SYM:0:o][BIND:D_LABOR:REPEAT_NOT][SYM:0:y]\
+            [BIND:D_SQUADS:REPEAT_NOT][SYM:0:c][BIND:D_BURROWS:REPEAT_NOT][SYM:1:u][BIND:D_ANNOUNCE:REPEAT_NOT][SYM:1:n]";
         Bindings { map: parse(text), source: "built-in defaults".into(), hold_ms: 300.0, repeat_ms: 90.0 }
     }
 

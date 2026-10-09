@@ -52,6 +52,7 @@ pub fn load_world(export: Option<&Path>, synthetic: bool, size: (u16, u16, u16))
             if world.meta.source.is_empty() {
                 world.meta.source = format!("export:{}", dir.display());
             }
+            fill_from_export_files(&mut world, &dir); // [round 3]
             let native = if world.meta.fort_name_native.is_empty() {
                 String::new()
             } else {
@@ -64,5 +65,90 @@ pub fn load_world(export: Option<&Path>, synthetic: bool, size: (u16, u16, u16))
             Loaded { world, label, report: Some(report), warning: None }
         }
         Err(e) => synth(Some(format!("import of {} failed: {e}; using a synthetic fort", dir.display()))),
+    }
+}
+
+
+/// Read a JSON file of the export into `T`, or None if it is missing or does not parse.
+fn read_json<T: serde::de::DeserializeOwned>(dir: &Path, name: &str) -> Option<T> {
+    let t = std::fs::read_to_string(dir.join(name)).ok()?;
+    serde_json::from_str(t.trim_start_matches('\u{feff}')).ok()
+}
+
+/// Fill what the import left empty from the export's side files: squads and burrows (round 2
+/// and 3 formats) and the round-3 creature/weapon/armor raws. Until the importer reads them,
+/// this keeps the military, burrow and health screens showing the fort's real data.
+pub fn fill_from_export_files(world: &mut World, dir: &Path) {
+    if world.squads.is_empty() {
+        // Round 3 has orders/uniforms/alias; round 2 only names and members. Both parse.
+        if let Some(sq) = read_json::<Vec<rf_core::Squad>>(dir, "squads.json") {
+            let positions: Vec<i32> = read_json::<Vec<serde_json::Value>>(dir, "squads.json")
+                .unwrap_or_default()
+                .iter()
+                .map(|v| v.get("positions").and_then(|p| p.as_i64()).unwrap_or(10) as i32)
+                .collect();
+            for (k, mut q) in sq.into_iter().enumerate() {
+                let n = positions.get(k).copied().unwrap_or(10).max(0) as usize;
+                if q.members.len() < n {
+                    q.members.resize(n, -1);
+                }
+                for (i, m) in q.members.iter().enumerate() {
+                    if let Some(u) = world.units.iter_mut().find(|u| u.id == *m && *m >= 0) {
+                        u.squad_id = q.id;
+                        u.squad_position = i as i32;
+                    }
+                }
+                world.squads.push(q);
+            }
+        }
+    }
+    if world.burrows.is_empty() {
+        // Round 3: tiles as positions; round 2: only a tile count.
+        if let Some(b) = read_json::<Vec<rf_core::Burrow>>(dir, "burrows.json") {
+            world.burrows = b;
+        } else {
+            let ex = rf_import::load_extras(dir);
+            world.burrows = ex.burrows.iter().map(|b| rf_core::Burrow { id: b.id, name: b.name.clone(), tiles: Vec::new(), units: b.units.clone() }).collect();
+        }
+    }
+    if world.creature_raws.is_empty() {
+        world.creature_raws = read_json(dir, "creature_raws.json").unwrap_or_default();
+    }
+    if world.weapon_raws.is_empty() {
+        world.weapon_raws = read_json(dir, "weapon_raws.json").unwrap_or_default();
+    }
+    if world.armor_raws.is_empty() {
+        world.armor_raws = read_json(dir, "armor_raws.json").unwrap_or_default();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn squads_and_burrows_from_export_files() {
+        let dir = std::env::temp_dir().join(format!("rf-app-extras-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut w = World::synthetic(16, 16, 10);
+        let uid = w.units[0].id;
+        // Round-2 format.
+        std::fs::write(dir.join("squads.json"), format!(r#"[{{"id":72,"name":"Wache","members":[-1,{uid}],"member_hfs":[1,2],"positions":10}}]"#)).unwrap();
+        std::fs::write(dir.join("burrows.json"), r#"[{"id":1,"name":"Zuflucht","tiles":1716,"blocks":18,"units":[]}]"#).unwrap();
+        fill_from_export_files(&mut w, &dir);
+        assert_eq!(w.squads.len(), 1);
+        assert_eq!(w.squads[0].members.len(), 10);
+        assert_eq!(w.squads[0].members[1], uid);
+        assert_eq!((w.units[0].squad_id, w.units[0].squad_position), (72, 1));
+        assert_eq!(w.burrows[0].name, "Zuflucht");
+        assert!(w.burrows[0].tiles.is_empty());
+        // A world that has squads keeps them; round-3 burrows come with tiles.
+        w.squads[0].name = "Mine".into();
+        w.burrows.clear();
+        std::fs::write(dir.join("burrows.json"), r#"[{"id":0,"name":"Einzel","tiles":[{"x":1,"y":2,"z":3}],"units":[]}]"#).unwrap();
+        fill_from_export_files(&mut w, &dir);
+        assert_eq!(w.squads[0].name, "Mine");
+        assert_eq!(w.burrows[0].tiles, vec![rf_core::Pos::new(1, 2, 3)]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
