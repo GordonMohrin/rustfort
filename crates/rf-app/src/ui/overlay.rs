@@ -19,7 +19,9 @@ pub fn draw_ui(g: &mut Game) {
     let right = screen_width() - super::topbar::ZBAR_W * s - 14.0 * s;
     super::panels::draw_sheet(g, top, toolbar_top.min(tb_y) - 6.0 * s, right);
     // Announcements stay out of the way of the big screens.
-    let ann_h = if g.screen == Screen::None { draw_announcements(g, toolbar_top.min(tb_y)) } else { 0.0 };
+    // Announcements stay left of the right-hand sheet.
+    let ann_right = if g.selected != crate::game::Selected::None { right - super::panels::SHEET_W * s - 8.0 * s } else { screen_width() - 40.0 * s };
+    let ann_h = if g.screen == Screen::None { draw_announcements(g, toolbar_top.min(tb_y), ann_right) } else { 0.0 };
     super::panels::draw_citizens(g, top, toolbar_top.min(tb_y) - ann_h - 6.0 * s);
     super::orders::draw_orders(g);
     super::labor::draw_labor(g);
@@ -94,7 +96,7 @@ fn map_tooltip(g: &mut Game) {
 
 /// Announcement lines above the toolbar (bottom left). Click a line to jump there.
 /// Returns the height used.
-fn draw_announcements(g: &mut Game, bottom: f32) -> f32 {
+fn draw_announcements(g: &mut Game, bottom: f32, right: f32) -> f32 {
     let s = g.ui.scale;
     let lh = g.ui.line_h();
     let now = get_time();
@@ -125,7 +127,8 @@ fn draw_announcements(g: &mut Game, bottom: f32) -> f32 {
             AnnouncementKind::Warning => col::TEXT_HI,
             AnnouncementKind::Death => col::TEXT_BAD,
         };
-        let text = super::clip(&l.text, 90);
+        let maxc = (((right - 8.0 * s) / (crate::font::GW * s)) as usize).clamp(10, 90);
+        let text = super::clip(&l.text, maxc);
         let w = g.font.width(&text, s);
         let rr = Rect::new(x - 3.0, y - 2.0, w + 6.0, lh);
         draw_rectangle(rr.x, rr.y, rr.w, rr.h, Color::new(0.0, 0.0, 0.0, 0.55 * alpha));

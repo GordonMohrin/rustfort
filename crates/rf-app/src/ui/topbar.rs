@@ -127,19 +127,23 @@ pub fn draw_topbar(g: &mut Game) {
     // Stocks: drinks and food (red when below 2 per citizen).
     let st = g.stocks;
     let low = (pop as i32 * 2).max(10);
-    let food_t = format!("Food {} ({} kinds)", st.food, st.food_kinds);
+    let mut food_t = format!("Food {} ({} kinds)", st.food, st.food_kinds);
     let drink_t = format!("Drink {}", st.drinks);
-    let fw = g.font.width(&food_t, s);
     let dw = g.font.width(&drink_t, s);
+    if px - g.font.width(&food_t, s) - dw - 36.0 * s < x + 8.0 * s {
+        food_t = format!("Food {} ({})", st.food, st.food_kinds);
+    }
+    let fw = g.font.width(&food_t, s);
     let sx = px - fw - dw - 36.0 * s;
-    if sx > x + 120.0 * s {
+    if sx > x + 8.0 * s {
         let dc = if st.drinks < low { col::TEXT_BAD } else { col::TEXT_CYAN };
         let fc = if st.food < low { col::TEXT_BAD } else { col::TEXT_GOOD };
         g.font.draw(&drink_t, sx, ty, s, dc);
         g.font.draw(&food_t, sx + dw + 14.0 * s, ty, s, fc);
         let sr = Rect::new(sx, 0.0, dw + fw + 14.0 * s, h);
         if g.ui.hovered(sr) {
-            g.ui.tooltip = Some(("Stocks: drink units, food units, distinct foods (recounted every second)".into(), vec2(sx, h + 26.0 * s)));
+            let tip = format!("Stocks: {} drinks, {} food in {} kinds (recounted every second)", st.drinks, st.food, st.food_kinds);
+            g.ui.tooltip = Some((tip, vec2(sx, h + 26.0 * s)));
         }
         px = sx;
     }

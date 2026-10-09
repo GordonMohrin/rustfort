@@ -289,11 +289,6 @@ fn tile_sheet(g: &mut Game, p: Pos, r: Rect) {
                 lines.push((format!("Designated: {:?}", t.dig()), col::TEXT_HI));
             }
         }
-        for b in w.buildings.iter().filter(|b| b.contains(p)) {
-            let what = if b.subtype.is_empty() { b.kind.clone() } else { format!("{} ({})", b.kind, b.subtype) };
-            let extra = b.stockpile.as_ref().map(|sp| format!(": {}", sp.categories.join(", "))).unwrap_or_default();
-            lines.push((format!("Building #{}: {what}{extra}", b.id), col::TEXT_GOOD));
-        }
         for pl in w.plants.iter().filter(|pl| pl.pos == p) {
             lines.push((format!("Plant: {}{}", pretty(&pl.token).to_lowercase(), if pl.tree { " tree" } else { "" }), col::TEXT_GOOD));
         }
@@ -303,6 +298,32 @@ fn tile_sheet(g: &mut Game, p: Pos, r: Rect) {
         y += lh;
     }
     y += 6.0 * s;
+    // Buildings and zones here (clickable: opens the building sheet).
+    let blds: Vec<(i32, String)> = g
+        .sim
+        .world
+        .buildings
+        .iter()
+        .filter(|b| b.contains(p))
+        .map(|b| {
+            let t = if b.kind == "Civzone" { format!("{} zone", super::words(&b.subtype)) } else { super::building::building_title(g, b) };
+            (b.id, format!("{t} (#{})", b.id))
+        })
+        .collect();
+    if !blds.is_empty() {
+        g.font.draw("Buildings", x, y, s, col::BORDER_HI);
+        y += lh;
+        for (id, txt) in blds {
+            let rr = Rect::new(x, y - 2.0, r.w - 2.0 * pad, lh);
+            if super::list_row(&mut g.ui, rr, false) {
+                g.selected = Selected::Building(id);
+                g.bui = Default::default();
+            }
+            g.font.draw(&clip(&txt, maxc), x, y, s, col::TEXT_GOOD);
+            y += lh;
+        }
+        y += 6.0 * s;
+    }
     // Units here (clickable).
     let units: Vec<(i32, String)> = g.sim.world.units.iter().filter(|u| u.pos == p && !u.flags.dead).map(|u| (u.id, format!("{}, {}", unit_name(u), unit_profession(u)))).collect();
     if !units.is_empty() {

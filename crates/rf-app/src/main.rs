@@ -34,7 +34,9 @@ pub struct Args {
     /// Camera: tile x, tile y, z-level, zoom factor (1.0 = 32 px tiles).
     pub view: Option<(f32, f32, i32, f32)>,
     /// UI states to open at start (for screenshots/tests): `citizens`, `unit`, `unit:<id>`,
-    /// `dig`, `stockpile`, `menu`, `tile`, `drag`, `chop`.
+    /// `dig`, `stockpile`, `menu`, `loadmenu`, `tile`, `drag`, `chop`, `build[:cat]`,
+    /// `place:<option>`, `zone[:kind]`, `orders`, `neworder[:template]`, `labor-screen`,
+    /// `bld:<id|kind|subtype>`, `addjob`, `crop:<season>` (see README).
     pub ui: Vec<String>,
     /// Fake mouse position (screenshot mode).
     pub mouse: Option<(f32, f32)>,
@@ -52,7 +54,7 @@ pub struct Args {
 
 const USAGE: &str = "usage:
   rustfort play  [--export DIR] [--synthetic] [--seed N] [--speed 1|2|5|max]
-                 [--screenshot out.png --frames N] [--view x,y,z,zoom] [--ui citizens,unit,dig,stockpile,menu,tile]
+                 [--screenshot out.png --frames N] [--view x,y,z,zoom] [--ui citizens,unit,build,orders,labor-screen,..]
                  [--mouse x,y] [--script \"frame:cmd; ...\"] [--ui-scale 2] [--gfps 60] [--size x,y,z]
   rustfort bench [--export DIR] [--synthetic] [--ticks N] [--seed N]
   rustfort savebench [--export DIR]
