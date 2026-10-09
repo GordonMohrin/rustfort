@@ -222,3 +222,22 @@ fn unit_status_reports_activities() {
         assert!(seen.contains(want), "missing {want} in {seen:?}");
     }
 }
+
+#[test]
+fn dwarves_drink_water_without_booze() {
+    let (cx, cy, hz) = hall();
+    let mut w = World::synthetic(DX, DY, DZ);
+    w.items.retain(|i| i.kind != "DRINK");
+    // A shallow pool (depth 2) in the hall.
+    for x in cx - 6..=cx - 4 {
+        let t = w.tile_mut(Pos::new(x, cy + 4, hz)).unwrap();
+        t.liquid = 2;
+    }
+    let mut sim = Sim::new(w, 3);
+    sim.run_ticks(80_000);
+    let deaths = sim.drain_announcements().into_iter().filter(|a| a.kind == AnnouncementKind::Death).count();
+    assert_eq!(deaths, 0);
+    for u in sim.world.citizens() {
+        assert!(u.thirst_timer < rf_sim::needs::DEHYDRATED, "{} thirst {}", u.name, u.thirst_timer);
+    }
+}

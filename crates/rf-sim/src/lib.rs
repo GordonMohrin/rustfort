@@ -388,6 +388,9 @@ pub struct Sim {
     items_dirty: bool,
     beds: Vec<Bed>,
     zones: Vec<Zone>,
+    /// Walkable tiles next to (or in shallow) water, for drinking when there is no booze.
+    water: Vec<u32>,
+    water_set: std::collections::HashSet<u32>,
     path_jobs: Vec<PathJob>,
     n_path: usize,
     failed: Vec<usize>,
@@ -477,6 +480,8 @@ impl Sim {
             items_dirty: false,
             beds: Vec::new(),
             zones: Vec::new(),
+            water: Vec::new(),
+            water_set: std::collections::HashSet::new(),
             path_jobs: Vec::new(),
             n_path: 0,
             failed: Vec::new(),
@@ -490,6 +495,7 @@ impl Sim {
         sim.init_buildings();
         sim.init_jobs_from_tiles();
         sim.rebuild_haul();
+        sim.init_water();
         sim
     }
 
@@ -644,6 +650,48 @@ impl Sim {
         let free = occ.iter().filter(|&&o| o == 0).count() as u32;
         self.piles.push(Pile { cats, tiles, occ, res: vec![false; n], free });
         self.pile_cats |= cats;
+    }
+
+    fn is_water(&self, i: usize) -> bool {
+        let t = &self.world.tiles[i];
+        t.liquid_depth() > 0 && !t.is_magma()
+    }
+
+    fn init_water(&mut self) {
+        for i in 0..self.world.tiles.len() {
+            if self.is_water(i) {
+                self.add_water_access_around(i);
+            }
+        }
+    }
+
+    fn add_water_access_around(&mut self, w: usize) {
+        let (x, y, z) = self.nav.xyz(w);
+        for yy in y.saturating_sub(1)..=(y + 1).min(self.nav.dy - 1) {
+            for xx in x.saturating_sub(1)..=(x + 1).min(self.nav.dx - 1) {
+                let q = self.nav.idx(xx, yy, z);
+                if self.nav.walkable(q) && self.water_set.insert(q as u32) {
+                    self.water.push(q as u32);
+                }
+            }
+        }
+    }
+
+    fn nearest_water(&self, s: usize) -> Option<u32> {
+        if self.water.is_empty() {
+            return None;
+        }
+        let pos = self.ai[s].pos as usize;
+        let c = self.nav.comp_near(pos);
+        let up = self.nav.xyz(pos);
+        let mut best = (i32::MAX, NONE);
+        for &t in &self.water {
+            let d = manhattan(up, self.nav.xyz(t as usize));
+            if (d, t) < best && self.nav.walkable(t as usize) && self.nav.comp_root(t as usize) == c {
+                best = (d, t);
+            }
+        }
+        (best.1 != NONE).then_some(best.1)
     }
 
     fn init_jobs_from_tiles(&mut self) {
@@ -1377,7 +1425,7 @@ impl Sim {
                 }
             }
             Task::GoDrink(id) | Task::GoEat(id) => {
-                if self.item_reachable_here(s, id) {
+                if id < 0 || self.item_reachable_here(s, id) {
                     let drink = matches!(task, Task::GoDrink(_));
                     let dur = if drink { needs::DRINK_TICKS } else { needs::EAT_TICKS };
                     let ai = &mut self.ai[s];
@@ -1435,8 +1483,10 @@ impl Sim {
             Task::Drink(id) => {
                 let ai = &mut self.ai[s];
                 ai.thirst = (ai.thirst - needs::DRINK_SATISFIES).max(0);
-                self.unreserve(id);
-                self.consume(id);
+                if id >= 0 {
+                    self.unreserve(id);
+                    self.consume(id);
+                }
                 self.ai[s].task = Task::Idle;
             }
             Task::Eat(id) => {
@@ -1518,10 +1568,18 @@ impl Sim {
                 self.request_path(s, g, now);
                 true
             }
-            None => {
-                self.ai[s].no_drink_until = now + 1200;
-                false
-            }
+            None => match self.nearest_water(s) {
+                // No booze: drink from a water source like DF does (Task id -1 = water).
+                Some(t) => {
+                    self.ai[s].task = Task::GoDrink(-1);
+                    self.request_path(s, Goals::one(t), now);
+                    true
+                }
+                None => {
+                    self.ai[s].no_drink_until = now + 1200;
+                    false
+                }
+            },
         }
     }
 
@@ -1856,6 +1914,18 @@ impl Sim {
         let (x, y, z) = self.nav.xyz(i);
         if self.nav.update_around(&self.world.tiles, x, y, z) {
             self.path_cache.clear();
+        }
+        if !self.water.is_empty() || self.is_water(i) {
+            for zz in [z] {
+                for yy in y.saturating_sub(1)..=(y + 1).min(self.nav.dy - 1) {
+                    for xx in x.saturating_sub(1)..=(x + 1).min(self.nav.dx - 1) {
+                        let q = self.nav.idx(xx, yy, zz);
+                        if self.is_water(q) {
+                            self.add_water_access_around(q);
+                        }
+                    }
+                }
+            }
         }
         // Jobs next to the change may have become accessible (or not).
         if !self.job_at.is_empty() {
