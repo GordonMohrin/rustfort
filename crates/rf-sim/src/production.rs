@@ -80,6 +80,16 @@ pub mod pc {
     pub const CHAIN: u8 = 12;
     pub const MECHANISM: u8 = 13;
     pub const FURNITURE: u8 = 14;
+    // [industry] reagent classes of the furnace/forge/animal/cloth industries.
+    pub const ORE: u8 = 15;
+    pub const BAR: u8 = 16;
+    pub const POWDER: u8 = 17;
+    pub const CORPSE: u8 = 18;
+    pub const BODYPART: u8 = 19;
+    pub const LEATHER: u8 = 20;
+    pub const CLOTH: u8 = 21;
+    pub const THREAD: u8 = 22;
+    pub const BAG: u8 = 23;
 }
 
 const PART_STRUCT: u8 = 0;
@@ -137,6 +147,8 @@ pub enum Input {
     Meal(u8),
     Log,
     Boulder,
+    /// [industry] Furnace, forge, animal, cloth and craft jobs (`industry::F_*` family).
+    Ind(u8),
 }
 
 /// A workshop job the simulation can perform.
@@ -202,6 +214,65 @@ pub const RECIPES: &[Recipe] = &[
     r!("ConstructCoffin", "", "COFFIN", "", "stone", "Construct rock coffin", "Masons", MASON, "MASONRY", Input::Boulder, 400, 1, "coffin"),
     r!("ConstructBlocks", "", "BLOCKS", "", "stone", "Make rock blocks", "Masons", MASON, "MASONRY", Input::Boulder, 300, 4, "block"),
     r!("MakeTool", "", "TOOL", "ITEM_TOOL_LARGE_POT", "stone", "Make rock large pot", "Craftsdwarfs", STONE_CRAFT, "STONECRAFT", Input::Boulder, 300, 1, "large pot"),
+    // [industry] furnaces, forge, animal/cloth industries and mason/carpenter extras.
+    r!("ConstructSlab", "", "SLAB", "", "stone", "Construct rock slab", "Masons", MASON, "MASONRY", Input::Boulder, 400, 1, "slab"),
+    r!("ConstructWeaponRack", "", "WEAPONRACK", "", "stone", "Construct rock weapon rack", "Masons", MASON, "MASONRY", Input::Boulder, 400, 1, "weapon rack"),
+    r!("ConstructArmorStand", "", "ARMORSTAND", "", "stone", "Construct rock armor stand", "Masons", MASON, "MASONRY", Input::Boulder, 400, 1, "armor stand"),
+    r!("ConstructHatchCover", "", "HATCH_COVER", "", "stone", "Construct rock hatch cover", "Masons", MASON, "MASONRY", Input::Boulder, 400, 1, "hatch cover"),
+    r!("ConstructGrate", "", "GRATE", "", "stone", "Construct rock grate", "Masons", MASON, "MASONRY", Input::Boulder, 400, 1, "grate"),
+    r!("ConstructFloodgate", "", "FLOODGATE", "", "stone", "Construct rock floodgate", "Masons", MASON, "MASONRY", Input::Boulder, 400, 1, "floodgate"),
+    r!("ConstructStatue", "", "STATUE", "", "stone", "Construct rock statue", "Masons", MASON, "MASONRY", Input::Boulder, 600, 1, "statue"),
+    r!("ConstructQuern", "", "QUERN", "", "stone", "Construct rock quern", "Masons", MASON, "MASONRY", Input::Boulder, 400, 1, "quern"),
+    r!("ConstructMillstone", "", "MILLSTONE", "", "stone", "Construct rock millstone", "Masons", MASON, "MASONRY", Input::Boulder, 400, 1, "millstone"),
+    r!("EngraveSlab", "", "SLAB", "", "", "Engrave memorial slab", "Masons", labor::ENGRAVER, "ENGRAVE_STONE", Input::Ind(crate::industry::F_ENGRAVE), 400, 1, "slab"),
+    r!("ConstructMechanisms", "", "TRAPPARTS", "", "stone", "Construct rock mechanisms", "Mechanics", labor::MECHANIC, "MECHANICS", Input::Boulder, 300, 1, "mechanism"),
+    r!("MakeCage", "", "CAGE", "", "wood", "Make wooden cage", "Carpenters", CARPENTER, "CARPENTRY", Input::Log, 400, 1, "cage"),
+    r!("ConstructCoffin", "", "COFFIN", "", "wood", "Construct wooden casket", "Carpenters", CARPENTER, "CARPENTRY", Input::Log, 400, 1, "casket"),
+    r!("ConstructWeaponRack", "", "WEAPONRACK", "", "wood", "Construct wooden weapon rack", "Carpenters", CARPENTER, "CARPENTRY", Input::Log, 400, 1, "weapon rack"),
+    r!("ConstructArmorStand", "", "ARMORSTAND", "", "wood", "Construct wooden armor stand", "Carpenters", CARPENTER, "CARPENTRY", Input::Log, 400, 1, "armor stand"),
+    r!("MakeWeapon", "", "WEAPON", "ITEM_WEAPON_AXE_TRAINING", "wood", "Make wooden training weapon", "Carpenters", CARPENTER, "CARPENTRY", Input::Ind(crate::industry::F_WOOD_ITEM), 400, 1, "training axe"),
+    r!("MakeGoblet", "", "GOBLET", "", "stone", "Make rock mug", "Craftsdwarfs", STONE_CRAFT, "STONECRAFT", Input::Boulder, 300, 1, "mug"),
+    r!("MakeCrafts", "", "", "", "stone", "Make rock crafts", "Craftsdwarfs", STONE_CRAFT, "STONECRAFT", Input::Ind(crate::industry::F_CRAFTS_STONE), 300, 1, "craft"),
+    r!("MakeCrafts", "", "", "", "wood", "Make wooden crafts", "Craftsdwarfs", labor::WOOD_CRAFT, "WOODCRAFT", Input::Ind(crate::industry::F_CRAFTS_WOOD), 300, 1, "craft"),
+    r!("MakeCrafts", "", "", "", "bone", "Make bone crafts", "Craftsdwarfs", labor::BONE_CARVE, "BONECARVE", Input::Ind(crate::industry::F_CRAFTS_BONE), 300, 1, "craft"),
+    r!("MakeCharcoal", "", "BAR", "", "", "Make charcoal", "WoodFurnace", labor::BURN_WOOD, "WOOD_BURNING", Input::Ind(crate::industry::F_CHARCOAL), 300, 1, "charcoal"),
+    r!("MakeAsh", "", "BAR", "", "", "Make ash", "WoodFurnace", labor::BURN_WOOD, "WOOD_BURNING", Input::Ind(crate::industry::F_ASH), 300, 1, "ash"),
+    r!("SmeltOre", "", "BAR", "", "", "Smelt ore", "Smelter", labor::SMELT, "SMELT", Input::Ind(crate::industry::F_SMELT), 400, 4, "bars"),
+    r!("MakeRawGlass", "", "ROUGH", "", "", "Make raw green glass", "GlassFurnace", labor::GLASSMAKER, "GLASSMAKER", Input::Ind(crate::industry::F_RAWGLASS), 300, 1, "raw glass"),
+    r!("MakeWeapon", "", "WEAPON", "ITEM_WEAPON_PICK", "metal", "Forge metal weapon", "MetalsmithsForge", labor::FORGE_WEAPON, "FORGE_WEAPON", Input::Ind(crate::industry::F_FORGE), 500, 1, "weapon"),
+    r!("MakeAmmo", "", "AMMO", "ITEM_AMMO_BOLTS", "metal", "Forge metal bolts", "MetalsmithsForge", labor::FORGE_WEAPON, "FORGE_WEAPON", Input::Ind(crate::industry::F_FORGE), 500, 25, "bolts"),
+    r!("MakeArmor", "", "ARMOR", "ITEM_ARMOR_BREASTPLATE", "metal", "Forge metal armor", "MetalsmithsForge", labor::FORGE_ARMOR, "FORGE_ARMOR", Input::Ind(crate::industry::F_FORGE), 600, 1, "armor"),
+    r!("MakeHelm", "", "HELM", "ITEM_HELM_HELM", "metal", "Forge metal helm", "MetalsmithsForge", labor::FORGE_ARMOR, "FORGE_ARMOR", Input::Ind(crate::industry::F_FORGE), 500, 1, "helm"),
+    r!("MakeGloves", "", "GLOVES", "ITEM_GLOVES_GAUNTLETS", "metal", "Forge metal gauntlets", "MetalsmithsForge", labor::FORGE_ARMOR, "FORGE_ARMOR", Input::Ind(crate::industry::F_FORGE), 500, 2, "gauntlets"),
+    r!("MakeShoes", "", "SHOES", "ITEM_SHOES_BOOTS", "metal", "Forge metal high boots", "MetalsmithsForge", labor::FORGE_ARMOR, "FORGE_ARMOR", Input::Ind(crate::industry::F_FORGE), 500, 2, "high boots"),
+    r!("MakePants", "", "PANTS", "ITEM_PANTS_GREAVES", "metal", "Forge metal greaves", "MetalsmithsForge", labor::FORGE_ARMOR, "FORGE_ARMOR", Input::Ind(crate::industry::F_FORGE), 500, 1, "greaves"),
+    r!("MakeShield", "", "SHIELD", "ITEM_SHIELD_SHIELD", "metal", "Forge metal shield", "MetalsmithsForge", labor::FORGE_ARMOR, "FORGE_ARMOR", Input::Ind(crate::industry::F_FORGE), 500, 1, "shield"),
+    r!("ConstructBucket", "", "BUCKET", "", "metal", "Forge metal bucket", "MetalsmithsForge", labor::FORGE_FURNITURE, "FORGE_FURNITURE", Input::Ind(crate::industry::F_FORGE), 400, 1, "bucket"),
+    r!("MakeCage", "", "CAGE", "", "metal", "Forge metal cage", "MetalsmithsForge", labor::FORGE_FURNITURE, "FORGE_FURNITURE", Input::Ind(crate::industry::F_FORGE), 400, 1, "cage"),
+    r!("MakeAnvil", "", "ANVIL", "", "metal", "Forge metal anvil", "MetalsmithsForge", labor::FORGE_FURNITURE, "FORGE_FURNITURE", Input::Ind(crate::industry::F_FORGE), 500, 1, "anvil"),
+    r!("MakeChain", "", "CHAIN", "", "metal", "Forge metal chain", "MetalsmithsForge", labor::FORGE_FURNITURE, "FORGE_FURNITURE", Input::Ind(crate::industry::F_FORGE), 400, 1, "chain"),
+    r!("MakeGoblet", "", "GOBLET", "", "metal", "Forge metal goblet", "MetalsmithsForge", labor::METAL_CRAFT, "METALCRAFT", Input::Ind(crate::industry::F_FORGE), 400, 1, "goblet"),
+    r!("MakeCrafts", "", "", "", "metal", "Forge metal crafts", "MetalsmithsForge", labor::METAL_CRAFT, "METALCRAFT", Input::Ind(crate::industry::F_CRAFTS_METAL), 400, 1, "craft"),
+    r!("MillPlants", "", "POWDER_MISC", "", "", "Mill plants", "Quern", labor::MILLER, "MILLING", Input::Ind(crate::industry::F_MILL), 300, 1, "flour"),
+    r!("MillPlants", "", "POWDER_MISC", "", "", "Mill plants", "Millstone", labor::MILLER, "MILLING", Input::Ind(crate::industry::F_MILL), 200, 1, "flour"),
+    r!("ButcherAnimal", "", "", "", "", "Butcher a dead animal", "Butchers", labor::BUTCHER, "BUTCHER", Input::Ind(crate::industry::F_BUTCHER), 400, 1, "meat"),
+    r!("TanAHide", "", "SKIN_TANNED", "", "", "Tan a hide", "Tanners", labor::TANNER, "TANNER", Input::Ind(crate::industry::F_TAN), 300, 1, "leather"),
+    r!("ConstructBag", "", "BAG", "", "leather", "Make leather bag", "Leatherworks", labor::LEATHER, "LEATHERWORK", Input::Ind(crate::industry::F_LEATHER), 300, 1, "bag"),
+    r!("MakeArmor", "", "ARMOR", "ITEM_ARMOR_LEATHER", "leather", "Make leather armor", "Leatherworks", labor::LEATHER, "LEATHERWORK", Input::Ind(crate::industry::F_LEATHER), 400, 1, "armor"),
+    r!("MakeGloves", "", "GLOVES", "ITEM_GLOVES_GLOVES", "leather", "Make leather gloves", "Leatherworks", labor::LEATHER, "LEATHERWORK", Input::Ind(crate::industry::F_LEATHER), 300, 2, "gloves"),
+    r!("MakeShoes", "", "SHOES", "ITEM_SHOES_SHOES", "leather", "Make leather shoes", "Leatherworks", labor::LEATHER, "LEATHERWORK", Input::Ind(crate::industry::F_LEATHER), 300, 2, "shoes"),
+    r!("MakePants", "", "PANTS", "ITEM_PANTS_PANTS", "leather", "Make leather trousers", "Leatherworks", labor::LEATHER, "LEATHERWORK", Input::Ind(crate::industry::F_LEATHER), 300, 1, "trousers"),
+    r!("MakeHelm", "", "HELM", "ITEM_HELM_CAP", "leather", "Make leather cap", "Leatherworks", labor::LEATHER, "LEATHERWORK", Input::Ind(crate::industry::F_LEATHER), 300, 1, "cap"),
+    r!("MakeQuiver", "", "QUIVER", "", "leather", "Make leather quiver", "Leatherworks", labor::LEATHER, "LEATHERWORK", Input::Ind(crate::industry::F_LEATHER), 300, 1, "quiver"),
+    r!("MakeBackpack", "", "BACKPACK", "", "leather", "Make leather backpack", "Leatherworks", labor::LEATHER, "LEATHERWORK", Input::Ind(crate::industry::F_LEATHER), 300, 1, "backpack"),
+    r!("WeaveCloth", "", "CLOTH", "", "", "Weave thread into cloth", "Loom", labor::WEAVER, "WEAVING", Input::Ind(crate::industry::F_WEAVE), 300, 1, "cloth"),
+    r!("CollectWebs", "", "THREAD", "", "", "Collect webs", "Loom", labor::WEAVER, "WEAVING", Input::Ind(crate::industry::F_WEBS), 100, 1, "thread"),
+    r!("ConstructBag", "", "BAG", "", "cloth", "Make cloth bag", "Clothiers", labor::CLOTHESMAKER, "CLOTHESMAKING", Input::Ind(crate::industry::F_CLOTH_ITEM), 300, 1, "bag"),
+    r!("MakeArmor", "", "ARMOR", "ITEM_ARMOR_SHIRT", "cloth", "Make cloth shirt", "Clothiers", labor::CLOTHESMAKER, "CLOTHESMAKING", Input::Ind(crate::industry::F_CLOTH_ITEM), 300, 1, "shirt"),
+    r!("MakePants", "", "PANTS", "ITEM_PANTS_PANTS", "cloth", "Make cloth trousers", "Clothiers", labor::CLOTHESMAKER, "CLOTHESMAKING", Input::Ind(crate::industry::F_CLOTH_ITEM), 300, 1, "trousers"),
+    r!("MakeGloves", "", "GLOVES", "ITEM_GLOVES_GLOVES", "cloth", "Make cloth gloves", "Clothiers", labor::CLOTHESMAKER, "CLOTHESMAKING", Input::Ind(crate::industry::F_CLOTH_ITEM), 300, 2, "gloves"),
+    r!("MakeShoes", "", "SHOES", "ITEM_SHOES_SOCKS", "cloth", "Make cloth socks", "Clothiers", labor::CLOTHESMAKER, "CLOTHESMAKING", Input::Ind(crate::industry::F_CLOTH_ITEM), 300, 2, "socks"),
+    r!("MakeHelm", "", "HELM", "ITEM_HELM_HOOD", "cloth", "Make cloth hood", "Clothiers", labor::CLOTHESMAKER, "CLOTHESMAKING", Input::Ind(crate::industry::F_CLOTH_ITEM), 300, 1, "hood"),
 ];
 
 /// Job kinds counted in the report (`jobs_done`): recipes first, then these.
@@ -620,7 +691,9 @@ impl Sim {
             "WOOD" => pc::LOG,
             "BOULDER" => {
                 let ore = self.world.material(it.mat).map(|m| m.is_ore || !m.is_stone).unwrap_or(true);
-                if ore {
+                if self.world.material(it.mat).map(|m| m.is_ore).unwrap_or(false) {
+                    pc::ORE // [industry]
+                } else if ore {
                     pc::NONE
                 } else {
                     pc::BOULDER
@@ -636,12 +709,21 @@ impl Sim {
             "CHAIN" => pc::CHAIN,
             "TRAPPARTS" => pc::MECHANISM,
             k if furniture_kind(k) => pc::FURNITURE,
+            // [industry]
+            "BAR" => pc::BAR,
+            "POWDER_MISC" => pc::POWDER,
+            "CORPSE" => pc::CORPSE,
+            "CORPSEPIECE" => pc::BODYPART,
+            "SKIN_TANNED" => pc::LEATHER,
+            "CLOTH" => pc::CLOTH,
+            "THREAD" => pc::THREAD,
+            "BAG" => pc::BAG,
             _ => pc::NONE,
         };
         (c, if c == pc::PLANT || c == pc::GROWTH || c == pc::SEED || c == pc::DRINK { plant } else { NO_PLANT })
     }
 
-    fn plant(&self, p: u16) -> Option<&PlantInfo> {
+    pub(crate) fn plant(&self, p: u16) -> Option<&PlantInfo> {
         self.prod.plants.get(p as usize)
     }
 
@@ -658,7 +740,7 @@ impl Sim {
         }
     }
 
-    fn brewable_idx(&self, idx: usize) -> bool {
+    pub(crate) fn brewable_idx(&self, idx: usize) -> bool {
         let m = &self.imeta[idx];
         let it = &self.world.items[idx];
         if it.flags.rotten {
@@ -690,7 +772,7 @@ impl Sim {
         }
     }
 
-    fn container_empty(&self, id: i32) -> bool {
+    pub(crate) fn container_empty(&self, id: i32) -> bool {
         match self.contents.get(&id) {
             None => true,
             Some(v) => v.iter().all(|c| self.item_idx.get(c).map(|&i| self.imeta[i as usize].dead).unwrap_or(true)),
@@ -698,7 +780,7 @@ impl Sim {
     }
 
     /// Free for a job: not forbidden, held, built in, reserved, in a job or in a busy container.
-    fn item_free(&self, idx: usize, now: u64) -> bool {
+    pub(crate) fn item_free(&self, idx: usize, now: u64) -> bool {
         let it = &self.world.items[idx];
         let m = &self.imeta[idx];
         let f = &it.flags;
@@ -1021,12 +1103,14 @@ impl Sim {
             self.prod.season = season;
         }
         self.census_now(now);
+        self.ind_census(now); // [industry]
         if self.prod.orders_due || now % rf_core::TICKS_PER_DAY as u64 == 0 {
             self.prod.orders_due = false;
             self.run_orders();
         }
         self.refresh_shops();
         self.refresh_farm_work(now);
+        self.storage_pass(now); // [industry]
         if !self.prod.farm_work.is_empty() || self.prod.shops.iter().any(|s| !s.avail.is_empty() && s.busy == NONE) || self.prod.cons.iter().any(|c| !c.claimed) {
             self.prod.epoch += 1;
         }
@@ -1138,6 +1222,7 @@ impl Sim {
             Input::Meal(n) => c.cookables >= n as i32,
             Input::Log => c.logs > 0,
             Input::Boulder => c.boulders > 0,
+            Input::Ind(f) => self.ind_available(f, r), // [industry]
         }
     }
 
@@ -1187,9 +1272,10 @@ impl Sim {
                 } else if !mat_cat.is_empty() {
                     score -= 5;
                 }
-                let stone_mat = mat == "INORGANIC" || mat.starts_with("INORGANIC:");
+                let metal_mat = crate::industry::is_metal_token(mat); // [industry]
+                let stone_mat = (mat == "INORGANIC" || mat.starts_with("INORGANIC:")) && !metal_mat;
                 let wood_mat = mat.starts_with("PLANT:") && mat.ends_with(":WOOD");
-                if (stone_mat && r.mat_category == "stone") || (wood_mat && r.mat_category == "wood") {
+                if (stone_mat && r.mat_category == "stone") || (wood_mat && r.mat_category == "wood") || (metal_mat && r.mat_category == "metal") {
                     score += 5;
                 }
             }
@@ -1475,7 +1561,7 @@ impl Sim {
     }
 
     /// Find the nearest free item(s) matching `pred` near `site` within component `c`.
-    fn find_items(&mut self, site: u32, c: u32, now: u64, want: usize, out: &mut Vec<i32>, pred: impl Fn(&Sim, usize) -> bool) {
+    pub(crate) fn find_items(&mut self, site: u32, c: u32, now: u64, want: usize, out: &mut Vec<i32>, pred: impl Fn(&Sim, usize) -> bool) {
         self.stats.prod_item_scans += 1;
         out.clear();
         let sp = self.nav.xyz(site as usize);
@@ -1653,6 +1739,7 @@ impl Sim {
                     false
                 }
             }
+            Input::Ind(_) => self.ind_claim(s, r, &qjob, site, c, now, &mut wj), // [industry]
             Input::Log | Input::Boulder => {
                 let want_pc = if rec.input == Input::Log { pc::LOG } else { pc::BOULDER };
                 self.find_items(site, c, now, 1, &mut found, |sim, i| sim.imeta[i].pc == want_pc && mat_filter.map(|m| sim.world.items[i].mat == m).unwrap_or(true));
@@ -1878,7 +1965,7 @@ impl Sim {
     }
 
     /// Release an item held or placed for a job (cancelled job).
-    fn release_reagent(&mut self, id: i32) {
+    pub(crate) fn release_reagent(&mut self, id: i32) {
         let Some(&i) = self.item_idx.get(&id) else { return };
         let i = i as usize;
         self.world.items[i].flags.in_job = false;
@@ -1964,6 +2051,7 @@ impl Sim {
                 match rec.input {
                     Input::BrewPlant | Input::BrewFruit => self.finish_brew(&wj, rec.count as i32, rec.input == Input::BrewPlant),
                     Input::Meal(_) => self.finish_meal(&wj, rec.noun),
+                    Input::Ind(_) => self.ind_finish(s, &wj, recipe, now), // [industry]
                     Input::Log | Input::Boulder => {
                         let mat = self.item_idx.get(&wj.items[0]).map(|&i| self.world.items[i as usize].mat).unwrap_or(NO_MAT);
                         self.destroy_item(wj.items[0]);

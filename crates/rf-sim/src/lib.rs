@@ -57,6 +57,10 @@ pub mod nav;
 pub mod path;
 pub mod production;
 pub use production::{Census, PlantInfo, ProductionReport};
+mod industry; // [industry]
+mod storage; // [industry]
+pub use industry::IndustryReport; // [industry]
+pub use storage::{PileReport, StorageReport}; // [industry]
 mod rng;
 
 use items::{is_drink, is_edible, Cat};
@@ -500,6 +504,10 @@ pub struct Sim {
     par_min_paths: usize,
     /// Workshops, farms, orders, construction (see `production`).
     prod: production::Prod,
+    /// [industry] Bins/barrels on stockpiles, rot (see `storage`).
+    store: storage::Store,
+    /// [industry] Furnace/forge/animal/cloth job details (see `industry`).
+    ind: industry::Ind,
 }
 
 #[inline]
@@ -593,6 +601,8 @@ impl Sim {
             stats: SimStats::default(),
             par_min_paths: PAR_MIN_PATHS,
             prod: production::Prod::default(),
+            store: storage::Store::default(), // [industry]
+            ind: industry::Ind::default(),    // [industry]
         };
         sim.init_plants();
         sim.init_units();
@@ -601,6 +611,7 @@ impl Sim {
         sim.init_jobs_from_tiles();
         sim.init_water();
         sim.init_production();
+        sim.init_storage(); // [industry]
         sim.rebuild_food_lists();
         sim.rebuild_haul();
         sim
@@ -760,6 +771,7 @@ impl Sim {
         let free = occ.iter().filter(|&&o| o == 0).count() as u32;
         self.piles.push(Pile { cats, tiles, occ, res: vec![false; n], free });
         self.pile_cats |= cats;
+        self.store_pile_added(bi); // [industry]
     }
 
     fn is_water(&self, i: usize) -> bool {
@@ -1680,6 +1692,7 @@ impl Sim {
                 self.ai[s].sleeping = false;
             }
             Task::GoPickup(id, dest) => {
+                self.store_release(id); // [industry]
                 self.set_hauling(id, false);
                 self.release_pile_tile(dest);
                 self.haul_add(id);
@@ -2580,6 +2593,7 @@ impl Sim {
                 free_cats |= p.cats;
             }
         }
+        free_cats |= self.store.free_cats; // [industry] container space
         let mut want = 0u32;
         for cat in Cat::ALL {
             if self.haul_cnt[cat as usize] > 0 && labors & cat.haul_labor() != 0 {
@@ -2620,14 +2634,14 @@ impl Sim {
             }
             let (id, t) = (best.1, best.2);
             let cat = self.imeta[self.item_idx[&id] as usize].cat;
-            let dest = match self.find_pile_tile(cat, self.nav.xyz(t), c) {
+            let dest = match self.store_dest(id, cat, self.nav.xyz(t), c) { // [industry] bins/barrels
                 Some(d) => d,
                 None => {
                     want &= !cat.bit();
                     continue;
                 }
             };
-            if let Some(&(p, k)) = self.pile_at.get(&dest) {
+            if let Some(&(p, k)) = self.pile_at.get(&dest).filter(|_| !self.store_assigned(id)) { // [industry]
                 let pile = &mut self.piles[p as usize];
                 pile.res[k as usize] = true;
                 pile.free -= 1;
@@ -2660,6 +2674,9 @@ impl Sim {
     }
 
     fn drop_item(&mut self, s: usize, id: i32, tile: u32) {
+        if self.store_drop(s, id, tile) {
+            return; // [industry] stored into a bin/barrel
+        }
         let uidx = self.ai[s].uidx;
         self.world.units[uidx].inventory.retain(|&x| x != id);
         self.ai[s].carrying = -1;
