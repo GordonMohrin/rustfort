@@ -210,3 +210,13 @@ An array with one entry per race in units.jsonl:
 ```json
 {"index": 572, "token": "DWARF", "name": "dwarf", "name_plural": "dwarves", "castes": [{"token": "FEMALE", "name": "dwarf"}]}
 ```
+
+
+## Additions for round 2 (optional files, still format v1)
+
+| file | content |
+|---|---|
+| `work_orders.jsonl` | `rf_core::WorkOrder` per line, from `df.global.world.manager_orders`, with conditions |
+| `plant_raws.json` | array of `rf_core::PlantRaw` covering all plants of the save's raws: growdur in ticks, seasons, underground or aboveground, brewable, edible, has_seed, palette indices of the main materials (`NO_MAT` = 65535 if not in the palette; materials may be added to the palette for this) |
+| `buildings.jsonl` | new fields `jobs` (an `rf_core::BuildingJob` list from the workshop's job queue; the construction job is excluded) and `crops` (4 plant tokens for farm plots, `""` = fallow) |
+| `manifest.json` | new field `mods`: the active mods of the save in load order, as `"id:numeric_version"` |

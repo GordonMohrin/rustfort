@@ -89,6 +89,8 @@ pub struct Manifest {
     pub map_complete: bool,
     /// Approximations and skipped data reported by the exporter.
     pub notes: Vec<String>,
+    /// Active mods of the save in load order (`id:numeric_version`).
+    pub mods: Vec<String>,
 }
 
 impl Manifest {
@@ -388,6 +390,21 @@ pub fn load_export(dir: &Path) -> Result<(World, ImportReport), ImportError> {
     for x in [mapw, uw, iw, bw, pw] {
         w.merge(x);
     }
+    // Optional files (format v1 additions): work orders and plant raws.
+    let work_orders = if dir.join("work_orders.jsonl").exists() {
+        let (v, ww) = read_jsonl::<rf_core::WorkOrder>(&dir.join("work_orders.jsonl"), "work_orders");
+        w.merge(ww);
+        v
+    } else {
+        Vec::new()
+    };
+    let plant_raws = if dir.join("plant_raws.json").exists() {
+        let (v, pw2) = read_json::<Vec<rf_core::PlantRaw>>(&dir.join("plant_raws.json"), "plant_raws", false)?;
+        w.merge(pw2);
+        v
+    } else {
+        Vec::new()
+    };
 
     let mut world = World {
         meta: Meta {
@@ -403,7 +420,7 @@ pub fn load_export(dir: &Path) -> Result<(World, ImportReport), ImportError> {
             region_y: manifest.region_y,
             region_z: manifest.region_z,
             source: format!("export:{}", dir.display()),
-            ..Default::default()
+            mods: manifest.mods.clone(),
         },
         // Entities were exported last, so the end tick is the state they describe.
         calendar: if manifest.year_end > 0 {
@@ -419,7 +436,8 @@ pub fn load_export(dir: &Path) -> Result<(World, ImportReport), ImportError> {
         items,
         buildings,
         plants,
-        ..Default::default()
+        work_orders,
+        plant_raws,
     };
     validate(&mut world, &manifest, &mut w);
 
