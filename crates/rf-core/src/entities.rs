@@ -98,6 +98,9 @@ pub struct Unit {
     pub thirst_timer: i32,
     pub sleepiness_timer: i32,
     pub stress: i32,
+    /// [social] DF v50 long-term stress (`personality.longterm_stress`, -50 000..=120 000);
+    /// 0 if the export has none (the social sim then estimates it from `stress`).
+    pub longterm_stress: i32,
     pub skills: Vec<Skill>,
     /// Enabled labors (DF `unit_labor` enum names), e.g. `MINE`, `HAUL_STONE`.
     pub labors: Vec<String>,

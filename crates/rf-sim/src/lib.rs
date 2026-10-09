@@ -57,6 +57,8 @@ pub mod nav;
 pub mod path;
 pub mod production;
 pub use production::{Census, PlantInfo, ProductionReport};
+pub mod social; // [social]
+pub use social::{Breakdown, MonthStress, SocialReport}; // [social]
 mod rng;
 
 use items::{is_drink, is_edible, Cat};
@@ -311,6 +313,8 @@ enum Task {
     Fetch(i32),
     GoSite,
     Craft,
+    /// [social] Walk to dining seat `.1` and eat food item `.0` there.
+    GoDine(i32, u32),
 }
 
 struct UnitAi {
@@ -462,6 +466,8 @@ pub struct Sim {
     par_min_paths: usize,
     /// Workshops, farms, orders, construction (see `production`).
     prod: production::Prod,
+    /// [social] Thoughts, needs, stress, rooms (see `social`).
+    social: social::Social,
 }
 
 #[inline]
@@ -555,6 +561,7 @@ impl Sim {
             stats: SimStats::default(),
             par_min_paths: PAR_MIN_PATHS,
             prod: production::Prod::default(),
+            social: social::Social::default(), // [social]
         };
         sim.init_plants();
         sim.init_units();
@@ -563,6 +570,7 @@ impl Sim {
         sim.init_jobs_from_tiles();
         sim.init_water();
         sim.init_production();
+        sim.init_social(); // [social]
         sim.rebuild_food_lists();
         sim.rebuild_haul();
         sim
@@ -904,7 +912,7 @@ impl Sim {
                 (job.kind.caption(), Some(pos_of(job.tile)))
             }
             (_, Task::GoDrink(id)) | (_, Task::Drink(id)) => ("Drink", item_pos(id)),
-            (_, Task::GoEat(id)) | (_, Task::Eat(id)) => ("Eat", item_pos(id)),
+            (_, Task::GoEat(id)) | (_, Task::Eat(id)) | (_, Task::GoDine(id, _)) => ("Eat", item_pos(id)), // [social] GoDine
             (_, Task::GoSleep(b)) | (_, Task::Sleep(b)) => {
                 ("Sleep", if b >= 0 { Some(pos_of(self.beds[b as usize].tile)) } else { None })
             }
@@ -961,6 +969,7 @@ impl Sim {
             mix(it.stack as u64);
         }
         self.prod_hash(&mut mix);
+        self.social_hash(&mut mix); // [social]
         h
     }
 
@@ -1058,6 +1067,9 @@ impl Sim {
             let tp = Instant::now();
             self.production_pass(now);
             self.phase[4] += tp.elapsed().as_secs_f64();
+        }
+        if now % social::SOCIAL_PERIOD == 50 {
+            self.social_pass(now); // [social]
         }
         let t0 = Instant::now();
         for s in 0..self.ai.len() {
@@ -1191,6 +1203,11 @@ impl Sim {
                 self.imeta[i as usize].blocked_until = now + rf_core::TICKS_PER_DAY as u64;
             }
             self.cancel_task(s);
+        } else if let Task::GoDine(id, _) = task {
+            // [social] Seat unreachable: eat where we stand.
+            self.social_release_seat(s);
+            self.social_arrive_dine(s, id, now);
+            return;
         } else if let Task::GoSite = task {
             self.prod_block_site(s, now);
             self.cancel_task(s);
@@ -1292,6 +1309,7 @@ impl Sim {
             Task::Idle => self.decide(s, now),
             Task::Sleep(_) => {
                 if sl <= 0 {
+                    self.social_woke(s, now); // [social]
                     self.cancel_task(s);
                     self.decide(s, now);
                 } else {
@@ -1420,6 +1438,11 @@ impl Sim {
             self.start_sleep(s, now);
             return;
         }
+        if self.social_no_work(s) {
+            // [social] Tantrum, depression, obliviousness or insanity: no work.
+            self.wander(s, now, &mut r);
+            return;
+        }
         let ai = &self.ai[s];
         let labors = ai.labors;
         let jobs_changed = labors & labor::ANY_JOB != 0 && ai.seen_jobs != self.epoch_jobs;
@@ -1467,7 +1490,8 @@ impl Sim {
                     return;
                 }
                 None => {
-                    let zn = self.zones[r.below(self.zones.len() as u32) as usize];
+                    let zi = self.social_pick_zone(s, r); // [social]
+                    let zn = self.zones[zi];
                     let tx = zn.x1 + r.below((zn.x2 - zn.x1 + 1) as u32) as i16;
                     let ty = zn.y1 + r.below((zn.y2 - zn.y1 + 1) as u32) as i16;
                     if let Some(t) = self.world.idx(Pos::new(tx, ty, zn.z)) {
@@ -1499,7 +1523,7 @@ impl Sim {
             Task::GoJob(j) => {
                 let job = self.jobs[j as usize];
                 if job.live && job.claimed == s as u32 {
-                    let rating = self.world.units[self.ai[s].uidx].skill(job.kind.skill());
+                    let rating = self.social_rating(s, self.world.units[self.ai[s].uidx].skill(job.kind.skill())); // [social] focus
                     let base = match job.kind {
                         JobKind::Dig(_) => 120,
                         JobKind::Chop => 200,
@@ -1519,6 +1543,9 @@ impl Sim {
             Task::GoDrink(id) | Task::GoEat(id) => {
                 if id < 0 || self.item_reachable_here(s, id) {
                     let drink = matches!(task, Task::GoDrink(_));
+                    if !drink && self.social_go_dine(s, id, now) {
+                        return; // [social] carry the meal to a dining table
+                    }
                     let dur = if drink { needs::DRINK_TICKS } else { needs::EAT_TICKS };
                     let ai = &mut self.ai[s];
                     ai.task = if drink { Task::Drink(id) } else { Task::Eat(id) };
@@ -1552,6 +1579,7 @@ impl Sim {
             }
             Task::Fetch(id) => self.prod_arrive_fetch(s, id, now),
             Task::GoSite => self.prod_arrive_site(s, now),
+            Task::GoDine(id, _) => self.social_arrive_dine(s, id, now), // [social]
             Task::Job(_) | Task::Drink(_) | Task::Eat(_) | Task::Sleep(_) | Task::Craft => {}
         }
     }
@@ -1577,6 +1605,7 @@ impl Sim {
             Task::Drink(id) => {
                 let ai = &mut self.ai[s];
                 ai.thirst = (ai.thirst - needs::DRINK_SATISFIES).max(0);
+                self.social_drank(s, id, now); // [social]
                 if id >= 0 {
                     self.unreserve(id);
                     self.consume(id);
@@ -1586,6 +1615,7 @@ impl Sim {
             Task::Eat(id) => {
                 let ai = &mut self.ai[s];
                 ai.hunger = (ai.hunger - needs::EAT_SATISFIES).max(0);
+                self.social_ate(s, id, now); // [social]
                 self.unreserve(id);
                 // Wiki "Seed": eating a plant raw leaves a seed.
                 let seed_plant = self.item_idx.get(&id).map(|&i| &self.imeta[i as usize]).filter(|m| m.pc == production::pc::PLANT).map(|m| m.plant);
@@ -1623,6 +1653,7 @@ impl Sim {
             .map(|m| m as u16)
             .unwrap_or(NO_MAT);
         self.create_item("CORPSE", mat, tile as usize, format!("{name}'s corpse"));
+        self.social_death(s, now); // [social]
     }
 
     fn cancel_task(&mut self, s: usize) {
@@ -1634,7 +1665,10 @@ impl Sim {
                     self.epoch_jobs += 1;
                 }
             }
-            Task::GoDrink(id) | Task::Drink(id) | Task::GoEat(id) | Task::Eat(id) => self.unreserve(id),
+            Task::GoDrink(id) | Task::Drink(id) | Task::GoEat(id) | Task::Eat(id) | Task::GoDine(id, _) => {
+                self.unreserve(id);
+                self.social_release_seat(s); // [social]
+            }
             Task::GoSleep(b) | Task::Sleep(b) => {
                 if b >= 0 {
                     self.beds[b as usize].occupant = NONE;
@@ -1982,6 +2016,7 @@ impl Sim {
             }
         };
         sk.xp += xp;
+        let r0 = sk.rating; // [social]
         // DF: the next level needs 500 + 100 * current level experience.
         loop {
             let need = 500 + 100 * sk.rating;
@@ -1991,6 +2026,8 @@ impl Sim {
             sk.xp -= need;
             sk.rating += 1;
         }
+        let leveled = sk.rating > r0; // [social]
+        self.social_work(s, skill, leveled); // [social]
     }
 
     // ------------------------------------------------------------------ digging
