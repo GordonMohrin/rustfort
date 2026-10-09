@@ -4,12 +4,17 @@
 //! The UI is drawn after the map. Every panel registers its rectangle, so the map input that
 //! runs afterwards knows whether the mouse is over the UI (`UiCtx::over_ui`).
 
+pub mod alerts;
 pub mod build;
 pub mod building;
+pub mod burrows;
 pub mod labor;
+pub mod military;
 pub mod orders;
 pub mod overlay;
 pub mod panels;
+pub mod psyche;
+pub mod reports;
 pub mod toolbar;
 pub mod topbar;
 

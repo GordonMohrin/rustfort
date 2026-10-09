@@ -25,14 +25,17 @@ pub fn draw_ui(g: &mut Game) {
     super::panels::draw_citizens(g, top, toolbar_top.min(tb_y) - ann_h - 6.0 * s);
     super::orders::draw_orders(g);
     super::labor::draw_labor(g);
+    super::military::draw_military(g);
+    super::reports::draw_reports(g);
     draw_status(g, toolbar_top.min(tb_y));
     if g.menu_open {
         draw_menu(g);
     }
+    super::alerts::draw_alert(g);
     // Button tooltips win over the map tooltip.
     if let Some((t, p)) = g.ui.tooltip.take() {
         tooltip_box(g, &[(t, col::TEXT)], p, true);
-    } else if !g.ui.over_ui && !g.menu_open && g.screen == Screen::None && !matches!(g.tool, Tool::Build(_)) {
+    } else if !g.ui.over_ui && !g.menu_open && g.alert.is_none() && g.screen == Screen::None && !matches!(g.tool, Tool::Build(_)) {
         map_tooltip(g);
     }
 }
@@ -59,7 +62,9 @@ fn map_tooltip(g: &mut Game) {
     let w = &g.sim.world;
     let mut lines: Vec<(String, Color)> = Vec::new();
     for u in w.units.iter().filter(|u| u.pos == p && !u.flags.dead).take(3) {
-        lines.push((format!("{}, {}", unit_name(u), unit_profession(u)), col::TEXT_HI));
+        let hostile = g.hostiles.binary_search(&u.id).is_ok();
+        let tag = if hostile { if u.flags.caged { " (hostile, caged)" } else { " (hostile)" } } else { "" };
+        lines.push((format!("{}, {}{tag}", unit_name(u), unit_profession(u)), if hostile { col::TEXT_BAD } else { col::TEXT_HI }));
     }
     for b in w.buildings.iter().filter(|b| b.contains(p)).take(2) {
         let n = if b.kind == "Stockpile" {
@@ -121,11 +126,14 @@ fn draw_announcements(g: &mut Game, bottom: f32, right: f32) -> f32 {
         let l = &g.log[i];
         let age = now - l.born;
         let alpha = if age > 20.0 { ((25.0 - age) / 5.0) as f32 } else { 1.0 };
+        #[allow(unreachable_patterns)]
         let c = match l.kind {
             AnnouncementKind::Info => col::TEXT,
             AnnouncementKind::Job => col::TEXT_CYAN,
             AnnouncementKind::Warning => col::TEXT_HI,
             AnnouncementKind::Death => col::TEXT_BAD,
+            // Kinds the sim adds later (e.g. combat) use the Reports colors.
+            k => super::reports::kind_color(k, &l.text),
         };
         let maxc = (((right - 8.0 * s) / (crate::font::GW * s)) as usize).clamp(10, 90);
         let text = super::clip(&l.text, maxc);

@@ -246,6 +246,7 @@ pub fn draw_map(g: &mut Game) {
     // ---- zones (only in zone mode / when selected, like DF)
     g.rend.buf = std::mem::take(&mut sprites);
     crate::ui::build::draw_zones(g, x0, y0, x1, y1);
+    crate::ui::burrows::draw_burrow_overlay(g, x0, y0, x1, y1); // [round 3]
     sprites = std::mem::take(&mut g.rend.buf);
     // ---- items on the ground
     let tp = g.cam.tile_px();
@@ -310,6 +311,13 @@ pub fn draw_map(g: &mut Game) {
         }
         if !drawn {
             draw_unit_fallback(&g.font, u, r);
+        }
+        // [round 3] Hostile creatures get a red frame, wounded ones a blood drop.
+        if !u.flags.caged && g.hostiles.binary_search(&u.id).is_ok() {
+            crate::ui::alerts::hostile_marker(r);
+        }
+        if u.wounds.iter().any(crate::ui::psyche::is_active_wound) {
+            crate::ui::alerts::wound_marker(r, crate::ui::psyche::is_bleeding(u));
         }
         if g.selected == Selected::Unit(u.id) {
             corners(r, Color::from_rgba(255, 230, 80, 255), (r.w / 8.0).max(2.0));
@@ -914,6 +922,7 @@ fn draw_selection_and_cursor(g: &mut Game) {
         let c = match g.tool {
             Tool::Stockpile(_) => Color::new(0.85, 0.80, 0.55, 1.0),
             Tool::Zone(_) => Color::new(0.45, 0.95, 0.45, 1.0),
+            Tool::Burrow => Color::new(0.90, 0.47, 0.90, 1.0),
             Tool::Designate(rf_sim::DesignationKind::Remove) => Color::new(1.0, 0.45, 0.45, 1.0),
             _ => Color::new(1.0, 0.85, 0.25, 1.0),
         };
