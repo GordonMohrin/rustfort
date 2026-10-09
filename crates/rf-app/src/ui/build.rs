@@ -165,7 +165,7 @@ pub fn draw_build_menu(g: &mut Game, toolbar_y: f32) -> f32 {
     g.build_cat = g.build_cat.min(cats.len() - 1);
     let cur_cat = cats[g.build_cat];
     let opts: Vec<usize> = (0..g.build_opts.len()).filter(|&i| g.build_opts[i].category == cur_cat).collect();
-    let cell_w = 196.0 * s;
+    let cell_w = 214.0 * s;
     let cols = 4usize.min(opts.len().max(1));
     let rows = opts.len().div_ceil(cols).max(1);
     let tab_w: Vec<f32> = cats.iter().map(|c| 32.0 * s + 14.0 * s + g.font.width(c, s)).collect();
@@ -339,7 +339,12 @@ pub fn draw_ghost(g: &mut Game) {
         Ok(()) => o.label.to_string(),
         Err(e) => format!("{}: {e}", o.label),
     };
-    g.font.draw_shadow(&msg, m.x + 20.0, m.y + 20.0, g.ui.scale, line);
+    let s = g.ui.scale;
+    let tw = g.font.width(&msg, s);
+    let (mx, my) = ((m.x + 20.0).min(screen_width() - tw - 12.0), m.y + 22.0);
+    draw_rectangle(mx - 5.0, my - 4.0, tw + 10.0, GH * s + 8.0, Color::new(0.03, 0.03, 0.04, 0.88));
+    draw_rectangle_lines(mx - 5.0, my - 4.0, tw + 10.0, GH * s + 8.0, 1.0, line);
+    g.font.draw(&msg, mx, my, s, line);
 }
 
 /// Zone overlay (DF shows zones only in zone mode or for the selected zone): translucent
@@ -405,7 +410,6 @@ pub fn draw_zones(g: &mut Game, x0: i16, y0: i16, x1: i16, y1: i16) {
             g.font.draw_shadow(&label, a.x + 4.0, a.y + 3.0, g.ui.scale, col::TEXT_HI);
         }
     }
-    let _ = GH;
 }
 
 #[cfg(test)]

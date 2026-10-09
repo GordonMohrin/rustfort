@@ -18,7 +18,8 @@ pub fn draw_ui(g: &mut Game) {
     let top = super::topbar::TOPBAR_H * s + 6.0 * s;
     let right = screen_width() - super::topbar::ZBAR_W * s - 14.0 * s;
     super::panels::draw_sheet(g, top, toolbar_top.min(tb_y) - 6.0 * s, right);
-    let ann_h = draw_announcements(g, toolbar_top.min(tb_y));
+    // Announcements stay out of the way of the big screens.
+    let ann_h = if g.screen == Screen::None { draw_announcements(g, toolbar_top.min(tb_y)) } else { 0.0 };
     super::panels::draw_citizens(g, top, toolbar_top.min(tb_y) - ann_h - 6.0 * s);
     super::orders::draw_orders(g);
     super::labor::draw_labor(g);
@@ -29,7 +30,7 @@ pub fn draw_ui(g: &mut Game) {
     // Button tooltips win over the map tooltip.
     if let Some((t, p)) = g.ui.tooltip.take() {
         tooltip_box(g, &[(t, col::TEXT)], p, true);
-    } else if !g.ui.over_ui && !g.menu_open && g.screen == Screen::None {
+    } else if !g.ui.over_ui && !g.menu_open && g.screen == Screen::None && !matches!(g.tool, Tool::Build(_)) {
         map_tooltip(g);
     }
 }
@@ -62,10 +63,11 @@ fn map_tooltip(g: &mut Game) {
         let n = if b.kind == "Stockpile" {
             let c = b.stockpile.as_ref().map(|s| s.categories.len()).unwrap_or(0);
             if c > 3 { "Stockpile (all)".to_string() } else { format!("Stockpile ({})", b.stockpile.as_ref().map(|s| s.categories.join(", ")).unwrap_or_default()) }
-        } else if b.subtype.is_empty() {
-            b.kind.clone()
+        } else if b.kind == "Civzone" {
+            format!("{} zone", super::words(&b.subtype))
         } else {
-            format!("{} ({})", b.subtype, b.kind)
+            let t = super::building::building_title(g, b);
+            if b.built { t } else { format!("{t} (construction)") }
         };
         lines.push((n, col::TEXT_GOOD));
     }
@@ -200,7 +202,16 @@ fn draw_menu(g: &mut Game) {
         }
         by += bh + 8.0 * s;
         let dir = crate::save::save_dir();
-        let note = crate::ui::clip(&format!("Saves: {}", dir.display()), ((w - 20.0 * s) / (8.0 * s)) as usize);
+        let dir = std::fs::canonicalize(&dir).unwrap_or(dir);
+        let shown = dir.display().to_string();
+        let shown = shown.strip_prefix(r"\\?\").unwrap_or(&shown).to_string();
+        let maxc = ((w - 20.0 * s) / (8.0 * s)) as usize;
+        let note = if shown.chars().count() + 7 > maxc {
+            let tail: String = shown.chars().rev().take(maxc.saturating_sub(10)).collect::<Vec<_>>().into_iter().rev().collect();
+            format!("Saves: ...{tail}")
+        } else {
+            format!("Saves: {shown}")
+        };
         g.font.draw(&note, r.x + (w - g.font.width(&note, s)) / 2.0, by, s, col::TEXT_DIM);
     }
     // Swallow clicks on the dimmed background.

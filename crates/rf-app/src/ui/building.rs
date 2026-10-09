@@ -24,34 +24,71 @@ pub fn building_title(g: &Game, b: &Building) -> String {
         "Stockpile" => format!("Stockpile #{}", b.id),
         "Workshop" | "Furnace" if !b.subtype.is_empty() => words(&b.subtype),
         "FarmPlot" => "Farm plot".into(),
+        "Weaponrack" => "Weapon rack".into(),
+        "Armorstand" => "Armor stand".into(),
+        "Box" => "Chest".into(),
         k => words(k),
     }
 }
 
-/// Label of a job/order like DF's task list, from the sim's order templates if one matches.
-pub fn job_label(templates: &[rf_sim::OrderTemplate], job: &str, reaction: &str, item_type: &str, mat_category: &[String]) -> String {
+/// What a job or work order makes, in DF's words.
+pub struct JobDesc<'a> {
+    pub job: &'a str,
+    pub reaction: &'a str,
+    pub item_type: &'a str,
+    pub item_subtype: &'a str,
+    /// Material token (`INORGANIC:IRON`) or class (`INORGANIC`) or "".
+    pub mat: &'a str,
+    pub mat_category: &'a [String],
+}
+
+impl<'a> JobDesc<'a> {
+    pub fn of_job(j: &'a BuildingJob) -> Self {
+        JobDesc { job: &j.job, reaction: &j.reaction, item_type: &j.item_type, item_subtype: &j.item_subtype, mat: &j.mat, mat_category: &j.mat_category }
+    }
+    pub fn of_order(o: &'a rf_core::WorkOrder) -> Self {
+        JobDesc { job: &o.job, reaction: &o.reaction, item_type: &o.item_type, item_subtype: &o.item_subtype, mat: &o.mat, mat_category: &o.mat_category }
+    }
+}
+
+/// Label of a job/order like DF's task list: the sim's order template label if one matches,
+/// else e.g. `Make weapon (pick, iron)`, `Brew drink from plant growth`.
+pub fn job_label(templates: &[rf_sim::OrderTemplate], d: &JobDesc) -> String {
     let m = templates.iter().find(|t| {
-        t.job == job && (reaction.is_empty() || t.reaction == reaction) && (item_type.is_empty() || t.item_type == item_type) && (mat_category.is_empty() || mat_category.iter().any(|c| c == t.mat_category))
+        t.job == d.job
+            && (d.reaction.is_empty() || t.reaction == d.reaction)
+            && (d.item_type.is_empty() || t.item_type == d.item_type)
+            && (d.mat_category.is_empty() || d.mat_category.iter().any(|c| c == t.mat_category))
     });
-    if let Some(t) = m {
-        return t.label.to_string();
+    let base = match m {
+        Some(t) => t.label.to_string(),
+        None if !d.reaction.is_empty() => pretty(d.reaction),
+        None => words(d.job),
+    };
+    let mut extra: Vec<String> = Vec::new();
+    if !d.item_subtype.is_empty() {
+        // ITEM_WEAPON_PICK -> pick, ITEM_TOOL_LARGE_POT -> large pot.
+        let t = d.item_subtype.splitn(3, '_').nth(2).unwrap_or(d.item_subtype);
+        extra.push(t.replace('_', " ").to_lowercase());
     }
-    if !reaction.is_empty() {
-        return pretty(reaction);
+    if let Some((_, m)) = d.mat.split_once(':') {
+        extra.push(m.replace('_', " ").to_lowercase());
+    } else if m.is_none() {
+        extra.extend(d.mat_category.iter().take(1).cloned());
     }
-    let base = words(job);
-    let mut extra = String::new();
-    if let Some(c) = mat_category.first() {
-        extra.push_str(&format!(" ({c})"));
+    if extra.is_empty() {
+        base
+    } else {
+        format!("{base} ({})", extra.join(", "))
     }
-    if !item_type.is_empty() && !job.to_lowercase().contains(&item_type.to_lowercase()) {
-        extra.push_str(&format!(" [{}]", pretty(item_type).to_lowercase()));
-    }
-    format!("{base}{extra}")
 }
 
 fn job_text(templates: &[rf_sim::OrderTemplate], j: &BuildingJob) -> String {
-    job_label(templates, &j.job, &j.reaction, &j.item_type, &j.mat_category)
+    job_label(templates, &JobDesc::of_job(j))
+}
+
+fn title_of(g: &Game, b: &Building) -> String {
+    building_title(g, b)
 }
 
 /// Plant display name from the save's plant raws.
@@ -98,13 +135,16 @@ pub fn building_sheet(g: &mut Game, id: i32, r: Rect) {
     }
     let tx = x + ir.w + 8.0 * s;
     let tmax = ((r.x + r.w - pad - tx) / (8.0 * s)) as usize;
-    g.font.draw(&clip(&building_title(g, &b), tmax.saturating_sub(3)), tx, y, s, col::TEXT_HI);
-    let mat = if b.mat != NO_MAT { g.sim.world.material(b.mat).map(|m| m.name.clone()).unwrap_or_default() } else { String::new() };
+    g.font.draw(&clip(&title_of(g, &b), tmax.saturating_sub(3)), tx, y, s, col::TEXT_HI);
+    let has_mat = b.mat != NO_MAT && !matches!(b.kind.as_str(), "Civzone" | "Stockpile" | "FarmPlot");
+    let mat = if has_mat { g.sim.world.material(b.mat).map(|m| m.name.clone()).unwrap_or_default() } else { String::new() };
     let what = match b.kind.as_str() {
         "Civzone" => "Zone".to_string(),
         k => words(k),
     };
+    let title = building_title(g, &b);
     let sub = if mat.is_empty() { what } else { format!("{mat} {}", what.to_lowercase()) };
+    let sub = if sub.eq_ignore_ascii_case(&title) { format!("{}x{} tiles", b.x2 - b.x1 + 1, b.y2 - b.y1 + 1) } else { sub };
     g.font.draw(&clip(&sub, tmax), tx, y + lh, s, col::TEXT);
     let (state, sc) = if b.kind == "Civzone" || b.kind == "Stockpile" {
         (format!("{}x{} tiles, z {}", b.x2 - b.x1 + 1, b.y2 - b.y1 + 1, b.z), col::TEXT_DIM)
@@ -176,11 +216,14 @@ pub fn building_sheet(g: &mut Game, id: i32, r: Rect) {
             y += ab.h + 6.0 * s;
             if g.bui.add_open {
                 let list = g.sim.templates_for_workshop(&b.subtype);
+                g.font.draw("Choose a task (click to queue it):", x, y, s, col::BORDER_HI);
+                y += lh;
                 if list.is_empty() {
                     g.font.draw("No jobs for this workshop yet.", x, y, s, col::TEXT_DIM);
                 }
                 let area = Rect::new(x, y, bw, (bottom - y).max(lh));
-                draw_rectangle(area.x, area.y, area.w, area.h, Color::new(0.0, 0.0, 0.0, 0.25));
+                draw_rectangle(area.x, area.y, area.w, area.h, Color::new(0.0, 0.0, 0.0, 0.35));
+                draw_rectangle_lines(area.x, area.y, area.w, area.h, 1.0, col::BORDER);
                 let rows = ((area.h / lh) as usize).max(1);
                 let step = wheel_over(&g.ui, &mut g.input, area);
                 g.bui.scroll = (g.bui.scroll as i32 + step * 3).clamp(0, list.len().saturating_sub(rows) as i32) as usize;
@@ -245,7 +288,8 @@ pub fn building_sheet(g: &mut Game, id: i32, r: Rect) {
                     y += lh;
                 }
                 let area = Rect::new(x, y, bw, (bottom - y).max(lh));
-                draw_rectangle(area.x, area.y, area.w, area.h, Color::new(0.0, 0.0, 0.0, 0.25));
+                draw_rectangle(area.x, area.y, area.w, area.h, Color::new(0.0, 0.0, 0.0, 0.35));
+                draw_rectangle_lines(area.x, area.y, area.w, area.h, 1.0, col::BORDER);
                 let rows = ((area.h / lh) as usize).max(1);
                 let step = wheel_over(&g.ui, &mut g.input, area);
                 g.bui.scroll = (g.bui.scroll as i32 + step * 3).clamp(0, list.len().saturating_sub(rows) as i32) as usize;
@@ -386,7 +430,12 @@ mod tests {
     fn job_labels_use_templates() {
         let s = rf_sim::Sim::new(rf_core::World::synthetic(24, 24, 12), 1);
         let t = s.order_templates();
-        assert_eq!(job_label(&t, "BrewDrink", "", "", &[]), "Brew drink from plant");
-        assert_eq!(job_label(&t, "MakeCrafts", "", "", &["stone".into()]), "Make crafts (stone)");
+        let d = |job, reaction, it, sub, mat, cat: &'static [String]| JobDesc { job, reaction, item_type: it, item_subtype: sub, mat, mat_category: cat };
+        assert_eq!(job_label(&t, &d("BrewDrink", "", "", "", "", &[])), "Brew drink from plant");
+        let stone = vec!["stone".to_string()];
+        let stone: &'static [String] = Box::leak(stone.into_boxed_slice());
+        assert_eq!(job_label(&t, &d("MakeCrafts", "", "", "", "", stone)), "Make crafts (stone)");
+        assert_eq!(job_label(&t, &d("MakeWeapon", "", "WEAPON", "ITEM_WEAPON_PICK", "INORGANIC:IRON", &[])), "Make weapon (pick, iron)");
+        assert_eq!(job_label(&t, &d("CustomReaction", "BREW_DRINK_FROM_PLANT_GROWTH", "", "", "", &[])), "Brew drink from plant growth");
     }
 }

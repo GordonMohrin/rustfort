@@ -1,7 +1,7 @@
 //! Work orders screen (DF hotkey `o`): the manager's order list with progress, frequency and
 //! conditions, plus "+ New order" (template, amount, frequency).
 
-use super::building::{building_title, job_label};
+use super::building::{building_title, job_label, JobDesc};
 use super::{clip, col, list_row, panel, text_button, wheel_over, words, BtnState};
 use crate::font::GH;
 use crate::game::{Game, Screen, FREQUENCIES};
@@ -39,7 +39,11 @@ pub fn condition_text(c: &OrderCondition) -> String {
     } else {
         "items".to_string()
     };
-    let flags = if c.flags.is_empty() { String::new() } else { format!(" ({})", c.flags.iter().map(|f| f.to_lowercase()).collect::<Vec<_>>().join(", ")) };
+    let flags = if c.flags.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", c.flags.iter().map(|f| f.replace('_', " ").to_lowercase()).collect::<Vec<_>>().join(", "))
+    };
     // `≠` is not in CP437; spell it.
     let sym = cmp_sym(&c.compare);
     let sym = if sym == "≠" { "not" } else { sym };
@@ -83,10 +87,18 @@ pub fn draw_orders(g: &mut Game) {
     let hint = format!("Managers turn orders into workshop jobs. Esc{} closes.", if bind.is_empty() { String::new() } else { format!(" or {bind}") });
     g.font.draw(&hint, nb.x + nb.w + 16.0 * s, y + 2.0 * s, s, col::TEXT_DIM);
     y += 2.0 * lh + 4.0 * s;
-    let picker_w = if g.orders.new_open { (r.w * 0.42).max(360.0 * s) } else { 0.0 };
-    let list_w = r.w - 2.0 * pad - if picker_w > 0.0 { picker_w + pad } else { 0.0 };
+    // The "new order" window floats over the right part of the list; while the mouse is on
+    // it, the list underneath gets no mouse input.
+    let picker_w = (r.w * 0.44).max(380.0 * s).min(r.w - 2.0 * pad);
+    let pr = Rect::new(r.x + r.w - pad - picker_w, r.y + pad + 2.0 * lh, picker_w, r.h - 2.0 * pad - 2.0 * lh);
+    let shield = g.orders.new_open && pr.contains(g.ui.mouse);
+    let real_mouse = g.ui.mouse;
+    if shield {
+        g.ui.mouse = vec2(-1.0e5, -1.0e5);
+    }
+    let list_w = r.w - 2.0 * pad;
     // Column layout of the list.
-    let cols = [0.0, 0.40, 0.56, 0.68, 0.88];
+    let cols = [0.0, 0.31, 0.41, 0.50, 0.88];
     let cx = |i: usize| x + cols[i] * (list_w - 30.0 * s);
     for (i, h) in ["Job", "Progress", "Frequency", "Conditions", "Workshop"].iter().enumerate() {
         g.font.draw(h, cx(i), y, s, col::BORDER_HI);
@@ -104,7 +116,6 @@ pub fn draw_orders(g: &mut Game) {
     }
     let templates = g.sim.order_templates();
     let mut remove = None;
-    let mut toggle = None;
     for (k, o) in g.sim.world.work_orders.iter().enumerate().skip(g.orders.scroll).take(rows) {
         let rr = Rect::new(x, y, list_w, row_h - 2.0 * s);
         draw_rectangle(rr.x, rr.y, rr.w, rr.h, if k % 2 == 0 { Color::new(1.0, 1.0, 1.0, 0.05) } else { Color::new(0.0, 0.0, 0.0, 0.0) });
@@ -113,7 +124,7 @@ pub fn draw_orders(g: &mut Game) {
         }
         let ty = y + 4.0 * s;
         let lc = if o.active { col::TEXT } else { col::TEXT_DIM };
-        let label = job_label(&templates, &o.job, &o.reaction, &o.item_type, &o.mat_category);
+        let label = job_label(&templates, &JobDesc::of_order(o));
         let w0 = ((cx(1) - cx(0)) / (8.0 * s)) as usize;
         g.font.draw(&clip(&label, w0.saturating_sub(1)), cx(0) + 4.0 * s, ty, s, lc);
         // Progress: done/total with a bar.
@@ -138,12 +149,19 @@ pub fn draw_orders(g: &mut Game) {
         };
         let w4 = ((x + list_w - 60.0 * s - cx(4)) / (8.0 * s)) as usize;
         g.font.draw(&clip(&ws, w4.max(3)), cx(4), ty, s, col::TEXT_DIM);
+        // Status like DF: active = jobs are out; else waiting (conditions / next period).
         let ab = Rect::new(x + list_w - 54.0 * s, y + 2.0 * s, 24.0 * s, row_h - 6.0 * s);
-        if text_button(&mut g.ui, &g.font, ab, if o.active { "√" } else { "-" }, if o.active { BtnState::Active } else { BtnState::Normal }) {
-            toggle = Some(o.id);
-        }
+        let (sym, sc) = if o.active { ("√", col::TEXT_GOOD) } else if !o.validated { ("?", col::TEXT_BAD) } else { ("·", col::TEXT_DIM) };
+        g.font.draw(sym, ab.x + (ab.w - g.font.width(sym, s)) / 2.0, ty, s, sc);
         if g.ui.hovered(ab) {
-            g.ui.tooltip = Some((if o.active { "Active (click to pause)" } else { "Paused (click to activate)" }.into(), vec2(ab.x, ab.y - 4.0)));
+            let tip = if o.active {
+                "Active: jobs are being made"
+            } else if !o.validated {
+                "Not checked yet by the manager"
+            } else {
+                "Waiting: conditions not met or next period"
+            };
+            g.ui.tooltip = Some((tip.into(), vec2(ab.x, ab.y - 4.0)));
         }
         let xb = Rect::new(x + list_w - 26.0 * s, y + 2.0 * s, 24.0 * s, row_h - 6.0 * s);
         if text_button(&mut g.ui, &g.font, xb, "x", BtnState::Normal) {
@@ -158,17 +176,13 @@ pub fn draw_orders(g: &mut Game) {
         let t = format!("{}-{} of {n} (wheel scrolls)", g.orders.scroll + 1, (g.orders.scroll + rows).min(n));
         g.font.draw(&t, x, r.y + r.h - pad - GH * s + 4.0 * s, s, col::TEXT_DIM);
     }
+    g.ui.mouse = real_mouse;
     if let Some(id) = remove {
         g.sim.remove_work_order(id);
     }
-    if let Some(id) = toggle {
-        // No sim API for pausing an order: flip the flag in the world.
-        if let Some(o) = g.sim.world.work_orders.iter_mut().find(|o| o.id == id) {
-            o.active = !o.active;
-        }
-    }
     if g.orders.new_open {
-        let pr = Rect::new(r.x + r.w - pad - picker_w, r.y + pad + 2.0 * lh, picker_w, r.h - 2.0 * pad - 2.0 * lh);
+        // Drop shadow, then the window.
+        draw_rectangle(pr.x - 6.0 * s, pr.y + 6.0 * s, pr.w, pr.h, Color::new(0.0, 0.0, 0.0, 0.5));
         new_order_picker(g, pr, &templates);
     }
 }

@@ -655,6 +655,32 @@ fn draw_building(g: &mut Game, sprites: &mut Vec<Sprite>, bi: usize) {
         }
         return;
     }
+    // No map sprite (weapon racks, armor stands, traps, ...): DF's building-menu icon is a
+    // better stand-in than a glyph.
+    let b = &g.sim.world.buildings[bi];
+    if b.kind != "Stockpile" && b.kind != "FarmPlot" && b.kind != "Civzone" {
+        let icon = crate::ui::build::option_icon(&b.kind, &b.subtype);
+        if g.gfx.ui_icon(&icon).is_some() {
+            let (x1, y1, x2, y2) = (b.x1, b.y1, b.x2, b.y2);
+            let a = g.cam.to_screen(x1 as f32, y1 as f32);
+            let e = g.cam.to_screen(x2 as f32 + 1.0, y2 as f32 + 1.0);
+            let alpha = if ghost { 0.55 } else { 1.0 };
+            if x1 != x2 || y1 != y2 {
+                draw_rectangle(a.x, a.y, e.x - a.x, e.y - a.y, Color::new(0.30, 0.22, 0.14, 0.55 * alpha));
+                draw_rectangle_lines(a.x, a.y, e.x - a.x, e.y - a.y, 1.0, Color::new(0.65, 0.5, 0.3, 0.8 * alpha));
+            }
+            let sz = tp.min(e.x - a.x).min(e.y - a.y);
+            let ir = Rect::new((a.x + e.x - sz) / 2.0, (a.y + e.y - sz) / 2.0, sz, sz);
+            crate::ui::draw_icon(&g.gfx, &mut g.rend, &icon, ir, Color::new(1.0, 1.0, 1.0, alpha));
+            if ghost {
+                construction_marker(g, x1, y1, x2, y2);
+            }
+            if selected {
+                outline(g, x1, y1, x2, y2, Color::from_rgba(255, 230, 80, 255));
+            }
+            return;
+        }
+    }
     let is_pile = b.kind == "Stockpile";
     let is_zone = b.kind == "Civzone";
     let c = if is_pile {

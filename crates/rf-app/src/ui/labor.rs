@@ -64,7 +64,7 @@ pub const GROUPS: &[(&str, &[LaborCol])] = &[
             lc("MILK", "Milk", "", "MILK"),
             lc("BEEKEEPING", "Bee-", "keep", "BEEKEEPING"),
             lc("PRESSING", "Press", "", "PRESSING"),
-            lc("HUNT", "Hunt", "", "SNEAK"),
+            lc("HUNT", "Hunt", "", ""),
             lc("TRAPPER", "Trap", "", "TRAPPING"),
             lc("SHEARER", "Shear", "", "SHEARING"),
         ],
@@ -79,9 +79,9 @@ pub const GROUPS: &[(&str, &[LaborCol])] = &[
             lc("WOOD_CRAFT", "Wood", "craft", "WOODCRAFT"),
             lc("BURN_WOOD", "Burn", "wood", "WOOD_BURNING"),
             lc("MASON", "Mason", "", "MASONRY"),
-            lc("STONECUTTER", "Stone", "cut", "STONECUTTING"),
-            lc("STONE_CARVER", "Stone", "carve", "STONECARVING"),
-            lc("ENGRAVER", "Engr-", "ave", "DETAILSTONE"),
+            lc("STONECUTTER", "Stone", "cut", ""),
+            lc("STONE_CARVER", "Stone", "carve", ""),
+            lc("ENGRAVER", "Engr-", "ave", "ENGRAVE_STONE"),
             lc("STONE_CRAFT", "Stone", "craft", "STONECRAFT"),
             lc("BUILD_CONSTRUCTION", "Build", "", "CONSTRUCTION"),
             lc("BUILD_ROAD", "Build", "road", ""),
@@ -306,16 +306,14 @@ pub fn draw_labor(g: &mut Game) {
     }
     // Footer: counts per column.
     let fy = r.y + r.h - pad - GH * s;
-    g.font.draw("on:", x, fy, s, col::TEXT_DIM);
+    let range = if n > rows { format!("{}-{} of {n}", g.labor.scroll + 1, (g.labor.scroll + rows).min(n)) } else { format!("{n} shown") };
+    g.font.draw(&range, x, fy, s, col::TEXT_DIM);
+    g.font.draw("enabled:", x + name_w - 10.0 * 8.0 * s, fy, s, col::TEXT_DIM);
     for (ci, c) in cols.iter().enumerate() {
         let cnt = cits.iter().filter(|(id, _, _)| g.sim.world.unit(*id).map(|u| u.has_labor(c.labor)).unwrap_or(false)).count();
         let t = cnt.to_string();
         let cx = x + name_w + ci as f32 * cw;
         g.font.draw(&t, cx + (cw - g.font.width(&t, s)) / 2.0, fy, s, if cnt == 0 { col::TEXT_BAD } else { col::TEXT_DIM });
-    }
-    if n > rows {
-        let t = format!("{}-{} of {n}", g.labor.scroll + 1, (g.labor.scroll + rows).min(n));
-        g.font.draw(&t, x + 5.0 * 8.0 * s, fy, s, col::TEXT_DIM);
     }
 }
 
