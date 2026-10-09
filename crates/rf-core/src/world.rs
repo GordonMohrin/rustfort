@@ -1,6 +1,7 @@
 //! The world: map tiles + entities + metadata.
 
 use crate::entities::*;
+use crate::military::*;
 use crate::tiles::*;
 use serde::{Deserialize, Serialize};
 
@@ -89,6 +90,17 @@ pub struct World {
     /// Plant raws (crops, brewables, trees) of the save.
     #[serde(default)]
     pub plant_raws: Vec<PlantRaw>,
+    /// Creature raws (expanded bodies, attacks) for races on the map and likely visitors/invaders.
+    #[serde(default)]
+    pub creature_raws: Vec<CreatureRaw>,
+    #[serde(default)]
+    pub weapon_raws: Vec<WeaponRaw>,
+    #[serde(default)]
+    pub armor_raws: Vec<ArmorRaw>,
+    #[serde(default)]
+    pub squads: Vec<Squad>,
+    #[serde(default)]
+    pub burrows: Vec<Burrow>,
 }
 
 impl World {

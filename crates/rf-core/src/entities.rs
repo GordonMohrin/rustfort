@@ -30,6 +30,17 @@ pub struct MaterialInfo {
     pub is_glass: bool,
     /// Other DF material flags worth keeping (e.g. `IS_SAND`, `FLUX` reaction class).
     pub tags: Vec<String>,
+    /// Mechanical properties for combat (DF material `strength`/`solid_density`; 0 = unknown).
+    pub density: i32,
+    pub shear_yield: i32,
+    pub shear_fracture: i32,
+    pub shear_strain_at_yield: i32,
+    pub impact_yield: i32,
+    pub impact_fracture: i32,
+    pub impact_strain_at_yield: i32,
+    pub max_edge: i32,
+    /// Base material value (DF `material_value`).
+    pub value: i32,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -105,6 +116,22 @@ pub struct Unit {
     pub body_size: i32,
     /// Walking speed from the creature's gait, in DF units (ticks per 100 tiles, 900 = dwarf).
     pub walk_speed: i32,
+    /// Personality needs (DF v50), see `rf_core::social`.
+    pub needs: Vec<crate::UnitNeed>,
+    /// Remembered emotions/thoughts, newest last.
+    pub emotions: Vec<crate::Emotion>,
+    /// Personality values/beliefs.
+    pub values: Vec<crate::ValueStrength>,
+    pub relationships: Vec<crate::Relationship>,
+    /// Current wounds, see `rf_core::military`.
+    pub wounds: Vec<crate::Wound>,
+    /// Blood volume (DF `body.blood_count` / `blood_max`).
+    pub blood: i32,
+    pub blood_max: i32,
+    /// Position in its squad, -1 if none.
+    pub squad_position: i32,
+    /// Hostile-side info: entity/civ id the unit belongs to (invaders), -1 if none.
+    pub invader_civ: i32,
 }
 
 impl Unit {

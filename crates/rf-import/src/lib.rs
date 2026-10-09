@@ -506,6 +506,7 @@ pub fn load_export(dir: &Path) -> Result<(World, ImportReport), ImportError> {
         plants,
         work_orders,
         plant_raws,
+        ..Default::default()
     };
     validate(&mut world, &manifest, &mut w);
 

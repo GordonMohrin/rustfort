@@ -8,10 +8,14 @@
 //! (serde only). Changes should be additive.
 
 pub mod entities;
+pub mod military;
+pub mod social;
 pub mod tiles;
 pub mod world;
 
 pub use entities::*;
+pub use military::*;
+pub use social::*;
 pub use tiles::*;
 pub use world::*;
 

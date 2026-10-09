@@ -48,6 +48,8 @@
 //!   (threshold: 8 requests per tick), so the sim is effectively single-threaded today.
 
 pub mod build_api;
+pub mod round3_api;
+pub use round3_api::{SquadOrder, StressLevel};
 pub use build_api::{BuildOption, OrderTemplate, ZONE_KINDS};
 pub mod gen;
 pub mod items;
