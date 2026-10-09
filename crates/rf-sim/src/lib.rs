@@ -30,6 +30,18 @@
 //! - Tree felling turns the whole tree into open space and drops logs (one per trunk tile).
 //! - Hauling: one item at a time to the nearest free tile of a stockpile that accepts the
 //!   item's category, using the matching HAUL_* labor.
+//! - No booze: dwarves drink from water (any non-magma liquid next to a walkable tile).
+//!
+//! # Estimates and gaps (v0.1)
+//! - Work times are estimates (dig 120 ticks, fell 200, gather 60, scaled by skill as
+//!   `base * 10 / (10 + 2 * rating)`); drinking 30 and eating 60 ticks. Not on the wiki.
+//! - No tools required (picks/axes), no fat reserves, no thoughts/stress, no unit collisions,
+//!   no carried-weight slowdown, no dining rooms, no item containers being hauled with
+//!   contents into matching piles (contents follow, piles see only the container kind).
+//! - Felling removes all TREE tiles within 4 tiles of the trunk that are connected to it, so
+//!   touching canopies of neighbouring trees can go with it.
+//! - Path cache hit rate is low; batches are usually too small for rayon to pay off
+//!   (threshold: 8 requests per tick), so the sim is effectively single-threaded today.
 
 pub mod gen;
 pub mod items;
