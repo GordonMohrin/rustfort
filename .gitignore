@@ -9,3 +9,4 @@
 # local config (DF install path etc.)
 /rustfort.toml
 *.bak
+.claude/
