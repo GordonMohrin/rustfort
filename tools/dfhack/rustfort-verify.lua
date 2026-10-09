@@ -6,6 +6,9 @@
 -- plus "count <key> <n>" lines for citizens/units/items/buildings at verification time, and (round 2)
 -- "orders N", "order ID JOB LEFT TOTAL FREQ NCONDS", "wsjobs BLD N" (via the global job list),
 -- "farm BLD C1,C2,C3,C4" ('-' = fallow), "mod I ID:VERSION", "plant_raws N".
+-- Round 3 samples: "psy ID" (needs/emotions/values/relationship/wound counts, blood, squad, civ, stress),
+-- "aq X Y Z" (water_table + heavy_aquifer), "btile BID X Y Z" (burrow membership), "corpse ITEM" (race token);
+-- plus "squad", "burrow", "itemdefs", "craw" (creature bodies) and "mech" (material mechanics) lines.
 -- Uses plain field access (no raw memory copies) so it checks the exporter's fast path.
 -- A few hundred samples take a few ms; no pause, no state change.
 
@@ -98,6 +101,48 @@ for line in io.lines(inp) do
     else
       out[#out + 1] = ('unit %s gone'):format(a)
     end
+  elseif kind == 'psy' then
+    -- round 3: psychology/relationship/wound counts, blood, squad, invader civ of one unit
+    local u = df.unit.find(tonumber(a))
+    if u then
+      local p = try(function() return u.status.current_soul.personality end)
+      local h = u.hist_figure_id >= 0 and df.historical_figure.find(u.hist_figure_id) or nil
+      local fam = h and #h.histfig_links or 0
+      local vis = h and (try(function() return #h.info.relationships.hf_visual end) or 0) or 0
+      local wl = 0
+      for _, w in ipairs(u.body.wounds) do wl = wl + math.max(1, #w.parts) end
+      out[#out + 1] = ('psy %d needs %d emotions %d values %d family %d visual %d wounds %d blood %d %d squad %d %d civ %d stress %d')
+        :format(u.id, p and #p.needs or 0, p and #p.emotions or 0, p and #p.values or 0, fam, vis, wl,
+                u.body.blood_count, u.body.blood_max, u.military.squad_id, u.military.squad_position, u.civ_id,
+                p and p.stress or 0)
+    else
+      out[#out + 1] = ('psy %s gone'):format(a)
+    end
+  elseif kind == 'aq' then
+    -- round 3: aquifer flags through getTileFlags (exporter: raw block copies)
+    local x, y, z = tonumber(a), tonumber(b), tonumber(c)
+    local d, o = dfhack.maps.getTileFlags(x, y, z)
+    if d then
+      out[#out + 1] = ('aq %d %d %d %d %d'):format(x, y, z, d.water_table and 1 or 0, o.heavy_aquifer and 1 or 0)
+    end
+  elseif kind == 'btile' then
+    -- round 3: burrow membership through dfhack.burrows.isAssignedTile (exporter: block masks)
+    local bid, x, y, z = tonumber(a), line:match('^btile%s+%-?%d+%s+(%-?%d+)%s+(%-?%d+)%s+(%-?%d+)')
+    x, y, z = tonumber(x), tonumber(y), tonumber(z)
+    local bur
+    for _, bb in ipairs(df.global.plotinfo.burrows.list) do if bb.id == bid then bur = bb end end
+    if bur then
+      local pos = df.coord:new()
+      pos.x, pos.y, pos.z = x, y, z
+      local inb = dfhack.burrows.isAssignedTile(bur, pos)
+      df.delete(pos)
+      out[#out + 1] = ('btile %d %d %d %d %d'):format(bid, x, y, z, inb and 1 or 0)
+    end
+  elseif kind == 'corpse' then
+    local it = df.item.find(tonumber(a))
+    if it then
+      out[#out + 1] = ('corpse %d %s'):format(it.id, try(function() return raws.creatures.all[it.race].creature_id end) or '?')
+    end
   end
 end
 -- counts now (the export used the same filters)
@@ -163,6 +208,49 @@ for i = 0, #ol.object_load_order_id - 1 do
   out[#out + 1] = ('mod %d %s:%d'):format(i, ol.object_load_order_id[i].value, ol.object_load_order_numeric_version[i])
 end
 out[#out + 1] = 'plant_raws ' .. #raws.plants.all
+
+-- round 3: squads, burrows, item raws, creature bodies, material mechanics
+local gid = df.global.plotinfo.group_id
+for _, s in ipairs(df.global.world.squads.all) do
+  if s.entity_id == gid then
+    local filled = 0
+    for _, p in ipairs(s.positions) do if p.occupant >= 0 then filled = filled + 1 end end
+    local rname = '?'
+    for _, r in ipairs(df.global.plotinfo.alerts.routines) do if r.id == s.cur_routine_idx then rname = r.name end end
+    out[#out + 1] = ('squad %d %d %d %d %s'):format(s.id, #s.positions, filled, #s.orders, rname)
+  end
+end
+for _, b in ipairs(df.global.plotinfo.burrows.list) do
+  -- tile count via dfhack.burrows.listBlocks + isAssignedBlockTile (exporter: the raw link list)
+  local n = 0
+  for _, blk in ipairs(dfhack.burrows.listBlocks(b)) do
+    for lx = 0, 15 do for ly = 0, 15 do
+      if dfhack.burrows.isAssignedBlockTile(b, blk, lx, ly) then n = n + 1 end
+    end end
+  end
+  out[#out + 1] = ('burrow %d %d %d'):format(b.id, n, #b.units)
+end
+local W = raws.itemdefs
+out[#out + 1] = ('itemdefs %d %d'):format(#W.weapons + #W.ammo + #W.trapcomps,
+  #W.armor + #W.helms + #W.gloves + #W.shoes + #W.pants + #W.shields)
+for _, tok in ipairs({ 'DWARF', 'GOBLIN', 'HUMAN', 'ELF', 'CAT' }) do
+  for _, cr in ipairs(raws.creatures.all) do
+    if cr.creature_id == tok then
+      local c = cr.caste[0]
+      local layers = 0
+      for _, p in ipairs(c.body_info.body_parts) do layers = layers + #p.layers end
+      out[#out + 1] = ('craw %s %d %d %d %d %d'):format(tok, #cr.caste, #c.body_info.body_parts, layers, #c.body_info.attacks,
+        c.body_size[#c.body_size - 1] * 10)
+    end
+  end
+end
+for _, tok in ipairs({ 'INORGANIC:IRON', 'INORGANIC:STEEL', 'INORGANIC:COPPER', 'INORGANIC:GRANITE', 'CREATURE:DWARF:BONE' }) do
+  local m = try(function() return dfhack.matinfo.find(tok).material end)
+  if m then
+    out[#out + 1] = ('mech %s %d %d %d %d'):format(tok, m.solid_density, m.strength.yield[df.strain_type.SHEAR],
+      m.strength.fracture[df.strain_type.IMPACT], m.strength.max_edge)
+  end
+end
 local f = assert(io.open(outp, 'wb'))
 f:write(table.concat(out, '\n'), '\n')
 f:close()
