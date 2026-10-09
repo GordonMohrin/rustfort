@@ -567,6 +567,8 @@ pub(crate) struct Social {
     prayers: u64,
     conversations: u64,
     has_dining: bool,
+    /// Social simulation switched off (A/B measurements; `Sim::set_social_enabled`).
+    off: bool,
 }
 
 fn salt(name: &str) -> u64 {
@@ -792,6 +794,9 @@ impl Sim {
     /// A unit experiences a thought: pick an emotion from its personality, remember it and
     /// change its stress.
     pub(crate) fn feel(&mut self, s: usize, thought: &'static str, class: Class, strength: i32, sub: i32, severity: i32, now: u64) {
+        if self.social.off {
+            return;
+        }
         self.social_ensure();
         let mut r = Rng::for_unit(self.seed, s, now, salt(thought));
         let f = self.social.psy[s].facets;
@@ -971,7 +976,7 @@ impl Sim {
     /// [hook] At the food: walk to a free dining seat instead of eating on the spot. Returns
     /// true if the unit is now on its way to a table (task `GoDine`).
     pub(crate) fn social_go_dine(&mut self, s: usize, id: i32, now: u64) -> bool {
-        if self.social.seats.is_empty() || !self.is_citizen_slot(s) {
+        if self.social.off || self.social.seats.is_empty() || !self.is_citizen_slot(s) {
             return false;
         }
         self.social_ensure();
@@ -1146,6 +1151,9 @@ impl Sim {
 
     /// [hook] Called every `SOCIAL_PERIOD` ticks: each citizen thinks once a day.
     pub(crate) fn social_pass(&mut self, now: u64) {
+        if self.social.off {
+            return;
+        }
         if self.world.buildings.len() != self.social.known_buildings {
             self.social_rebuild_rooms();
         }
@@ -1611,6 +1619,12 @@ impl Sim {
     }
 
     // ------------------------------------------------------------------ public API
+
+    /// Switch the social simulation on/off (default on). Off = v0.2 behaviour: no thoughts,
+    /// no stress changes, no dining detours (for comparisons and benchmarks).
+    pub fn set_social_enabled(&mut self, on: bool) {
+        self.social.off = !on;
+    }
 
     /// Long-term stress of a unit (DF v50 `longterm_stress`).
     pub fn longterm_stress(&self, unit_id: i32) -> i32 {

@@ -4,7 +4,8 @@
 //!   cargo run -p rf-sim --release --example social -- [--export <dir>] [--ticks 806400] [--seed 1]
 //!
 //! Without `--export` the env var `RUSTFORT_EXPORT` or `export/tileshtulon` is used.
-//! `--no-dining` removes all tables and `--no-beds` all beds before the run (comparison runs).
+//! `--no-dining` removes all tables and `--no-beds` all beds before the run (comparison runs);
+//! `--off` switches the social simulation off (speed A/B).
 
 use rf_sim::{AnnouncementKind, Sim, StressLevel};
 use std::path::PathBuf;
@@ -50,6 +51,9 @@ fn main() {
         with_rel
     );
     let mut sim = Sim::new(world, seed);
+    if args.iter().any(|a| a == "--off") {
+        sim.set_social_enabled(false);
+    }
     let r0 = sim.social_report();
     println!("dining seats: {}  |  owned bedrooms: {}", r0.seats, r0.bedrooms);
     let t0 = Instant::now();
