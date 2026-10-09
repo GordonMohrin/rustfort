@@ -1,0 +1,10 @@
+[package]
+name = "rf-raws"
+description = "Parser for DF raw files (objects + graphics raws) read from the user's own DF install"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+rf-core.workspace = true

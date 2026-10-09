@@ -1,0 +1,11 @@
+/target
+**/target
+# DF data never goes into the repo: exports of real saves, copied raws, graphics
+/export/
+/dfdata/
+*.dfexport
+*.sav
+*.png.cache
+# local config (DF install path etc.)
+/rustfort.toml
+*.bak

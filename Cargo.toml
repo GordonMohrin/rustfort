@@ -1,0 +1,36 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/rf-core",
+    "crates/rf-raws",
+    "crates/rf-gfx",
+    "crates/rf-import",
+    "crates/rf-sim",
+    "crates/rf-app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "UNLICENSED"
+publish = false
+
+[workspace.dependencies]
+rf-core = { path = "crates/rf-core" }
+rf-raws = { path = "crates/rf-raws" }
+rf-gfx = { path = "crates/rf-gfx" }
+rf-import = { path = "crates/rf-import" }
+rf-sim = { path = "crates/rf-sim" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+debug = 1
+lto = "thin"
+codegen-units = 4

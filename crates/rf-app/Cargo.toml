@@ -1,0 +1,18 @@
+[package]
+name = "rf-app"
+description = "Rustfort game executable: Steam-style mouse UI with the Premium tileset, plus headless bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "rustfort"
+path = "src/main.rs"
+
+[dependencies]
+rf-core.workspace = true
+rf-raws.workspace = true
+rf-gfx.workspace = true
+rf-import.workspace = true
+rf-sim.workspace = true
