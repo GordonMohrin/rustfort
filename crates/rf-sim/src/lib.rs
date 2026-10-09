@@ -30,7 +30,11 @@
 //! - Tree felling turns the whole tree into open space and drops logs (one per trunk tile).
 //! - Hauling: one item at a time to the nearest free tile of a stockpile that accepts the
 //!   item's category, using the matching HAUL_* labor.
-//! - No booze: dwarves drink from water (any non-magma liquid next to a walkable tile).
+//! - No booze: dwarves drink from water (any non-magma liquid next to a walkable tile) or a
+//!   working well.
+//! - Production (round 2, see `production`): stills, kitchens, carpenters, masons and
+//!   craftsdwarfs run their job queues and the manager's work orders; farm plots are planted
+//!   and harvested by season; placed buildings are constructed from hauled materials.
 //!
 //! # Estimates and gaps (v0.1)
 //! - Work times are estimates (dig 120 ticks, fell 200, gather 60, scaled by skill as
@@ -49,6 +53,8 @@ pub mod gen;
 pub mod items;
 pub mod nav;
 pub mod path;
+pub mod production;
+pub use production::{Census, PlantInfo, ProductionReport};
 mod rng;
 
 use items::{is_drink, is_edible, Cat};
@@ -100,14 +106,39 @@ pub mod labor {
     pub const HAUL_FURNITURE: u32 = 1 << 8;
     pub const HAUL_BODY: u32 = 1 << 9;
     pub const HAUL_ANIMALS: u32 = 1 << 10;
+    pub const BREW: u32 = 1 << 11;
+    pub const COOK: u32 = 1 << 12;
+    /// Farming (fields): planting and harvesting.
+    pub const PLANT: u32 = 1 << 13;
+    pub const CARPENTER: u32 = 1 << 14;
+    pub const MASON: u32 = 1 << 15;
+    pub const STONE_CRAFT: u32 = 1 << 16;
+    pub const WOOD_CRAFT: u32 = 1 << 17;
+    pub const PROCESS_PLANT: u32 = 1 << 18;
+    pub const MILLER: u32 = 1 << 19;
+    pub const BUILD_CONSTRUCTION: u32 = 1 << 20;
+    pub const MECHANIC: u32 = 1 << 21;
     pub const ANY_HAUL: u32 = HAUL_STONE | HAUL_WOOD | HAUL_FOOD | HAUL_ITEM | HAUL_REFUSE | HAUL_FURNITURE | HAUL_BODY | HAUL_ANIMALS;
     pub const ANY_JOB: u32 = MINE | CUTWOOD | HERBALISM;
+    /// Labors that can take workshop, farm or construction jobs.
+    pub const ANY_PROD: u32 = BREW | COOK | PLANT | CARPENTER | MASON | STONE_CRAFT | HAUL_FURNITURE;
 
     pub fn from_df(s: &str) -> u32 {
         match s {
             "MINE" => MINE,
             "CUTWOOD" => CUTWOOD,
             "HERBALISM" | "HERBALIST" => HERBALISM,
+            "BREWER" | "BREW" => BREW,
+            "COOK" => COOK,
+            "PLANT" => PLANT,
+            "CARPENTER" => CARPENTER,
+            "MASON" => MASON,
+            "STONE_CRAFT" => STONE_CRAFT,
+            "WOOD_CRAFT" => WOOD_CRAFT,
+            "PROCESS_PLANT" => PROCESS_PLANT,
+            "MILLER" => MILLER,
+            "BUILD_CONSTRUCTION" => BUILD_CONSTRUCTION,
+            "MECHANIC" => MECHANIC,
             "HAUL_STONE" => HAUL_STONE,
             "HAUL_WOOD" => HAUL_WOOD,
             "HAUL_FOOD" => HAUL_FOOD,
@@ -197,6 +228,11 @@ pub struct SimStats {
     pub need_searches: u64,
     pub decisions: u64,
     pub steps: u64,
+    /// Production job searches by idle workers, full item scans for reagents, and the
+    /// wall-clock seconds spent in those searches.
+    pub prod_searches: u64,
+    pub prod_item_scans: u64,
+    pub prod_search_secs: f64,
 }
 
 /// A designation job (dig, fell tree, gather plants).
@@ -269,6 +305,10 @@ enum Task {
     Sleep(i32),
     GoPickup(i32, u32),
     GoStore(i32, u32),
+    /// Production job (see `production`): walk to a reagent, walk to the site, work there.
+    Fetch(i32),
+    GoSite,
+    Craft,
 }
 
 struct UnitAi {
@@ -295,6 +335,7 @@ struct UnitAi {
     labors: u32,
     seen_jobs: u64,
     seen_haul: u64,
+    seen_prod: u64,
     next_search: u64,
     no_drink_until: u64,
     no_food_until: u64,
@@ -352,6 +393,9 @@ struct ItemMeta {
     cat: Cat,
     /// Could not be reached recently; ignored by searches until this tick.
     blocked_until: u64,
+    /// Production class (`production::pc`) and plant species (or `NO_PLANT`).
+    pc: u8,
+    plant: u16,
 }
 
 struct PathJob {
@@ -396,6 +440,8 @@ pub struct Sim {
     foods: Vec<i32>,
     /// Items waiting to be hauled (exact: not stored, not being hauled), with positions.
     haul: Vec<i32>,
+    /// Item index of each `haul` entry (valid until the next compaction, which rebuilds it).
+    haul_ix: Vec<u32>,
     haul_pos: HashMap<i32, u32>,
     haul_cnt: [u32; 17],
     contents: HashMap<i32, Vec<i32>>,
@@ -409,9 +455,11 @@ pub struct Sim {
     n_path: usize,
     failed: Vec<usize>,
     path_cache: HashMap<(u32, u32), Vec<u32>>,
-    phase: [f64; 4],
+    phase: [f64; 5],
     stats: SimStats,
     par_min_paths: usize,
+    /// Workshops, farms, orders, construction (see `production`).
+    prod: production::Prod,
 }
 
 #[inline]
@@ -485,6 +533,7 @@ impl Sim {
             drinks: Vec::new(),
             foods: Vec::new(),
             haul: Vec::new(),
+            haul_ix: Vec::new(),
             haul_pos: HashMap::new(),
             haul_cnt: [0; 17],
             chunks: Vec::new(),
@@ -500,16 +549,20 @@ impl Sim {
             n_path: 0,
             failed: Vec::new(),
             path_cache: HashMap::new(),
-            phase: [0.0; 4],
+            phase: [0.0; 5],
             stats: SimStats::default(),
             par_min_paths: PAR_MIN_PATHS,
+            prod: production::Prod::default(),
         };
+        sim.init_plants();
         sim.init_units();
         sim.init_items();
         sim.init_buildings();
         sim.init_jobs_from_tiles();
-        sim.rebuild_haul();
         sim.init_water();
+        sim.init_production();
+        sim.rebuild_food_lists();
+        sim.rebuild_haul();
         sim
     }
 
@@ -559,6 +612,7 @@ impl Sim {
                 labors: labor::bits(&u.labors),
                 seen_jobs: 0,
                 seen_haul: 0,
+                seen_prod: 0,
                 next_search: 0,
                 no_drink_until: 0,
                 no_food_until: 0,
@@ -573,7 +627,8 @@ impl Sim {
         for (i, it) in self.world.items.iter().enumerate() {
             self.item_idx.insert(it.id, i as u32);
             self.next_item_id = self.next_item_id.max(it.id + 1);
-            self.imeta.push(ItemMeta { reserved: 0, hauling: false, dead: false, cat: Cat::of_kind(&it.kind), blocked_until: 0 });
+            let (pc, plant) = self.classify(it);
+            self.imeta.push(ItemMeta { reserved: 0, hauling: false, dead: false, cat: Cat::of_kind(&it.kind), blocked_until: 0, pc, plant });
             if it.container >= 0 {
                 self.contents.entry(it.container).or_default().push(it.id);
             }
@@ -592,13 +647,14 @@ impl Sim {
     fn rebuild_food_lists(&mut self) {
         self.drinks.clear();
         self.foods.clear();
-        for it in &self.world.items {
-            if it.flags.forbid || it.flags.rotten || it.holder >= 0 || it.stack <= 0 {
+        for idx in 0..self.world.items.len() {
+            let it = &self.world.items[idx];
+            if it.flags.forbid || it.flags.rotten || it.holder >= 0 || it.stack <= 0 || self.imeta[idx].dead {
                 continue;
             }
             if is_drink(&it.kind) {
                 self.drinks.push(it.id);
-            } else if is_edible(&it.kind) {
+            } else if is_edible(&it.kind) && self.edible_now(idx) {
                 self.foods.push(it.id);
             }
         }
@@ -725,13 +781,13 @@ impl Sim {
 
     /// Advance the simulation by exactly one DF tick.
     pub fn tick(&mut self) {
-        self.phase = [0.0; 4];
+        self.phase = [0.0; 5];
         self.tick_inner();
         self.sync_units();
     }
 
     pub fn run_ticks(&mut self, n: u32) {
-        self.phase = [0.0; 4];
+        self.phase = [0.0; 5];
         for _ in 0..n {
             self.tick_inner();
         }
@@ -851,6 +907,7 @@ impl Sim {
                 ("Sleep", if b >= 0 { Some(pos_of(self.beds[b as usize].tile)) } else { None })
             }
             (_, Task::GoPickup(_, d)) | (_, Task::GoStore(_, d)) => ("Store Item in Stockpile", Some(pos_of(d))),
+            (_, Task::Fetch(_)) | (_, Task::GoSite) | (_, Task::Craft) => self.wjob_caption(s),
         };
         UnitStatus {
             activity: activity.into(),
@@ -874,7 +931,7 @@ impl Sim {
         s.dead_units = self.ai.iter().filter(|a| a.kind == Kind::Dead && self.world.units[a.uidx].flags.dead).count();
         s.items = self.world.items.len();
         s.nav_rebuilds = self.nav.rebuilds;
-        s.phase_times = vec![("think", self.phase[0]), ("paths", self.phase[1]), ("commit", self.phase[2]), ("items", self.phase[3])];
+        s.phase_times = vec![("think", self.phase[0]), ("paths", self.phase[1]), ("commit", self.phase[2]), ("items", self.phase[3]), ("production", self.phase[4])];
         s
     }
 
@@ -901,6 +958,7 @@ impl Sim {
             mix(((it.pos.x as u64) << 32) | ((it.pos.y as u64) << 16) | it.pos.z as u64);
             mix(it.stack as u64);
         }
+        self.prod_hash(&mut mix);
         h
     }
 
@@ -994,6 +1052,11 @@ impl Sim {
         self.ticks += 1;
         self.world.calendar.advance(1);
         let now = self.ticks;
+        if now % production::PROD_PERIOD == 0 {
+            let tp = Instant::now();
+            self.production_pass(now);
+            self.phase[4] += tp.elapsed().as_secs_f64();
+        }
         let t0 = Instant::now();
         for s in 0..self.ai.len() {
             if self.ai[s].wake <= now {
@@ -1121,10 +1184,13 @@ impl Sim {
             let name = self.world.units[self.ai[s].uidx].name.clone();
             self.announce(now, format!("{name} cancels {caption}: Could not find path."), Some(pos), AnnouncementKind::Job);
             self.ai[s].task = Task::Idle;
-        } else if let Task::GoDrink(id) | Task::GoEat(id) | Task::GoPickup(id, _) = task {
+        } else if let Task::GoDrink(id) | Task::GoEat(id) | Task::GoPickup(id, _) | Task::Fetch(id) = task {
             if let Some(&i) = self.item_idx.get(&id) {
                 self.imeta[i as usize].blocked_until = now + rf_core::TICKS_PER_DAY as u64;
             }
+            self.cancel_task(s);
+        } else if let Task::GoSite = task {
+            self.prod_block_site(s, now);
             self.cancel_task(s);
         } else if let Task::GoSleep(_) = task {
             self.cancel_task(s);
@@ -1232,11 +1298,11 @@ impl Sim {
                     self.ai[s].wake = until.min(cap);
                 }
             }
-            Task::Job(_) | Task::Drink(_) | Task::Eat(_) => {
+            Task::Job(_) | Task::Drink(_) | Task::Eat(_) | Task::Craft => {
                 let until = self.ai[s].act_until;
                 if now >= until {
                     self.complete(s, now);
-                } else if urgent && matches!(task, Task::Job(_)) {
+                } else if urgent && matches!(task, Task::Job(_) | Task::Craft) {
                     self.cancel_task(s);
                     self.decide(s, now);
                 } else {
@@ -1245,7 +1311,7 @@ impl Sim {
                 }
             }
             _ => {
-                let interruptible = matches!(task, Task::GoJob(_) | Task::GoPickup(..) | Task::GoStore(..) | Task::Wander);
+                let interruptible = matches!(task, Task::GoJob(_) | Task::GoPickup(..) | Task::GoStore(..) | Task::Wander | Task::Fetch(_) | Task::GoSite);
                 if urgent && interruptible {
                     self.cancel_task(s);
                     self.decide(s, now);
@@ -1356,14 +1422,24 @@ impl Sim {
         let labors = ai.labors;
         let jobs_changed = labors & labor::ANY_JOB != 0 && ai.seen_jobs != self.epoch_jobs;
         let haul_changed = labors & labor::ANY_HAUL != 0 && ai.seen_haul != self.epoch_haul;
-        if jobs_changed || haul_changed || now >= ai.next_search {
-            if self.try_job(s, now) || self.try_haul(s, now) {
+        let prod_changed = labors & labor::ANY_PROD != 0 && ai.seen_prod != self.prod.epoch;
+        let periodic = now >= ai.next_search;
+        if jobs_changed || haul_changed || prod_changed || periodic {
+            // Each search only runs when its own work list changed (or periodically).
+            if (jobs_changed || periodic) && self.try_job(s, now) {
                 return;
             }
-            let (ej, eh) = (self.epoch_jobs, self.epoch_haul);
+            if (prod_changed || periodic) && self.try_prod_timed(s, now) {
+                return;
+            }
+            if (haul_changed || periodic) && self.try_haul(s, now) {
+                return;
+            }
+            let (ej, eh, ep) = (self.epoch_jobs, self.epoch_haul, self.prod.epoch);
             let ai = &mut self.ai[s];
             ai.seen_jobs = ej;
             ai.seen_haul = eh;
+            ai.seen_prod = ep;
             ai.next_search = now + RESEARCH_TICKS + (s as u64 % 64);
         }
         self.wander(s, now, &mut r);
@@ -1472,7 +1548,9 @@ impl Sim {
                 self.stats.items_hauled += 1;
                 self.decide(s, now);
             }
-            Task::Job(_) | Task::Drink(_) | Task::Eat(_) | Task::Sleep(_) => {}
+            Task::Fetch(id) => self.prod_arrive_fetch(s, id, now),
+            Task::GoSite => self.prod_arrive_site(s, now),
+            Task::Job(_) | Task::Drink(_) | Task::Eat(_) | Task::Sleep(_) | Task::Craft => {}
         }
     }
 
@@ -1507,8 +1585,17 @@ impl Sim {
                 let ai = &mut self.ai[s];
                 ai.hunger = (ai.hunger - needs::EAT_SATISFIES).max(0);
                 self.unreserve(id);
+                // Wiki "Seed": eating a plant raw leaves a seed.
+                let seed_plant = self.item_idx.get(&id).map(|&i| &self.imeta[i as usize]).filter(|m| m.pc == production::pc::PLANT).map(|m| m.plant);
                 self.consume(id);
+                if let Some(p) = seed_plant {
+                    let here = self.ai[s].pos as usize;
+                    self.make_seed(p, here);
+                }
                 self.ai[s].task = Task::Idle;
+            }
+            Task::Craft => {
+                self.prod_complete(s, now);
             }
             _ => {}
         }
@@ -1562,6 +1649,7 @@ impl Sim {
                 self.drop_item(s, id, here);
                 self.release_pile_tile(dest);
             }
+            Task::Fetch(_) | Task::GoSite | Task::Craft => self.prod_cancel(s),
             Task::Idle | Task::Wander => {}
         }
         let ai = &mut self.ai[s];
@@ -2263,7 +2351,8 @@ impl Sim {
         });
         let idx = self.world.items.len() - 1;
         let cat = Cat::of_kind(kind);
-        self.imeta.push(ItemMeta { reserved: 0, hauling: false, dead: false, cat, blocked_until: 0 });
+        let (pc, plant) = self.classify(&self.world.items[idx]);
+        self.imeta.push(ItemMeta { reserved: 0, hauling: false, dead: false, cat, blocked_until: 0, pc, plant });
         self.item_idx.insert(id, idx as u32);
         self.pile_occ_add(tile as u32, 1);
         if !self.is_stored(idx) {
@@ -2314,8 +2403,10 @@ impl Sim {
         self.foods.retain(|id| idx.contains_key(id));
         self.haul.retain(|id| idx.contains_key(id));
         self.haul_pos.clear();
+        self.haul_ix.clear();
         for (p, &id) in self.haul.iter().enumerate() {
             self.haul_pos.insert(id, p as u32);
+            self.haul_ix.push(idx[&id]);
         }
         self.contents.retain(|cid, _| idx.contains_key(cid));
         for v in self.contents.values_mut() {
@@ -2376,6 +2467,7 @@ impl Sim {
 
     fn rebuild_haul(&mut self) {
         self.haul.clear();
+        self.haul_ix.clear();
         self.haul_pos.clear();
         self.haul_cnt = [0; 17];
         for idx in 0..self.world.items.len() {
@@ -2397,6 +2489,7 @@ impl Sim {
         }
         self.haul_pos.insert(id, self.haul.len() as u32);
         self.haul.push(id);
+        self.haul_ix.push(idx as u32);
         self.haul_cnt[cat as usize] += 1;
         self.epoch_haul += 1;
     }
@@ -2405,6 +2498,7 @@ impl Sim {
         if let Some(p) = self.haul_pos.remove(&id) {
             let p = p as usize;
             self.haul.swap_remove(p);
+            self.haul_ix.swap_remove(p);
             if p < self.haul.len() {
                 self.haul_pos.insert(self.haul[p], p as u32);
             }
@@ -2465,8 +2559,8 @@ impl Sim {
         let up = self.nav.xyz(pos);
         while want != 0 {
             let mut best = (i32::MAX, i32::MAX, 0usize);
-            for &id in &self.haul {
-                let idx = self.item_idx[&id] as usize;
+            for (k, &id) in self.haul.iter().enumerate() {
+                let idx = self.haul_ix[k] as usize;
                 let m = &self.imeta[idx];
                 if want & m.cat.bit() == 0 || m.reserved > 0 || m.blocked_until > now {
                     continue;
