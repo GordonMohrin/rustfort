@@ -33,6 +33,9 @@ pub struct Args {
     /// Fake mouse position (screenshot mode).
     pub mouse: Option<(f32, f32)>,
     pub speed: Option<String>,
+    /// Frame cap when vsync is off (DF's G_FPS_CAP).
+    pub gfps: u32,
+    pub vsync: bool,
 }
 
 const USAGE: &str = "usage:
@@ -42,7 +45,7 @@ const USAGE: &str = "usage:
   rustfort bench [--export DIR] [--synthetic] [--ticks N] [--seed N]";
 
 fn parse_args() -> Result<Args, String> {
-    let mut a = Args { cmd: "play".into(), seed: 1, ticks: 10_000, frames: 3, ..Default::default() };
+    let mut a = Args { cmd: "play".into(), seed: 1, ticks: 10_000, frames: 3, gfps: 60, ..Default::default() };
     let mut it = std::env::args().skip(1).peekable();
     if let Some(c) = it.peek() {
         if !c.starts_with('-') {
@@ -77,6 +80,7 @@ fn parse_args() -> Result<Args, String> {
                 a.mouse = Some((p[0], p[1]));
             }
             "--speed" => a.speed = Some(val("--speed")?),
+            "--gfps" => a.gfps = val("--gfps")?.parse().map_err(|e| format!("--gfps: {e}"))?,
             "-h" | "--help" => return Err(String::new()),
             other => return Err(format!("unknown argument {other}")),
         }
@@ -99,7 +103,7 @@ fn main() {
         "bench" => bench::run(args.export.as_deref(), args.synthetic, args.ticks, args.seed),
         "play" => {
             let loaded = load::load_world(args.export.as_deref(), args.synthetic);
-            let conf = macroquad::window::Conf {
+            let mut conf = macroquad::window::Conf {
                 window_title: format!("Rustfort - {}", loaded.label),
                 window_width: 1600,
                 window_height: 900,
@@ -107,6 +111,18 @@ fn main() {
                 high_dpi: false,
                 ..Default::default()
             };
+            // Vsync on for play (smooth, no tearing), off for screenshots; RUSTFORT_VSYNC=0/1
+            // overrides. Without vsync the game paces itself to --gfps (default 60).
+            let vsync = match std::env::var("RUSTFORT_VSYNC").ok().as_deref() {
+                Some("0") => false,
+                Some(_) => true,
+                None => args.screenshot.is_none(),
+            };
+            if !vsync {
+                conf.platform.swap_interval = Some(0);
+            }
+            let mut args = args;
+            args.vsync = vsync;
             macroquad::Window::from_config(conf, game::run(args, loaded));
         }
         other => {

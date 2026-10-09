@@ -188,6 +188,8 @@ pub struct Game {
     pan_drag: Option<(Vec2, f32, f32)>,
     /// Last feedback message of a tool (shown above the toolbar).
     pub status: Option<(String, f64)>,
+    /// Real-time budget per frame for sim ticks (seconds).
+    pub sim_budget: f64,
 }
 
 pub fn ordinal(d: i32) -> String {
@@ -299,6 +301,7 @@ impl Game {
             mouse_override: args.mouse.map(|(x, y)| vec2(x, y)),
             pan_drag: None,
             status: None,
+            sim_budget: SIM_BUDGET_S.min(0.75 / args.gfps.max(10) as f64),
         };
         let now = get_time();
         if let Some(w) = loaded.warning {
@@ -316,7 +319,11 @@ impl Game {
             });
         }
         g.log.push(LogLine {
-            text: format!("Welcome to {}. Space unpauses; keys from {}", g.sim.world.meta.fort_name, g.binds.source),
+            text: format!(
+                "Welcome to {}. Space unpauses. Keys: {}",
+                g.sim.world.meta.fort_name,
+                if g.binds.source.contains("Roaming") { "your DF prefs" } else { g.binds.source.as_str() }
+            ),
             pos: None,
             kind: AnnouncementKind::Info,
             born: now,
@@ -417,7 +424,7 @@ impl Game {
                 Some(tps) => {
                     self.tick_accum = (self.tick_accum + dt as f64 * tps).min(tps * 0.25);
                     let mut todo = self.tick_accum.floor() as u32;
-                    while todo > 0 && t0.elapsed().as_secs_f64() < SIM_BUDGET_S {
+                    while todo > 0 && t0.elapsed().as_secs_f64() < self.sim_budget {
                         let n = todo.min(self.chunk.max(1));
                         let c0 = Instant::now();
                         self.sim.run_ticks(n);
@@ -428,7 +435,7 @@ impl Game {
                 }
                 None => {
                     self.tick_accum = 0.0;
-                    while t0.elapsed().as_secs_f64() < SIM_BUDGET_S {
+                    while t0.elapsed().as_secs_f64() < self.sim_budget {
                         let n = self.chunk.max(1);
                         let c0 = Instant::now();
                         self.sim.run_ticks(n);
@@ -668,26 +675,10 @@ impl Game {
                 }
             }
             Tool::Designate(_) | Tool::Stockpile(_) => {
-                if lp {
-                    match self.drag {
-                        None => self.drag = Some(Drag { a: h, held: true }),
-                        Some(d) => {
-                            self.drag = None;
-                            self.apply_tool(d.a, h);
-                        }
-                    }
-                } else if lr {
-                    if let Some(d) = self.drag {
-                        if d.held {
-                            if d.a != h {
-                                self.drag = None;
-                                self.apply_tool(d.a, h);
-                            } else {
-                                // A plain click: wait for the second corner (Steam style).
-                                self.drag = Some(Drag { a: d.a, held: false });
-                            }
-                        }
-                    }
+                let (d, done) = drag_step(self.drag, h, lp, lr);
+                self.drag = d;
+                if let Some((a, b)) = done {
+                    self.apply_tool(a, b);
                 }
             }
         }
@@ -729,6 +720,25 @@ impl Game {
     }
 }
 
+/// Rectangle tool state machine (Steam style): press-drag-release, or click + click. The
+/// z-level may change between the corners (3D boxes). Returns the new state and a finished
+/// rectangle, if any.
+pub fn drag_step(drag: Option<Drag>, hover: Pos, lpressed: bool, lreleased: bool) -> (Option<Drag>, Option<(Pos, Pos)>) {
+    match drag {
+        None if lpressed => (Some(Drag { a: hover, held: true }), None),
+        Some(d) if lpressed => (None, Some((d.a, hover))),
+        Some(d) if lreleased && d.held => {
+            if d.a != hover {
+                (None, Some((d.a, hover)))
+            } else {
+                // A plain click: wait for the second corner.
+                (Some(Drag { a: d.a, held: false }), None)
+            }
+        }
+        other => (other, None),
+    }
+}
+
 fn initial_camera(w: &World) -> Camera {
     let (mut x, mut y, mut z) = (w.dims.x as f32 / 2.0, w.dims.y as f32 / 2.0, w.dims.z as i32 / 2);
     let cits: Vec<_> = w.citizens().collect();
@@ -761,6 +771,7 @@ fn initial_camera(w: &World) -> Camera {
 pub async fn run(args: Args, loaded: Loaded) {
     let mut g = Game::new(&args, loaded);
     let mut frame: u32 = 0;
+    let mut deadline = Instant::now();
     loop {
         let f0 = Instant::now();
         let dt = get_frame_time().min(0.1);
@@ -796,17 +807,31 @@ pub async fn run(args: Args, loaded: Loaded) {
                 }
                 img.export_png(&path.to_string_lossy());
                 println!(
-                    "saved {} ({}x{}) after {frame} frames, sim tick {}",
+                    "saved {} ({}x{}) after {frame} frames, sim tick {}, {:.0} fps, frame {:.2} ms (cpu), {:.0} ticks/s",
                     path.display(),
                     img.width,
                     img.height,
-                    g.sim.ticks()
+                    g.sim.ticks(),
+                    g.fps,
+                    g.frame_ms,
+                    g.tps
                 );
                 break;
             }
         }
         if g.quit {
             break;
+        }
+        if !args.vsync && args.gfps > 0 {
+            // Own frame pacing (DF's G_FPS_CAP) when vsync is off.
+            let period = std::time::Duration::from_secs_f64(1.0 / args.gfps as f64);
+            deadline += period;
+            let now = Instant::now();
+            if deadline > now {
+                std::thread::sleep(deadline - now);
+            } else if now - deadline > period {
+                deadline = now;
+            }
         }
         next_frame().await;
     }
@@ -838,6 +863,27 @@ mod tests {
         assert_eq!(*zc.last().unwrap(), ZClass::Sky);
         assert_eq!(zc[0], ZClass::Underground);
         assert!(zc.contains(&ZClass::Surface));
+    }
+
+    #[test]
+    fn rectangle_tool_drag_and_click_click() {
+        let a = Pos::new(1, 1, 5);
+        let b = Pos::new(4, 3, 3);
+        // Press, move (z changes), release -> done.
+        let (d, done) = drag_step(None, a, true, false);
+        assert!(done.is_none() && d.unwrap().held);
+        let (d, done) = drag_step(d, b, false, false);
+        assert!(done.is_none());
+        let (d, done) = drag_step(d, b, false, true);
+        assert!(d.is_none());
+        assert_eq!(done, Some((a, b)));
+        // Click, release on the same tile, click elsewhere -> done.
+        let (d, _) = drag_step(None, a, true, false);
+        let (d, done) = drag_step(d, a, false, true);
+        assert!(done.is_none() && !d.unwrap().held);
+        let (d, done) = drag_step(d, b, true, false);
+        assert!(d.is_none());
+        assert_eq!(done, Some((a, b)));
     }
 
     #[test]

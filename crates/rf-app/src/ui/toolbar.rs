@@ -235,7 +235,7 @@ fn draw_dig_menu(g: &mut Game, x: f32, toolbar_y: f32) -> f32 {
         _ => None,
     };
     let title = match cur {
-        Some(k) => format!("Dig: {}  - drag a rectangle (change z while dragging for 3D)", kind_label(k)),
+        Some(k) => format!("Dig: {} - drag a box (z while dragging = 3D)", kind_label(k)),
         None => "Dig".to_string(),
     };
     g.font.draw(&super::clip(&title, ((w - 2.0 * pad) / (8.0 * s)) as usize), r.x + pad, r.y + pad, s, col::TEXT_HI);

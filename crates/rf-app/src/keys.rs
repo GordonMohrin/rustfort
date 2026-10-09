@@ -380,6 +380,16 @@ mod tests {
         assert_eq!(m["ZOOM_IN"], vec![Trigger::Char('['), Trigger::Wheel { mods: 2, up: true }]);
     }
 
+    /// Uses the real interface.txt of the local DF install, if there is one.
+    #[test]
+    fn loads_the_installed_df_bindings() {
+        let b = Bindings::load(&rf_gfx::df_dir());
+        assert!(b.triggers("CURSOR_UP_Z").iter().any(|t| matches!(t, Trigger::Wheel { mods: 0, .. })), "{}", b.source);
+        assert!(b.triggers("ZOOM_IN").iter().any(|t| matches!(t, Trigger::Wheel { mods: CTRL, .. })), "{}", b.source);
+        assert!(!b.triggers("D_PAUSE").is_empty());
+        assert!(!b.triggers("CURSOR_UP").is_empty());
+    }
+
     #[test]
     fn defaults_have_the_core_bindings() {
         let b = Bindings::defaults();
