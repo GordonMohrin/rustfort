@@ -443,6 +443,7 @@ version = "0.1.0"
 dependencies = [
  "rayon",
  "rf-core",
+ "rf-import",
 ]
 
 [[package]]
