@@ -233,7 +233,22 @@ pub fn draw_military(g: &mut Game) {
     y += 2.0 * lh;
     let sched = if squad.schedule.is_empty() { "-".to_string() } else { squad.schedule.clone() };
     g.font.draw(&format!("Schedule: {sched}"), rx, y, s, col::TEXT_DIM);
-    y += lh;
+    y += lh + 2.0 * s;
+    // Routine buttons (DF v50: Off duty / Staggered / Constant training / Ready).
+    {
+        let mut sx = rx;
+        let sbw = 19.0 * 8.0 * s;
+        let options = g.sim.squad_schedules();
+        for name in options {
+            let on = squad.schedule.eq_ignore_ascii_case(name);
+            if text_button(&mut g.ui, &g.font, Rect::new(sx, y, sbw, bh), name, if on { BtnState::Active } else { BtnState::Normal }) {
+                g.sim.set_squad_schedule(sid, name);
+                g.set_status(format!("{}: {}", squad_name(&g.sim.world, sid), name.to_lowercase()));
+            }
+            sx += sbw + 6.0 * s;
+        }
+        y += bh + 6.0 * s;
+    }
     let ord = orders_summary(&g.sim.world, &squad);
     g.font.draw("Orders:", rx, y, s, col::TEXT);
     g.font.draw(&clip(&ord, ((rw - 9.0 * 8.0 * s) / (8.0 * s)) as usize), rx + 9.0 * 8.0 * s, y, s, if squad.orders.is_empty() { col::TEXT_DIM } else { col::TEXT_CYAN });

@@ -25,6 +25,10 @@ pub struct Args {
     pub cmd: String,
     pub export: Option<PathBuf>,
     pub synthetic: bool,
+    /// bench: disable invasions (sieges) for survival/regression runs.
+    pub no_invasions: bool,
+    /// bench: emulate a player standing the military down one day after the last hostile left.
+    pub standdown: bool,
     /// Size of the synthetic world (`--size x,y,z` implies `--synthetic`).
     pub size: (u16, u16, u16),
     pub seed: u64,
@@ -56,7 +60,7 @@ const USAGE: &str = "usage:
   rustfort play  [--export DIR] [--synthetic] [--seed N] [--speed 1|2|5|max]
                  [--screenshot out.png --frames N] [--view x,y,z,zoom] [--ui citizens,unit,build,orders,labor-screen,..]
                  [--mouse x,y] [--script \"frame:cmd; ...\"] [--ui-scale 2] [--gfps 60] [--size x,y,z]
-  rustfort bench [--export DIR] [--synthetic] [--ticks N] [--seed N]
+  rustfort bench [--export DIR] [--synthetic] [--ticks N] [--seed N] [--no-invasions] [--standdown]
   rustfort savebench [--export DIR]
   --load FILE.rfsave   start from a save game (play, bench)";
 
@@ -74,6 +78,8 @@ fn parse_args() -> Result<Args, String> {
             "--export" => a.export = Some(PathBuf::from(val("--export")?)),
             "--load" => a.load = Some(PathBuf::from(val("--load")?)),
             "--synthetic" => a.synthetic = true,
+            "--no-invasions" => a.no_invasions = true,
+            "--standdown" => a.standdown = true,
             "--size" => {
                 let v = val("--size")?;
                 let p: Vec<u16> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();

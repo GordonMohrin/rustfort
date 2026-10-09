@@ -103,6 +103,20 @@ impl Sim {
         self.refresh_military(); // [combat]
     }
 
+    /// Squad routines the player can pick (DF v50 squad schedule names).
+    pub fn squad_schedules(&self) -> &'static [&'static str] {
+        &["Off duty", "Staggered training", "Constant training", "Ready"]
+    }
+
+    /// Set a squad's routine (see [`Sim::squad_schedules`]); soldiers re-read their duty.
+    /// "Off duty" lets them return to civilian work, as after standing down in DF.
+    pub fn set_squad_schedule(&mut self, squad_id: i32, schedule: &str) {
+        if let Some(s) = self.world.squads.iter_mut().find(|s| s.id == squad_id) {
+            s.schedule = schedule.to_string();
+        }
+        self.refresh_military();
+    }
+
     /// Create a burrow from the inclusive box (all z between a and b). Returns its id.
     pub fn create_burrow(&mut self, name: &str, a: Pos, b: Pos) -> i32 {
         let id = self.world.burrows.iter().map(|b| b.id).max().unwrap_or(0) + 1;

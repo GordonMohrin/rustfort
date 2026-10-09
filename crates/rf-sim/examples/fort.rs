@@ -46,6 +46,17 @@ fn main() {
     if args.iter().any(|a| a == "--cook-brewables") {
         sim.set_cook_brewables(true);
     }
+    if args.iter().any(|a| a == "--no-invasions") {
+        sim.set_invasions(false);
+    }
+    // Military off duty from the start (like a player standing down after a siege).
+    if args.iter().any(|a| a == "--off-duty") {
+        let ids: Vec<i32> = sim.world.squads.iter().map(|q| q.id).collect();
+        for id in ids {
+            sim.order_squad(id, rf_sim::SquadOrder::Cancel);
+            sim.set_squad_schedule(id, "Off duty");
+        }
+    }
     let r0 = sim.production_report();
     println!(
         "sim init {:.2}s  |  {} workshops/furnaces, {} working wells, {} farm tiles ({} planted), {} work orders",
@@ -72,10 +83,42 @@ fn main() {
     let mut done = 0u64;
     let mut sim_secs = 0.0;
     let mut phases: Vec<(&'static str, f64)> = Vec::new();
+    let standdown = args.iter().any(|a| a == "--standdown");
+    let mut calm_since: Option<u64> = None;
     while done < ticks {
         let n = month.min(ticks - done);
         let t = Instant::now();
         sim.run_ticks(n as u32);
+        if standdown {
+            // Player emulation: one day after the last reachable hostile is gone, stand down.
+            let cits: Vec<rf_core::Pos> = sim.world.citizens().map(|u| u.pos).collect();
+            // Active threat = a reachable hostile within 30 tiles that is not just lurking.
+            let threat = sim.hostiles().iter().any(|&id| {
+                sim.unit_status(id).activity != "Lurk"
+                    && sim.world.unit(id).map(|u| cits.iter().any(|&c| c.dist(u.pos) <= 30 && sim.reachable(u.pos, c))).unwrap_or(false)
+            });
+            // Re-alert like a player (or Gordon's guard script) when a new threat shows up.
+            if threat && sim.world.squads.iter().all(|q| q.schedule.eq_ignore_ascii_case("Off duty")) {
+                let ids: Vec<i32> = sim.world.squads.iter().map(|q| q.id).collect();
+                for id in ids {
+                    sim.set_squad_schedule(id, "Ready");
+                }
+            }
+            if threat {
+                calm_since = None;
+            } else {
+                let since = *calm_since.get_or_insert(done);
+                let on_duty = sim.world.squads.iter().any(|q| !q.schedule.eq_ignore_ascii_case("Off duty") || !q.orders.is_empty());
+                if on_duty && done - since >= 1200 {
+                    let ids: Vec<i32> = sim.world.squads.iter().map(|q| q.id).collect();
+                    for id in ids {
+                        sim.order_squad(id, rf_sim::SquadOrder::Cancel);
+                        sim.set_squad_schedule(id, "Off duty");
+                    }
+                    println!("stood down the military at tick {done}");
+                }
+            }
+        }
         sim_secs += t.elapsed().as_secs_f64();
         done += n;
         for (k, (name, v)) in sim.stats().phase_times.iter().enumerate() {

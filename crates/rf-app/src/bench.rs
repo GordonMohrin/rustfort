@@ -22,8 +22,13 @@ pub fn run(args: &crate::Args) {
         load_s
     );
     let mut sim = rf_sim::Sim::new(loaded.world, seed);
+    if args.no_invasions {
+        sim.set_invasions(false);
+    }
     // Warm-up (caches, lazy init).
     sim.run_ticks(10);
+    let mut calm_since: Option<u64> = None;
+    let mut standdowns = 0usize;
     let mut phases: Vec<(&'static str, f64)> = Vec::new();
     let chunk: u64 = 100;
     let start = Instant::now();
@@ -36,6 +41,37 @@ pub fn run(args: &crate::Args) {
         let n = chunk.min(ticks - done);
         sim.run_ticks(n as u32);
         done += n;
+        if args.standdown {
+            // Player emulation: one day after the last hostile is gone, squads go off duty.
+            // Only hostiles that can reach a citizen count (sealed-in demons do not).
+            let citizen_pos: Vec<rf_core::Pos> = sim.world.citizens().map(|u| u.pos).collect();
+            // Active threat = a reachable hostile within 30 tiles that is not just lurking.
+            let threat = sim.hostiles().iter().any(|&id| {
+                sim.unit_status(id).activity != "Lurk"
+                    && sim.world.unit(id).map(|u| citizen_pos.iter().any(|&c| c.dist(u.pos) <= 30 && sim.reachable(u.pos, c))).unwrap_or(false)
+            });
+            // Re-alert like a player (or Gordon's guard script) when a new threat shows up.
+            if threat && sim.world.squads.iter().all(|q| q.schedule.eq_ignore_ascii_case("Off duty")) {
+                let ids: Vec<i32> = sim.world.squads.iter().map(|q| q.id).collect();
+                for id in ids {
+                    sim.set_squad_schedule(id, "Ready");
+                }
+            }
+            if threat {
+                calm_since = None;
+            } else {
+                let since = *calm_since.get_or_insert(done);
+                let on_duty = sim.world.squads.iter().any(|q| !q.schedule.eq_ignore_ascii_case("Off duty") || !q.orders.is_empty());
+                if on_duty && done - since >= rf_core::TICKS_PER_DAY as u64 {
+                    let ids: Vec<i32> = sim.world.squads.iter().map(|q| q.id).collect();
+                    for id in ids {
+                        sim.order_squad(id, rf_sim::SquadOrder::Cancel);
+                        sim.set_squad_schedule(id, "Off duty");
+                    }
+                    standdowns += 1;
+                }
+            }
+        }
         for a in sim.drain_announcements() {
             if a.kind == rf_sim::AnnouncementKind::Death {
                 deaths.push(format!("tick {}: {}", a.tick, a.text));
@@ -79,9 +115,12 @@ pub fn run(args: &crate::Args) {
             println!("  {name:<16} {:>9.3} ms  {:>5.1}%  ({:.2} us/tick)", s * 1000.0, s / total * 100.0, s / done as f64 * 1e6);
         }
     }
+    if args.standdown {
+        println!("military stood down {standdowns} time(s) after hostiles left");
+    }
     let alive = sim.world.citizens().count();
     println!("citizens: {citizens0} at start, {alive} alive at end, {} deaths", deaths.len());
-    for d in deaths.iter().take(15) {
+    for d in deaths.iter().take(if std::env::var("RF_ALL_DEATHS").is_ok() { usize::MAX } else { 15 }) {
         println!("  {d}");
     }
     if !ann_counts.is_empty() {

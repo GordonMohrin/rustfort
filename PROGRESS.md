@@ -1,5 +1,43 @@
 # Rustfort: progress
 
+## v0.3.0 (2026-10-10): psychology, industry, combat
+
+**New since 0.2:**
+- **Round-3 export (year 275).** It caught a running goblin siege with 35 invaders.
+  - Per unit: needs, emotions, values, relationships, wounds and blood.
+  - Expanded creature bodies with tissue layers and attacks (67 creatures), weapon and armor raws, material mechanics.
+  - 9 squads with orders and uniforms, burrows with tiles, corpse races.
+- **Psychology (DF v50):**
+  - About 240 DF thought types, emotions with the wiki's divider table, short- and long-term stress with DF's cutoffs.
+  - Needs with focus and its effect on work speed.
+  - Dining halls, bedrooms and room value; tantrums, depression and obliviousness, rarely insanity.
+  - Over 2 years the real fort stays mostly ecstatic or happy, with one depression.
+- **Storage and industry:**
+  - Bins, barrels, pots and bags in stockpiles, so many items fit on one tile; rot by DF rules.
+  - Wood furnace, smelter (ore table from the raws), forge (weapons, armor, tools, bolts), glass furnace.
+  - Butcher, tanner, leatherworks, loom, clothier, quern and millstone, mechanics, and the mason and carpenter extras.
+  - Almost all of your work orders run; only ShearCreature does not.
+- **Combat:**
+  - Wiki material-science formulas (momentum, shear and impact yield) over armor and tissue layers.
+  - Wounds per body part, bleeding, pain, unconsciousness, severing; dodge, block and parry; DF-style combat log.
+  - Squads: duty from orders and routine (off duty, staggered or constant training, ready), uniforms picked up, training, Kill and Station orders.
+  - Civilians flee; civilian alert by burrow; wounded rest in hospital or bed.
+  - Invasions by DF triggers (population of 80 or more), with retreat on losses.
+- **UI:**
+  - Unit sheet tabs Thoughts, Needs, Personality, Health and Relations; Creatures list with stress sorting.
+  - Squads screen with routines, orders, assignment and uniforms; burrows tool with civilian alert; Reports screen with the combat log.
+  - Hostile markers and a DF-style siege pop-up with auto-pause.
+- **Results on the real fort (2 years headless, about 62k ticks/s):**
+  - With your 9 squads the running siege is won with 4 citizens lost.
+  - With `--standdown` (emulates a player, or your guard script, standing the military down after the fight and back to Ready when a threat shows up), **85 of 90 survive 2 years including 3 sieges**.
+  - Without standing down, the 77 soldiers on *Ready* never work and the fort starves. DF behaves the same way: change the routine in the squads screen.
+
+**Known gaps (next):**
+- Ranged combat and ammo, traps, and locked or forbidden doors and raised bridges as barriers (your fort relies on them).
+- A lone lurking goblin is never engaged. Doctors, infections and suturing are missing.
+- Fluids and temperature, caverns and their creatures, migrants, caravans and trade, nobles and mandates, moods and artifacts, engravings.
+- Your orders contain no brew order, so the booze runs out after about 5 months and the dwarves drink well water.
+
 ## v0.2.0 (2026-10-10): the fort survives and produces
 
 **Works (new since 0.1):**

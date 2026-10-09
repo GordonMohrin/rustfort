@@ -28,6 +28,21 @@ fn world() -> (World, i16, i16, i16) {
             id += 1;
         }
     }
+    // A food stockpile under the supplies: food left outside piles rots (DF rule).
+    w.buildings.push(Building {
+        id: 4999,
+        kind: "Stockpile".into(),
+        x1: cx + 2,
+        y1: cy - 1,
+        x2: cx + 5,
+        y2: cy + 1,
+        z: hz,
+        center: Pos::new(cx + 3, cy, hz),
+        built: true,
+        owner: -1,
+        stockpile: Some(rf_core::StockpileSettings { categories: vec!["food".into()], max_barrels: 0, ..Default::default() }),
+        ..Default::default()
+    });
     (w, cx, cy, hz)
 }
 
