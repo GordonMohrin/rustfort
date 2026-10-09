@@ -24,6 +24,10 @@ export/<fort>/
   buildings.jsonl    rf_core::Building
   plants.jsonl       rf_core::Plant
   creatures.json     races present in units.jsonl
+  work_orders.jsonl  rf_core::WorkOrder (round 2, optional)
+  plant_raws.json    rf_core::PlantRaw array (round 2, optional)
+  burrows.json       burrows (round 2, optional; rf_import::load_extras)
+  squads.json        squads (round 2, optional; rf_import::load_extras)
   progress.json      exporter status, rewritten about once per second (not imported)
   error.json         only if the export aborted (not imported)
   export.lock        only while an export is running
@@ -45,9 +49,13 @@ export/<fort>/
              "materials": 379, "tiletypes": 697, "tiles": 5529600, "z_exported": 150},
   "export_seconds": 14.1, "lua_seconds": 11.4, "frames": 364, "max_slice_ms": 32, "budget_ms": 25,
   "map_complete": true,
+  "mods": ["vanilla_text:5001", "...", "vanilla_procedural:5316"],
+  "mods_detail": [{"id": "vanilla_text", "name": "Vanilla Text", "version": "50.01", "numeric_version": 5001}, "..."],
   "notes": ["units: skipped 409 dead ...", "..."]
 }
 ```
+
+(`mods`, `mods_detail` and the counts `work_orders`, `plant_raws`, `building_jobs`, `farm_plots`, `burrows`, `squads` exist since rev `2026-10-10a`; see "Additions for round 2".)
 
 - `dims` are in tiles: `x = world.map.x_count`, `y = y_count`, `z = z_count`.
 - The calendar comes from `df.global.cur_year` and `df.global.cur_year_tick`.
@@ -168,7 +176,7 @@ Field notes:
 - `phys_attrs` holds `[["STRENGTH", 1250], …]` from `body.physical_attrs[i].value`. `ment_attrs` and `facets` come from `current_soul` (`mental_attrs`, `personality.traits`).
 - `labors` lists every enabled labor from `status.labors[i]`.
 - `inventory` lists item ids.
-- `walk_speed` is always 900, because DFHack 53.16 exposes no gait raws. This is listed in `notes`.
+- `walk_speed` comes from the caste's default gait in the creature raws since exporter rev `2026-10-10a` (see "units.jsonl: walk_speed" below); older exports always wrote 900.
 - Flags:
   - `citizen`, `resident`, `animal`, `tame`, `visitor`, `merchant` and `forest` come from `dfhack.units.is*`.
   - `hostile` = invader or undead, or dangerous and not tame.
@@ -195,6 +203,7 @@ Field notes:
 - `extents` is a row-major `0/1` array, but only when `bld.room` matches the building rectangle and is not full. Otherwise it is empty, which means the full rectangle. The importer drops an `extents` whose length does not match the area.
 - `stockpile.categories` lists the enabled top-level `settings.flags` categories. `max_barrels`, `max_bins` and `max_wheelbarrows` come from `bld.storage`.
 - `items` lists the ids from `bld.contained_items`.
+- `jobs` (workshops/furnaces) and `crops` (farm plots): see "Additions for round 2".
 
 **Plants** are taken from `world.plants.all`:
 - `token` is `world.raws.plants.all[plant.material].id`;
@@ -214,9 +223,121 @@ An array with one entry per race in units.jsonl:
 
 ## Additions for round 2 (optional files, still format v1)
 
+Written by exporter rev `2026-10-10a` and later. All of it is optional for the importer: an older export simply has no orders, jobs, crops, plant raws or mods (`rf-import` tests this).
+
 | file | content |
 |---|---|
-| `work_orders.jsonl` | `rf_core::WorkOrder` per line, from `df.global.world.manager_orders`, with conditions |
-| `plant_raws.json` | array of `rf_core::PlantRaw` covering all plants of the save's raws: growdur in ticks, seasons, underground or aboveground, brewable, edible, has_seed, palette indices of the main materials (`NO_MAT` = 65535 if not in the palette; materials may be added to the palette for this) |
-| `buildings.jsonl` | new fields `jobs` (an `rf_core::BuildingJob` list from the workshop's job queue; the construction job is excluded) and `crops` (4 plant tokens for farm plots, `""` = fallow) |
-| `manifest.json` | new field `mods`: the active mods of the save in load order, as `"id:numeric_version"` |
+| `work_orders.jsonl` | `rf_core::WorkOrder` per line, from `df.global.world.manager_orders.all`, with conditions |
+| `plant_raws.json` | array of `rf_core::PlantRaw`, one per plant of `df.global.world.raws.plants.all` |
+| `buildings.jsonl` | new fields `jobs` (`rf_core::BuildingJob` list) and `crops` (4 plant tokens for farm plots) |
+| `manifest.json` | new fields `mods` (`"id:numeric_version"` in load order) and `mods_detail`; new `counts` keys |
+| `burrows.json` | burrows: name, tile count, units (not in rf-core; `rf_import::load_extras`) |
+| `squads.json` | the fort's squads: name and member unit ids (not in rf-core; `rf_import::load_extras`) |
+| `units.jsonl` | `walk_speed` now comes from the creature raws (gaits) instead of always 900 |
+
+Lines carry a few **extra fields** that rf-core does not have (listed below as "extras"). serde ignores them; they are there for verification and for later rounds.
+
+### Jobs, orders and conditions: shared rules
+
+`rf_core::BuildingJob` and `rf_core::WorkOrder` share these fields, filled the same way from a DF `job` or `manager_order`:
+
+| field | source |
+|---|---|
+| `job` | `df.job_type[job_type]`, e.g. `CustomReaction`, `PrepareMeal`, `MakeBarrel`, `ConstructTable`. DF 53 has no `BrewDrink` job: brewing is `CustomReaction` with a reaction. |
+| `reaction` | `reaction_name`, e.g. `BREW_DRINK_FROM_PLANT`, `BREW_DRINK_FROM_PLANT_GROWTH`; else `""` |
+| `item_type` | the product item type: DF's `item_type` if it is set, **else the job type's product** `df.job_type.attrs[job].item` (DF leaves `item_type` at NONE for most jobs, e.g. `MakeGoblet` → `GOBLET`, `ConstructThrone` → `CHAIR`, `MakeCharcoal` → `BAR`). `""` if neither (e.g. `CustomReaction`, `MakeCrafts`). |
+| `item_subtype` | `dfhack.items.getSubtypeDef(item_type, item_subtype).id`, e.g. `ITEM_WEAPON_PICK`, `ITEM_TOOL_LARGE_POT`; `""` if none |
+| `mat` | `dfhack.matinfo.decode(mat_type, mat_index):getToken()`: `""` = any material, `INORGANIC` = any inorganic (stone/metal, `mat_type 0, index -1`), `INORGANIC:IRON`, `COAL`, `GLASS_GREEN`, `PLANT:X:DRINK`, ... |
+| `mat_category` | names of the set bits of `material_category` (`df.job_material_category`, lowercase as in DF): `plant`, `wood`, `cloth`, `silk`, `leather`, `bone`, `shell`, `wood2`, `soap`, `tooth`, `horn`, `pearl`, `yarn`, `strand` |
+
+### work_orders.jsonl
+
+One `rf_core::WorkOrder` per line, in the order of the manager screen.
+
+- `id`: the order id (`manager_order.id`), referenced by `BuildingJob::order_id`.
+- `amount_left` / `amount_total`: as DF shows them ("1/2").
+- `frequency`: `df.workquota_frequency_type`: `OneTime`, `Daily`, `Monthly`, `Seasonally`, `Yearly`.
+- `workshop_id`: the workshop the order is restricted to, `-1` = any.
+- `active` / `validated`: `status.active` / `status.validated`. DF re-checks the conditions of a validated order at its frequency; `active` means jobs are currently being dispatched.
+- `conditions`: the item conditions (`item_conditions`), all must hold:
+  - `compare`: `df.logic_condition_type`: `AtLeast`, `AtMost`, `GreaterThan`, `LessThan`, `Exactly`, `Not`.
+  - `value`: `compare_val`. `item_type`, `item_subtype`, `mat`: as above (`""` = any).
+  - `flags`: the set bits of `flags1`, `flags2`, `flags3` (`df.job_item_flags1..3`) **uppercased**, e.g. `UNROTTEN`, `EMPTY`, `NON_ECONOMIC`, `HARD`, `UNENGRAVED`, `SAND`, `BONE`, `BODY_PART`, `COOKABLE`, `MILLABLE`, `PROCESSABLE_TO_BARREL`. Plus these, when set:
+    `REACTION_CLASS:<class>`, `HAS_MATERIAL_REACTION_PRODUCT:<product>` (DF's way to say "brewable": `HAS_MATERIAL_REACTION_PRODUCT:DRINK_MAT`), `METAL_ORE:<inorganic>`, `HAS_TOOL_USE:<df.tool_uses>`, `MIN_DIMENSION:<n>`, `REACTION_ID:<n>`, and `FLAGS4:0x..` / `FLAGS5:0x..` for the raw integer flag words if non-zero.
+- Extras: `order_conditions` (`[{"order_id": n, "condition": "Activated"|"Completed"}]`, from `order_conditions`), `max_workshops`, `finished_year`, `finished_year_tick`.
+
+```json
+{"job":"ConstructSlab","reaction":"","item_type":"SLAB","item_subtype":"","mat":"INORGANIC","mat_category":[],"id":61,
+ "amount_left":1,"amount_total":1,"frequency":"Daily","workshop_id":-1,"active":true,"validated":true,
+ "conditions":[{"compare":"AtLeast","value":22,"item_type":"BOULDER","item_subtype":"","mat":"INORGANIC","flags":["NON_ECONOMIC","HARD"]},
+               {"compare":"LessThan","value":2,"item_type":"SLAB","item_subtype":"","mat":"","flags":["UNENGRAVED"]}],
+ "order_conditions":[],"max_workshops":0,"finished_year":-1,"finished_year_tick":-1}
+```
+
+`manager_orders.all` has no `find()` and is small (tens of orders), so the exporter writes it within one frame slice.
+
+### buildings.jsonl: jobs and crops
+
+- `jobs`: only for `Workshop` and `Furnace` buildings: the queue `bld.jobs` in order, **without** the building's own `ConstructBuilding` / `DestroyBuilding` job. (Other buildings' `bld.jobs` hold jobs DF generates itself, e.g. `StoreItemInStockpile` on stockpiles or `PlantSeeds` on farm plots; they are not exported.) Every other building has `"jobs":[]`.
+  - `repeat` = `flags.repeat`, `suspended` = `flags.suspend`, `order_id` = `job.order_id` (`-1` = queued by hand).
+  - Extras: `id` (job id), `worker` (unit id from `dfhack.job.getWorker`, `-1` = nobody), `working` (`flags.working`), `do_now` (`flags.do_now`).
+- `crops`: only for `FarmPlot`: `building_farmplotst.plant_id[0..3]` as plant tokens (`raws.plants.all[id].id`) for **spring, summer, autumn, winter**; `""` = fallow. Every other building has `"crops":[]`. The importer pads or truncates a farm plot's list to 4 with a warning.
+- Wells need no new field: `kind` is `"Well"`.
+
+```json
+{"id":10978,"kind":"Workshop","subtype":"Still", ..., "jobs":[{"job":"CustomReaction","reaction":"BREW_DRINK_FROM_PLANT","item_type":"","item_subtype":"","mat":"","mat_category":[],"repeat":false,"suspended":false,"order_id":-1,"id":761553,"worker":-1,"working":false,"do_now":false}],"crops":[]}
+{"id":10609,"kind":"FarmPlot", ..., "jobs":[],"crops":["MUSHROOM_HELMET_PLUMP","GRASS_WHEAT_CAVE","GRASS_WHEAT_CAVE","MUSHROOM_HELMET_PLUMP"]}
+```
+
+### plant_raws.json
+
+An array of `rf_core::PlantRaw`, one per entry of `df.global.world.raws.plants.all` (the save's raws, 225 plants in Tileshtulon), in raw order.
+
+| field | source |
+|---|---|
+| `token`, `name`, `name_plural` | `plant.id`, `plant.name`, `plant.name_plural` |
+| `growdur` | **ticks**: `[GROWDUR]` × 100. The wiki (Plant token) gives GROWDUR in hundreds of ticks, 1008 units per season (= 100 800 ticks). Plump helmet: GROWDUR 300 → 30 000 ticks (25 days). Extra `growdur_raw` keeps the raw value. |
+| `spring` .. `winter` | plant flags `SPRING`, `SUMMER`, `AUTUMN`, `WINTER` (seasons it can be planted in; trees have none) |
+| `underground` | any `BIOME_SUBTERRANEAN_*` flag (from `[BIOME:SUBTERRANEAN_WATER]` etc.): can grow in subterranean farm plots |
+| `aboveground` | any other `BIOME_*` flag |
+| `is_tree` | flag `TREE`; `is_shrub` = not `TREE` and not `GRASS` |
+| `brewable` | flag `DRINK`, or a `material_defs` drink, or a structural/growth material with reaction product `DRINK_MAT`. Extra `brew_from`: `plant` (structural material: `BREW_DRINK_FROM_PLANT`), `growth` (fruit: `BREW_DRINK_FROM_PLANT_GROWTH`) or `""` |
+| `edible_raw`, `edible_cooked` | material flags `EDIBLE_RAW` / `EDIBLE_COOKED` of the STRUCTURAL material **or of any growth** (extra `growths` lists them separately) |
+| `millable` | has a `MILL` material def (`material_defs` mill; extra `mill` = its token, e.g. `PLANT:BARLEY:MILL`) |
+| `threshable` | has a `THREAD` material def (processing at the farmer's workshop gives thread; extra `thread` = its token) |
+| `has_seed` | flag `SEED` or a seed material def |
+| `mat_structural`, `mat_drink`, `mat_seed` | palette indices of `material_defs` basic_mat / drink / seed. The exporter **adds these materials to the palette** (materials.json), so they always resolve; `65535` = the plant has none |
+
+Extras: `growdur_raw`, `value`, `is_grass`, `biomes` (the `BIOME_*` flags without the prefix), `underground_depth` (`[min, max]` from `[UNDERGROUND_DEPTH]`; cavern layers 1..3, `[0,0]` = surface), `brew_from`, `mill`, `thread`, `extract_barrel`, `extract_vial`, `extract_still_vial` (material defs for "process plants to barrel/vial"), `seed_name`, `growths` (`[{"id":"FRUIT","name":"apple","mat":"PLANT:APPLE:FRUIT","edible_raw":true,"edible_cooked":true,"brewable":true}]`).
+
+```json
+{"token":"MUSHROOM_HELMET_PLUMP","name":"plump helmet","name_plural":"plump helmets","growdur":30000,
+ "spring":true,"summer":true,"autumn":true,"winter":true,"underground":true,"aboveground":false,"is_tree":false,"is_shrub":true,
+ "brewable":true,"edible_raw":true,"edible_cooked":true,"millable":false,"threshable":false,"has_seed":true,
+ "mat_structural":1,"mat_drink":142,"mat_seed":200,
+ "growdur_raw":300,"value":2,"is_grass":false,"biomes":["SUBTERRANEAN_WATER"],"underground_depth":[1,3],"brew_from":"plant", ...}
+```
+
+### manifest.json: mods and counts
+
+- `mods`: the active mods of the loaded save in load order, as `"id:numeric_version"`, e.g. `"vanilla_text:5001"`, `"vanilla_creatures:5316"`. Source: `df.global.world.object_loader.object_load_order_id[i]` and `object_load_order_numeric_version[i]`, the object loader DF used to load this save's raws (DFHack's `script-manager` reads the same vectors). Tileshtulon runs the 25 vanilla mods, no third-party mods.
+- `mods_detail`: the same list with display data: `[{"id":"vanilla_text","name":"Vanilla Text","version":"50.01","numeric_version":5001}, ...]` (`object_load_order_name`, `object_load_order_displayed_version`). `rf_import::Manifest::mods_detail` and `rf_import::load_extras` read it.
+- New `counts` keys: `work_orders`, `plant_raws`, `building_jobs` (sum of the exported workshop/furnace queues), `farm_plots`, `burrows`, `squads`. The importer compares the first four with what it loaded.
+
+### units.jsonl: walk_speed
+
+`walk_speed` is the `full_speed` of the caste's **default gait** from the creature raws: `caste.body_info.gait_info[WALK][default_gait_index[WALK]]` (DFHack 53.16-r2 exposes it on `caste_raw.body_info`, not on `caste_raw.misc`). For castes with the `FLIER` flag and a fly gait, the FLY gait is used. Units: DF speed units, 900 for a dwarf (`[GAIT:WALK:Walk:900:...]`), lower = faster. Examples from Tileshtulon: dwarf, troglodyte, crundle 900, cat 549, dog 447, horse 375, chicken 2467, magma crab 6561.
+
+Not applied: the attribute modifiers of the faster gaits (`STRENGTH`/`AGILITY`), `LAYERS_SLOW`, carried weight, injuries, terrain. `dfhack.units.computeMovementSpeed` returns 0 in 53.16-r2, so it is not used. If no gait is found the exporter writes 900 and counts it in `notes`.
+
+### burrows.json and squads.json
+
+Not part of rf-core yet; `rf_import::load_extras(dir)` returns them as `BurrowInfo` / `SquadInfo`.
+
+```json
+[{"id":1,"name":"Zuflucht","tiles":1716,"blocks":18,"units":[]}]
+[{"id":72,"name":"Wache","members":[13957,13834],"member_hfs":[3898,3889],"positions":10}]
+```
+
+- Burrows come from `df.global.plotinfo.burrows.list`. `tiles` counts the set bits of the block masks (`block.block_burrows` links with the burrow's id), `blocks` = `#block_x`, `units` = the assigned unit ids.
+- Squads are the `df.global.world.squads.all` entries whose `entity_id` is the fort's `plotinfo.group_id`. `name` = `alias` if set, else the translated name. `members` maps each filled position's historical figure (`positions[i].occupant`, in `member_hfs`) to its unit id (`-1` if the figure has no unit); `positions` counts filled and empty positions.

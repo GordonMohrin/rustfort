@@ -1,7 +1,8 @@
 //! Print a summary of a fort export:
 //!   cargo run -p rf-import --release --example inspect -- [dir] [--z N] [--all-citizens]
-//! dims, counts, citizens, item/building histograms, tile histograms per z-range and an
-//! ASCII map of the z-level with the most citizens (or `--z N`).
+//! dims, counts, citizens, item/building histograms, mods, work orders, workshop job queues,
+//! farm plots with crops, wells, drink/food stock, burrows/squads, walk speeds, tile histograms
+//! per z-range and an ASCII map of the z-level with the most citizens (or `--z N`).
 
 use rf_core::{Pos, Shape, TtMaterial, World, NO_MAT};
 use std::collections::BTreeMap;
@@ -70,6 +71,242 @@ fn building_char(kind: &str) -> Option<char> {
         "Cage" => 'C',
         _ => return None,
     })
+}
+
+/// Round-2 data: mods, work orders, workshop queues, farm plots, wells, drink/food stock,
+/// burrows and squads.
+fn production(w: &World, dir: &std::path::Path) {
+    let extras = rf_import::load_extras(dir);
+    // mods
+    if extras.mods.is_empty() {
+        println!("\nmods ({}): {}", w.meta.mods.len(), w.meta.mods.join(", "));
+    } else {
+        println!("\nmods ({}, load order):", extras.mods.len());
+        for m in &extras.mods {
+            println!("  {:<36} {:<34} {}", m.id, m.name, m.version);
+        }
+    }
+
+    // work orders
+    println!("\nwork orders ({}):", w.work_orders.len());
+    for o in &w.work_orders {
+        let what = if !o.reaction.is_empty() { o.reaction.clone() } else { o.job.clone() };
+        let mut prod = o.item_type.clone();
+        if !o.item_subtype.is_empty() {
+            prod = format!("{prod}/{}", o.item_subtype);
+        }
+        let mat = if !o.mat.is_empty() { o.mat.clone() } else { o.mat_category.join("+") };
+        let conds: Vec<String> = o
+            .conditions
+            .iter()
+            .map(|c| {
+                let it = if c.item_subtype.is_empty() { c.item_type.clone() } else { format!("{}/{}", c.item_type, c.item_subtype) };
+                let mut s = format!("{} {} {}", it, c.compare, c.value);
+                if !c.mat.is_empty() {
+                    s += &format!(" {}", c.mat);
+                }
+                if !c.flags.is_empty() {
+                    s += &format!(" [{}]", c.flags.join(","));
+                }
+                s
+            })
+            .collect();
+        println!(
+            "  {:>5} {:<26} {:<22} {:<14} {:>3}/{:<3} {:<10} {}{}{}",
+            o.id,
+            what,
+            prod,
+            mat,
+            o.amount_left,
+            o.amount_total,
+            o.frequency,
+            if o.active { "active" } else { "inactive" },
+            if o.workshop_id >= 0 { format!(" @{}", o.workshop_id) } else { String::new() },
+            if conds.is_empty() { String::new() } else { format!("  if {}", conds.join(" and ")) }
+        );
+    }
+
+    // workshops / furnaces with their queues
+    let shops: Vec<_> = w.buildings.iter().filter(|b| b.kind == "Workshop" || b.kind == "Furnace").collect();
+    let busy = shops.iter().filter(|b| !b.jobs.is_empty()).count();
+    println!(
+        "\nworkshops/furnaces ({}, {} with queued jobs, {} jobs in total):",
+        shops.len(),
+        busy,
+        shops.iter().map(|b| b.jobs.len()).sum::<usize>()
+    );
+    for b in &shops {
+        if b.jobs.is_empty() {
+            continue;
+        }
+        let mut q: Vec<(String, usize)> = Vec::new();
+        for j in &b.jobs {
+            let mut s = if !j.reaction.is_empty() { j.reaction.clone() } else { j.job.clone() };
+            if !j.item_subtype.is_empty() {
+                s += &format!("({})", j.item_subtype);
+            }
+            if j.repeat {
+                s += " R";
+            }
+            if j.suspended {
+                s += " S";
+            }
+            if j.order_id >= 0 {
+                s += &format!(" #{}", j.order_id);
+            }
+            match q.last_mut() {
+                Some((last, n)) if *last == s => *n += 1,
+                _ => q.push((s, 1)),
+            }
+        }
+        let q: Vec<String> = q.into_iter().map(|(s, n)| if n > 1 { format!("{n}x {s}") } else { s }).collect();
+        println!("  {:>6} {:<14} z{:<3} ({:>3},{:>3})  {}", b.id, b.subtype, b.z, b.x1, b.y1, q.join(", "));
+    }
+    let idle: Vec<String> = shops.iter().filter(|b| b.jobs.is_empty()).map(|b| b.subtype.clone()).collect();
+    let mut idle_k: BTreeMap<String, usize> = BTreeMap::new();
+    for s in idle {
+        *idle_k.entry(s).or_default() += 1;
+    }
+    let idle_s: Vec<String> = top(&idle_k, 30).into_iter().map(|(k, c)| format!("{k} {c}")).collect();
+    println!("  idle: {}", idle_s.join(", "));
+
+    // farm plots
+    let farms: Vec<_> = w.buildings.iter().filter(|b| b.kind == "FarmPlot").collect();
+    let raw = |t: &str| w.plant_raws.iter().find(|p| p.token == t);
+    println!("\nfarm plots ({}; crops spring/summer/autumn/winter, - = fallow):", farms.len());
+    for b in &farms {
+        let crops: Vec<String> = b.crops.iter().map(|c| if c.is_empty() { "-".to_string() } else { c.clone() }).collect();
+        let area = (b.x2 - b.x1 + 1) as i32 * (b.y2 - b.y1 + 1) as i32;
+        let under = w.tile(b.center).map(|t| t.flags & rf_core::tile_flags::SUBTERRANEAN != 0).unwrap_or(false);
+        let notes: Vec<String> = b
+            .crops
+            .iter()
+            .filter(|c| !c.is_empty())
+            .filter_map(|c| raw(c).map(|p| (c, p)))
+            .filter(|(_, p)| if under { !p.underground } else { !p.aboveground })
+            .map(|(c, _)| format!("{c} not {}", if under { "subterranean" } else { "surface" }))
+            .collect();
+        println!(
+            "  {:>6} z{:<3} ({:>3},{:>3}) {:>2} tiles {:<5} {}{}",
+            b.id,
+            b.z,
+            b.x1,
+            b.y1,
+            area,
+            if under { "under" } else { "above" },
+            crops.join(","),
+            if notes.is_empty() { String::new() } else { format!("  (! {})", notes.join("; ")) }
+        );
+    }
+
+    // plant raws: what can be farmed/brewed here
+    let farmable_u: Vec<&str> = w.plant_raws.iter().filter(|p| p.has_seed && !p.is_tree && p.underground).map(|p| p.token.as_str()).collect();
+    let brew: usize = w.plant_raws.iter().filter(|p| p.brewable).count();
+    println!(
+        "\nplant raws: {} ({} trees, {} brewable, {} with seeds); underground crops: {}",
+        w.plant_raws.len(),
+        w.plant_raws.iter().filter(|p| p.is_tree).count(),
+        brew,
+        w.plant_raws.iter().filter(|p| p.has_seed).count(),
+        farmable_u.join(", ")
+    );
+
+    // wells
+    let wells: Vec<_> = w.buildings.iter().filter(|b| b.kind == "Well").collect();
+    println!("\nwells ({}):", wells.len());
+    for b in &wells {
+        // DF draws from the first liquid below the well (estimate: scan straight down)
+        let mut water = String::from("no water found below");
+        let mut p = b.center;
+        while p.z > 0 {
+            p.z -= 1;
+            match w.tile(p) {
+                Some(t) if t.liquid_depth() > 0 => {
+                    water = format!(
+                        "{} depth {} at z{} ({} levels down)",
+                        if t.is_magma() { "magma" } else { "water" },
+                        t.liquid_depth(),
+                        p.z,
+                        b.z - p.z
+                    );
+                    break;
+                }
+                Some(_) if !w.shape(p).is_open() => {
+                    water = format!("blocked at z{}", p.z);
+                    break;
+                }
+                None => break,
+                _ => {}
+            }
+        }
+        println!("  {:>6} z{:<3} ({:>3},{:>3}) built={} {}", b.id, b.z, b.center.x, b.center.y, b.built, water);
+    }
+
+    // drinks and food
+    let mut drinks = (0i64, 0i64);
+    let mut food: BTreeMap<&str, (i64, i64)> = BTreeMap::new();
+    for i in &w.items {
+        let avail = !i.flags.forbid && !i.flags.rotten && !i.flags.dump && !i.flags.construction;
+        let n = i.stack.max(1) as i64;
+        let edible_plant = |i: &rf_core::Item| {
+            let tok = w.material(i.mat).map(|m| m.token.as_str()).unwrap_or("");
+            let id = tok.strip_prefix("PLANT:").and_then(|r| r.split(':').next()).unwrap_or("");
+            raw(id).map(|p| p.edible_raw).unwrap_or(false)
+        };
+        let key = match i.kind.as_str() {
+            "DRINK" => {
+                drinks.0 += n;
+                if avail {
+                    drinks.1 += n;
+                }
+                continue;
+            }
+            "FOOD" => "FOOD (prepared meals)",
+            "MEAT" | "FISH" | "CHEESE" | "EGG" => "MEAT/FISH/CHEESE/EGG",
+            "PLANT" if edible_plant(i) => "PLANT (edible raw)",
+            "PLANT" => "PLANT (not edible raw)",
+            "PLANT_GROWTH" => "PLANT_GROWTH (fruit, leaves)",
+            "FISH_RAW" => "FISH_RAW (needs cleaning)",
+            "SEEDS" => "SEEDS",
+            _ => continue,
+        };
+        let e = food.entry(key).or_default();
+        e.0 += n;
+        if avail {
+            e.1 += n;
+        }
+    }
+    let cits = w.citizens().count().max(1) as i64;
+    println!("\ndrink units: {} ({} available = not forbidden/rotten/dumped; {:.1} per citizen)", drinks.0, drinks.1, drinks.1 as f64 / cits as f64);
+    println!("food units (total / available):");
+    for (k, (t, a)) in &food {
+        println!("  {k:<30} {t:>6} / {a:<6}");
+    }
+
+    // burrows, squads
+    if !extras.burrows.is_empty() {
+        let b: Vec<String> = extras.burrows.iter().map(|b| format!("{} ({} tiles, {} units)", b.name, b.tiles, b.units.len())).collect();
+        println!("\nburrows ({}): {}", extras.burrows.len(), b.join(", "));
+    }
+    if !extras.squads.is_empty() {
+        let s: Vec<String> = extras
+            .squads
+            .iter()
+            .map(|s| {
+                let alive = s.members.iter().filter(|id| w.unit(**id).map(|u| !u.flags.dead).unwrap_or(false)).count();
+                format!("{} ({}/{} members on record, {alive} alive here)", s.name, s.members.len(), s.positions)
+            })
+            .collect();
+        println!("squads ({}): {}", extras.squads.len(), s.join(", "));
+    }
+
+    // gait speeds
+    let mut sp: BTreeMap<i32, usize> = BTreeMap::new();
+    for u in &w.units {
+        *sp.entry(u.walk_speed).or_default() += 1;
+    }
+    let s: Vec<String> = top(&sp, 10).into_iter().map(|(k, c)| format!("{k}: {c}")).collect();
+    println!("walk_speed (units): {}", s.join(", "));
 }
 
 fn main() {
@@ -161,6 +398,8 @@ fn main() {
     for (k, c) in top(&bk, 25) {
         println!("  {c:>6}  {k}");
     }
+
+    production(&w, &dir);
 
     // tiles per z-range
     println!("\ntiles per z-range (shape %, material class %, top materials; hidden = undiscovered):");
