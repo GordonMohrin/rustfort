@@ -799,8 +799,8 @@ impl Sim {
         let has = |sim: &Sim, sub: &str| sim.prod.shops.iter().filter(|s| s.subtype == sub).count() as i32;
         let (stills, kitchens, carps, crafts) = (has(self, "Still"), has(self, "Kitchen"), has(self, "Carpenters"), has(self, "Craftsdwarfs"));
         let cond = |item_type: &str, sub: &str, flags: &[&str], value: i32| OrderCondition {
-            compare: "LessThan".into(),
-            value,
+            compare: if value < 0 { "AtLeast".into() } else { "LessThan".into() },
+            value: value.abs(),
             item_type: item_type.into(),
             item_subtype: sub.into(),
             flags: flags.iter().map(|s| s.to_string()).collect(),
@@ -830,7 +830,16 @@ impl Sim {
             added.push(format!("{} x{amount} {freq}", r.label));
         };
         if stills > 0 {
-            push(self, 0, (2 * stills).max(2), "Daily", vec![cond("DRINK", "", &[], (10 * citizens).max(50))]);
+            // Brew while drinks are low, but only from a surplus of brewable plants (one per
+            // citizen in stock), so brewing never eats the food supply: without booze dwarves
+            // drink water, without food they starve.
+            push(
+                self,
+                0,
+                (2 * stills).max(2),
+                "Daily",
+                vec![cond("DRINK", "", &[], (10 * citizens).max(50)), cond("PLANT", "", &["BREWABLE"], -citizens.max(5))],
+            );
         }
         if kitchens > 0 {
             push(self, 2, (2 * kitchens).max(2), "Daily", vec![cond("FOOD", "", &[], (3 * citizens).max(20))]);
@@ -842,10 +851,8 @@ impl Sim {
             push(self, 21, 3, "Monthly", vec![cond("TOOL", "ITEM_TOOL_LARGE_POT", &["EMPTY"], 5)]);
         }
         if !added.is_empty() {
-            self.prod.notes.push(format!(
-                "no manager work orders in the save: added fallback standing orders (rf-sim heuristic, not DF behavior): {}",
-                added.join(", ")
-            ));
+            let why = if self.world.work_orders.len() == added.len() { "no manager work orders in the save: " } else { "" };
+            self.prod.notes.push(format!("{why}added fallback standing orders (rf-sim heuristic, not DF behavior): {}", added.join(", ")));
         }
     }
 
