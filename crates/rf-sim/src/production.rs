@@ -148,7 +148,7 @@ pub struct Recipe {
     pub mat_category: &'static str,
     pub label: &'static str,
     pub workshop: &'static str,
-    pub labor: u32,
+    pub labor: u64, // [industry] u64 labor bits
     pub skill: &'static str,
     pub input: Input,
     pub ticks: u32,
@@ -275,7 +275,7 @@ pub(crate) struct Shop {
     pub blocked_until: u64,
     /// Runnable queue entries: (queue index, recipe).
     pub avail: Vec<(u16, u8)>,
-    pub labors: u32,
+    pub labors: u64, // [industry] u64 labor bits
 }
 
 #[derive(Clone, Copy)]
@@ -305,7 +305,7 @@ pub(crate) struct Cons {
     pub blocked_until: u64,
     /// What has to be brought: material classes (with an item kind for furniture).
     pub needs: Vec<(u8, &'static str)>,
-    pub labor: u32,
+    pub labor: u64, // [industry] u64 labor bits
 }
 
 /// Stock counts (free items only) used for job availability and order conditions.
@@ -946,7 +946,7 @@ impl Sim {
     fn new_cons(&self, bi: usize) -> Option<Cons> {
         let b = &self.world.buildings[bi];
         let site = self.world.idx(b.center)? as u32;
-        let (needs, labor): (Vec<(u8, &'static str)>, u32) = match b.kind.as_str() {
+        let (needs, labor): (Vec<(u8, &'static str)>, u64) = match b.kind.as_str() {
             "Workshop" | "Furnace" => {
                 if b.subtype == "Masons" {
                     (vec![(pc::BOULDER, "")], labor::MASON)
