@@ -88,6 +88,7 @@ impl Sim {
             u.squad_id = squad_id;
             u.squad_position = position as i32;
         }
+        self.refresh_military(); // [combat]
     }
 
     pub fn order_squad(&mut self, squad_id: i32, order: SquadOrder) {
@@ -99,6 +100,7 @@ impl Sim {
                 SquadOrder::Cancel => vec![],
             };
         }
+        self.refresh_military(); // [combat]
     }
 
     /// Create a burrow from the inclusive box (all z between a and b). Returns its id.
@@ -117,15 +119,18 @@ impl Sim {
     }
 
     /// Civilian alert: restrict all citizens to `burrow_id` (None = lift the alert).
-    pub fn set_civilian_alert(&mut self, _burrow_id: Option<i32>) {}
+    pub fn set_civilian_alert(&mut self, burrow_id: Option<i32>) {
+        self.military_set_alert(burrow_id); // [combat]
+    }
 
     /// Units currently hostile to the fort (invaders, wild predators, monsters).
     pub fn hostiles(&self) -> Vec<i32> {
-        self.world.units.iter().filter(|u| u.flags.hostile && !u.flags.dead).map(|u| u.id).collect()
+        // [combat] caged and off-map units are no threat
+        self.world.units.iter().filter(|u| u.flags.hostile && !u.flags.dead && !u.flags.caged && !u.flags.inactive).map(|u| u.id).collect()
     }
 
     /// Recent combat report lines (DF "Reports" screen), newest last.
     pub fn combat_log(&self) -> Vec<String> {
-        Vec::new()
+        self.combat.log.iter().cloned().collect() // [combat]
     }
 }

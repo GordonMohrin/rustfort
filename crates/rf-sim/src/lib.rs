@@ -48,6 +48,11 @@
 //!   (threshold: 8 requests per tick), so the sim is effectively single-threaded today.
 
 pub mod build_api;
+// [combat]
+pub mod combat;
+pub mod invasion;
+pub mod military;
+pub use combat::CombatStats;
 pub mod round3_api;
 pub use round3_api::{SquadOrder, StressLevel};
 pub use build_api::{BuildOption, OrderTemplate, ZONE_KINDS};
@@ -357,6 +362,8 @@ enum Task {
     Craft,
     /// [social] Walk to dining seat `.1` and eat food item `.0` there.
     GoDine(i32, u32),
+    /// [combat] Unit run by the combat/military module (fighting, fleeing, training, resting).
+    Combat,
 }
 
 struct UnitAi {
@@ -514,6 +521,8 @@ pub struct Sim {
     store: storage::Store,
     /// [industry] Furnace/forge/animal/cloth job details (see `industry`).
     ind: industry::Ind,
+    /// [combat] Combat, military and invasions (see `combat`, `military`, `invasion`).
+    combat: combat::Combat,
 }
 
 #[inline]
@@ -610,6 +619,7 @@ impl Sim {
             social: social::Social::default(), // [social]
             store: storage::Store::default(), // [industry]
             ind: industry::Ind::default(),    // [industry]
+            combat: combat::Combat::default(), // [combat]
         };
         sim.init_plants();
         sim.init_units();
@@ -620,6 +630,7 @@ impl Sim {
         sim.init_production();
         sim.init_social(); // [social]
         sim.init_storage(); // [industry]
+        sim.init_combat(); // [combat]
         sim.rebuild_food_lists();
         sim.rebuild_haul();
         sim
@@ -968,6 +979,7 @@ impl Sim {
             }
             (_, Task::GoPickup(_, d)) | (_, Task::GoStore(_, d)) => ("Store Item in Stockpile", Some(pos_of(d))),
             (_, Task::Fetch(_)) | (_, Task::GoSite) | (_, Task::Craft) => self.wjob_caption(s),
+            (_, Task::Combat) => self.combat_caption(s), // [combat]
         };
         UnitStatus {
             activity: activity.into(),
@@ -1020,6 +1032,7 @@ impl Sim {
         }
         self.prod_hash(&mut mix);
         self.social_hash(&mut mix); // [social]
+        self.combat_hash(&mut mix); // [combat]
         h
     }
 
@@ -1121,6 +1134,7 @@ impl Sim {
         if now % social::SOCIAL_PERIOD == 50 {
             self.social_pass(now); // [social]
         }
+        self.combat_tick(now); // [combat]
         let t0 = Instant::now();
         for s in 0..self.ai.len() {
             if self.ai[s].wake <= now {
@@ -1335,7 +1349,12 @@ impl Sim {
                 return;
             }
             Kind::Animal | Kind::Other => {
-                self.think_simple(s, now);
+                // [combat] hostiles, fighting animals, leaving invaders
+                if self.combat_owns(s) {
+                    self.combat_think(s, now);
+                } else {
+                    self.think_simple(s, now);
+                }
                 return;
             }
             Kind::Worker => {}
@@ -1380,6 +1399,7 @@ impl Sim {
                     self.ai[s].wake = until.min(cap);
                 }
             }
+            Task::Combat => self.combat_think(s, now), // [combat]
             _ => {
                 let interruptible = matches!(task, Task::GoJob(_) | Task::GoPickup(..) | Task::GoStore(..) | Task::Wander | Task::Fetch(_) | Task::GoSite);
                 if urgent && interruptible {
@@ -1486,6 +1506,10 @@ impl Sim {
         }
         if sl >= needs::SLEEP_SEEK || (sl >= needs::SLEEP_CONSIDER && r.chance(elapsed, 120)) {
             self.start_sleep(s, now);
+            return;
+        }
+        // [combat] soldiers on duty, civilian alert, wounded resting
+        if self.combat_decide(s, now) {
             return;
         }
         if self.social_no_work(s) {
@@ -1631,6 +1655,7 @@ impl Sim {
             Task::GoSite => self.prod_arrive_site(s, now),
             Task::GoDine(id, _) => self.social_arrive_dine(s, id, now), // [social]
             Task::Job(_) | Task::Drink(_) | Task::Eat(_) | Task::Sleep(_) | Task::Craft => {}
+            Task::Combat => self.combat_think(s, now), // [combat]
         }
     }
 
@@ -1737,6 +1762,7 @@ impl Sim {
                 self.release_pile_tile(dest);
             }
             Task::Fetch(_) | Task::GoSite | Task::Craft => self.prod_cancel(s),
+            Task::Combat => self.combat_cancel(s), // [combat]
             Task::Idle | Task::Wander => {}
         }
         let ai = &mut self.ai[s];

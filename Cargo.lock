@@ -508,6 +508,7 @@ dependencies = [
  "rayon",
  "rf-core",
  "rf-import",
+ "serde_json",
 ]
 
 [[package]]
