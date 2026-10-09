@@ -8,3 +8,8 @@ publish.workspace = true
 
 [dependencies]
 rf-core.workspace = true
+rayon = "1"
+
+[[example]]
+name = "bench"
+path = "examples/bench.rs"
