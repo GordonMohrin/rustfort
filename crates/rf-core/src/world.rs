@@ -2,6 +2,7 @@
 
 use crate::entities::*;
 use crate::military::*;
+use crate::society::*;
 use crate::tiles::*;
 use serde::{Deserialize, Serialize};
 
@@ -101,6 +102,15 @@ pub struct World {
     pub squads: Vec<Squad>,
     #[serde(default)]
     pub burrows: Vec<Burrow>,
+    /// Civilizations and other entities (trade partners, invaders).
+    #[serde(default)]
+    pub entities: Vec<EntityInfo>,
+    #[serde(default)]
+    pub nobles: Vec<NoblePosition>,
+    #[serde(default)]
+    pub settings: GameSettings,
+    #[serde(default)]
+    pub hist_figs: Vec<HistFigName>,
 }
 
 impl World {

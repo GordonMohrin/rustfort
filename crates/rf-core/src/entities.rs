@@ -242,6 +242,14 @@ pub struct Building {
     pub jobs: Vec<BuildingJob>,
     /// Farm plots: crop plant token per season (spring, summer, autumn, winter), "" = fallow.
     pub crops: Vec<String>,
+    /// DF building state flags, e.g. `LOCKED`, `FORBIDDEN`, `PET_PASSABLE` (doors/hatches),
+    /// `OPEN`/`CLOSED`, `RAISED` (bridges), `ACTIVE` (lever pulled / trap armed), `LOADED`.
+    pub flags: Vec<String>,
+    /// Mechanism links: for levers/pressure plates the building ids they trigger;
+    /// for triggered buildings the triggering lever/plate ids.
+    pub links: Vec<i32>,
+    /// Bridge raise direction (`N`, `S`, `E`, `W`, `RETRACT`), trap subtype details, etc.
+    pub direction: String,
 }
 
 /// One queued job in a workshop/furnace (DF `job` linked to the building).

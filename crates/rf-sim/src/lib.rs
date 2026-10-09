@@ -54,6 +54,8 @@ pub mod invasion;
 pub mod military;
 pub use combat::CombatStats;
 pub mod round3_api;
+pub mod round4_api;
+pub use round4_api::{PopulationInfo, TradeOffer, TradeStatus};
 pub use round3_api::{SquadOrder, StressLevel};
 pub use build_api::{BuildOption, OrderTemplate, ZONE_KINDS};
 pub mod gen;
