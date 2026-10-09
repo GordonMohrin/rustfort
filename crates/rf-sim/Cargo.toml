@@ -12,6 +12,11 @@ rayon = "1"
 
 [dev-dependencies]
 rf-import.workspace = true
+serde_json.workspace = true # [combat] siege example reads the round-3 raws
+
+[[example]]
+name = "siege"
+path = "examples/siege.rs"
 
 [[example]]
 name = "bench"

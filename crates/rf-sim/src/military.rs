@@ -300,7 +300,9 @@ impl Sim {
         }
         let up = self.nav.xyz(pos);
         for entry in &uniform {
-            let mut parts = entry.splitn(3, ':');
+            // `KIND`, `KIND:SUBTYPE`, `KIND@category` or `KIND:SUBTYPE@MATERIAL` (export format).
+            let head = entry.split('@').next().unwrap_or("");
+            let mut parts = head.splitn(2, ':');
             let kind = parts.next().unwrap_or("").to_string();
             let sub = parts.next().unwrap_or("").to_string();
             if kind.is_empty() {

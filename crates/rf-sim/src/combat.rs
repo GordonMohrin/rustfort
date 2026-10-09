@@ -54,8 +54,8 @@
 
 use crate::path::Goals;
 use crate::rng::Rng;
-use crate::{AnnouncementKind, Kind, Sim, Task, NONE};
-use rf_core::{AttackRaw, BodyPartRaw, CasteRaw, Item, ItemFlags, MaterialInfo, Pos, TissueLayerRaw, Wound, NO_MAT};
+use crate::{Kind, Sim, Task, NONE};
+use rf_core::{AttackRaw, CasteRaw, Item, ItemFlags, MaterialInfo, Pos, TissueLayerRaw, Wound, NO_MAT};
 use std::collections::{HashMap, VecDeque};
 
 /// Body part flag bits (from DF body part flags).
@@ -239,6 +239,7 @@ pub(crate) struct PartT {
 }
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub(crate) struct AtkT {
     pub verb2: String,
     pub verb3: String,
@@ -255,6 +256,7 @@ pub(crate) struct AtkT {
 }
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub(crate) struct BodyT {
     pub race: String,
     pub creature: String,
@@ -335,6 +337,8 @@ pub(crate) struct Fighter {
     pub blood: i32,
     pub blood_max: i32,
     pub dormant_until: u64,
+    /// Healed exported wounds (scars), kept for `Unit::wounds`.
+    pub scars: Vec<Wound>,
     pub listed_bleed: bool,
     pub listed_wound: bool,
 }
@@ -364,6 +368,7 @@ impl Default for Fighter {
             blood: 0,
             blood_max: 0,
             dormant_until: 0,
+            scars: Vec::new(),
             listed_bleed: false,
             listed_wound: false,
         }
@@ -604,10 +609,6 @@ fn flags_of(names: &[String]) -> u16 {
 }
 
 impl Combat {
-    pub(crate) fn fighter(&self, s: usize) -> Option<&Fighter> {
-        self.f.get(s)
-    }
-
     pub(crate) fn log_line(&mut self, line: String) {
         self.log.push_back(line);
         self.log_total += 1;
@@ -701,7 +702,7 @@ fn layer_from(tissue: &str, mech: Mech) -> LayerT {
         pain,
         arteries,
         rigid: mech.isay < 1000.0,
-        hair: up.contains("HAIR") || up.contains("FEATHER"),
+        hair: ["HAIR", "FEATHER", "EYEBROW", "EYELASH", "WHISKER", "MOUSTACHE", "SIDEBURNS", "BEARD"].iter().any(|h| up.contains(h)),
     }
 }
 
@@ -1061,7 +1062,14 @@ impl Sim {
         let ws = self.world.units[uidx].wounds.clone();
         let b = self.combat.f[s].body as usize;
         let mut out = Vec::new();
+        let mut scars = Vec::new();
         for w in &ws {
+            // Scars and long-healed wounds (DF keeps them) are not active wounds.
+            let scar = w.flags.iter().any(|f| f.starts_with("SCAR")) || (w.bleeding <= 0 && w.pain <= 0 && w.age > rf_core::TICKS_PER_MONTH);
+            if scar {
+                scars.push(w.clone());
+                continue;
+            }
             let body = &self.combat.bodies[b];
             let Some(pi) = body.parts.iter().position(|p| p.token == w.body_part) else { continue };
             let p = &body.parts[pi];
@@ -1084,8 +1092,15 @@ impl Sim {
             }
         }
         f.bleed = out.iter().map(|w| w.bleed).sum();
+        let active = !out.is_empty();
         f.wounds = out;
-        self.list_wounded(s);
+        f.scars = scars;
+        if active {
+            self.list_wounded(s);
+            if self.combat.f[s].bleed > 0 {
+                self.list_bleeder(s);
+            }
+        }
     }
 
     pub(crate) fn init_combat(&mut self) {
@@ -1500,6 +1515,7 @@ impl Sim {
         let mut pen_left = atk.pen / 100.0;
         let mut results: Vec<String> = Vec::new();
         let mut cur = part;
+        let outer = part;
         let mut died: Option<&'static str> = None;
         let mut severed_part: Option<u16> = None;
         let mut depth = 0;
@@ -1512,7 +1528,8 @@ impl Sim {
             };
             let pc = self.combat.bodies[db].parts[cur as usize].contact;
             // Blunt force reaching an internal organ spreads over the whole organ (estimate).
-            let c = if (depth > 1 && !edge) || spread { pc } else { atk.contact.max(1.0).min(pc) };
+            let cur_bone = nl > 0 && (l0..l0 + nl).all(|l| self.combat.bodies[db].layers[l as usize].rigid);
+            let c = if (depth > 1 && !edge && !cur_bone) || spread { pc } else { atk.contact.max(1.0).min(pc) };
             let mut all_cut = nl > 0;
             let mut through = true;
             for l in l0..l0 + nl {
@@ -1611,24 +1628,51 @@ impl Sim {
             if !through || m < 0.05 || depth >= 3 {
                 break;
             }
-            // Into an internal organ.
-            let kids = &self.combat.bodies[db].parts[cur as usize].internal_children;
+            // Into the inside of the outer part: first maybe a protecting bone (skull, ribs:
+            // internal parts made of rigid tissue only), then an organ (weighted by relsize).
+            let bodyp = &self.combat.bodies[db];
+            let kids = &bodyp.parts[outer as usize].internal_children;
             if kids.is_empty() {
                 break;
             }
-            let prel = self.combat.bodies[db].parts[cur as usize].rel.max(1) as u32;
-            let ks: u32 = kids.iter().map(|&k| self.combat.bodies[db].parts[k as usize].rel.max(1) as u32).sum();
-            let roll = r.below(ks.max(prel));
-            let mut acc = 0;
+            let is_bone = |k: u16| {
+                let p = &bodyp.parts[k as usize];
+                p.nl > 0 && p.flags & bp::NERVOUS == 0 && (p.l0..p.l0 + p.nl).all(|l| bodyp.layers[l as usize].rigid)
+            };
+            let prel = bodyp.parts[outer as usize].rel.max(1) as u32;
+            let want_bone = depth == 1;
+            let pick: Vec<u16> = kids.iter().copied().filter(|&k| is_bone(k) == want_bone && self.combat.f[d].part_state[k as usize] & 1 == 0).collect();
+            let ks: u32 = pick.iter().map(|&k| bodyp.parts[k as usize].rel.max(1) as u32).sum();
             let mut next = u16::MAX;
-            for &k in kids {
-                acc += self.combat.bodies[db].parts[k as usize].rel.max(1) as u32;
-                if roll < acc {
-                    next = k;
-                    break;
+            if ks > 0 {
+                let roll = r.below(ks.max(prel));
+                let mut acc = 0;
+                for &k in &pick {
+                    acc += bodyp.parts[k as usize].rel.max(1) as u32;
+                    if roll < acc {
+                        next = k;
+                        break;
+                    }
                 }
             }
-            if next == u16::MAX || self.combat.f[d].part_state[next as usize] & 1 != 0 {
+            if next == u16::MAX && want_bone {
+                // Missed the bones: straight into an organ.
+                let organs: Vec<u16> = kids.iter().copied().filter(|&k| !is_bone(k) && self.combat.f[d].part_state[k as usize] & 1 == 0).collect();
+                let os: u32 = organs.iter().map(|&k| bodyp.parts[k as usize].rel.max(1) as u32).sum();
+                if os > 0 {
+                    let roll = r.below(os.max(prel));
+                    let mut acc = 0;
+                    for &k in &organs {
+                        acc += bodyp.parts[k as usize].rel.max(1) as u32;
+                        if roll < acc {
+                            next = k;
+                            depth += 1;
+                            break;
+                        }
+                    }
+                }
+            }
+            if next == u16::MAX {
                 break;
             }
             let oname = self.combat.bodies[db].parts[next as usize].name.clone();
@@ -1816,7 +1860,7 @@ impl Sim {
     pub(crate) fn sync_wounds(&mut self, s: usize) {
         let f = &self.combat.f[s];
         let b = f.body;
-        let mut out = Vec::with_capacity(f.wounds.len());
+        let mut out = f.scars.clone();
         if b != u16::MAX {
             let body = &self.combat.bodies[b as usize];
             for w in &f.wounds {
@@ -2570,12 +2614,6 @@ impl Sim {
         self.engage_now(s, now);
     }
 
-    pub(crate) fn body_parts_of(&mut self, unit_id: i32) -> Vec<String> {
-        let Some(&s) = self.unit_slot.get(&unit_id) else { return vec![] };
-        self.ensure_body(s);
-        let b = self.combat.f[s].body as usize;
-        self.combat.bodies[b].parts.iter().map(|p| p.token.clone()).collect()
-    }
 }
 
 /// Pain at which a creature passes out (estimate: 250 + WILLPOWER/10).
