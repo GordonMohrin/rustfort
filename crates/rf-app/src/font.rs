@@ -64,10 +64,6 @@ impl Font {
         Font { tex }
     }
 
-    pub fn is_df(&self) -> bool {
-        self.tex.is_some()
-    }
-
     /// Width in pixels of `s` at `scale`.
     pub fn width(&self, s: &str, scale: f32) -> f32 {
         s.chars().count() as f32 * GW * scale

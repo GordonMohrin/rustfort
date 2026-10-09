@@ -22,6 +22,8 @@ pub struct Args {
     pub cmd: String,
     pub export: Option<PathBuf>,
     pub synthetic: bool,
+    /// Size of the synthetic world (`--size x,y,z` implies `--synthetic`).
+    pub size: (u16, u16, u16),
     pub seed: u64,
     pub ticks: u64,
     pub screenshot: Option<PathBuf>,
@@ -48,7 +50,7 @@ const USAGE: &str = "usage:
   rustfort bench [--export DIR] [--synthetic] [--ticks N] [--seed N]";
 
 fn parse_args() -> Result<Args, String> {
-    let mut a = Args { cmd: "play".into(), seed: 1, ticks: 10_000, frames: 3, gfps: 60, ..Default::default() };
+    let mut a = Args { cmd: "play".into(), seed: 1, ticks: 10_000, frames: 3, gfps: 60, size: (96, 96, 40), ..Default::default() };
     let mut it = std::env::args().skip(1).peekable();
     if let Some(c) = it.peek() {
         if !c.starts_with('-') {
@@ -60,6 +62,15 @@ fn parse_args() -> Result<Args, String> {
         match arg.as_str() {
             "--export" => a.export = Some(PathBuf::from(val("--export")?)),
             "--synthetic" => a.synthetic = true,
+            "--size" => {
+                let v = val("--size")?;
+                let p: Vec<u16> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+                if p.len() != 3 || p.iter().any(|&n| n < 8) {
+                    return Err("--size expects x,y,z (each >= 8)".into());
+                }
+                a.size = (p[0], p[1], p[2]);
+                a.synthetic = true;
+            }
             "--seed" => a.seed = val("--seed")?.parse().map_err(|e| format!("--seed: {e}"))?,
             "--ticks" => a.ticks = val("--ticks")?.parse().map_err(|e| format!("--ticks: {e}"))?,
             "--screenshot" => a.screenshot = Some(PathBuf::from(val("--screenshot")?)),
@@ -104,9 +115,9 @@ fn main() {
         }
     };
     match args.cmd.as_str() {
-        "bench" => bench::run(args.export.as_deref(), args.synthetic, args.ticks, args.seed),
+        "bench" => bench::run(args.export.as_deref(), args.synthetic, args.size, args.ticks, args.seed),
         "play" => {
-            let loaded = load::load_world(args.export.as_deref(), args.synthetic);
+            let loaded = load::load_world(args.export.as_deref(), args.synthetic, args.size);
             let mut conf = macroquad::window::Conf {
                 window_title: format!("Rustfort - {}", loaded.label),
                 window_width: 1600,

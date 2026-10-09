@@ -17,7 +17,6 @@ use rf_gfx::Gfx;
 pub mod col {
     use macroquad::prelude::Color;
     pub const PANEL_BG: Color = Color::new(0.055, 0.050, 0.047, 0.94);
-    pub const PANEL_BG_SOLID: Color = Color::new(0.07, 0.065, 0.06, 1.0);
     pub const BORDER: Color = Color::new(0.47, 0.36, 0.18, 1.0);
     pub const BORDER_HI: Color = Color::new(0.84, 0.66, 0.27, 1.0);
     pub const BUTTON: Color = Color::new(0.16, 0.16, 0.18, 1.0);
@@ -79,9 +78,6 @@ impl UiCtx {
     }
     pub fn line_h(&self) -> f32 {
         (GH + 3.0) * self.scale
-    }
-    pub fn cw(&self) -> f32 {
-        GW * self.scale
     }
 }
 

@@ -165,7 +165,7 @@ fn draw_menu(g: &mut Game) {
     let (sw, sh) = (screen_width(), screen_height());
     draw_rectangle(0.0, 0.0, sw, sh, Color::new(0.0, 0.0, 0.0, 0.5));
     g.ui.block(Rect::new(0.0, 0.0, sw, sh));
-    let (w, h) = (300.0 * s, 210.0 * s);
+    let (w, h) = (360.0 * s, 200.0 * s);
     let r = Rect::new((sw - w) / 2.0, (sh - h) / 2.0, w, h);
     panel(&mut g.ui, r);
     let title = "Rustfort";
@@ -173,7 +173,9 @@ fn draw_menu(g: &mut Game) {
     let bw = w - 60.0 * s;
     let bh = 28.0 * s;
     let bx = r.x + 30.0 * s;
-    let mut by = r.y + 56.0 * s;
+    let sub = crate::ui::clip(&g.label, ((w - 20.0 * s) / (8.0 * s)) as usize);
+    g.font.draw(&sub, r.x + (w - g.font.width(&sub, s)) / 2.0, r.y + 42.0 * s, s, col::TEXT_DIM);
+    let mut by = r.y + 64.0 * s;
     if text_button(&mut g.ui, &g.font, Rect::new(bx, by, bw, bh), "Return to game", BtnState::Normal) {
         g.menu_open = false;
     }

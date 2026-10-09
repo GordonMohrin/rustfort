@@ -13,10 +13,10 @@ pub struct Loaded {
     pub warning: Option<String>,
 }
 
-pub fn load_world(export: Option<&Path>, synthetic: bool) -> Loaded {
+pub fn load_world(export: Option<&Path>, synthetic: bool, size: (u16, u16, u16)) -> Loaded {
     let synth = |warning: Option<String>| {
-        let world = World::synthetic(96, 96, 40);
-        Loaded { label: format!("{} (synthetic 96x96x40)", world.meta.fort_name), world, report: None, warning }
+        let world = World::synthetic(size.0, size.1, size.2);
+        Loaded { label: format!("{} (synthetic {}x{}x{})", world.meta.fort_name, size.0, size.1, size.2), world, report: None, warning }
     };
     if synthetic {
         return synth(None);
