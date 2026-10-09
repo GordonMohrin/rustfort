@@ -289,7 +289,10 @@ fn parse_version(s: &str) -> i32 {
 
 /// Read a module folder's `info.txt` (`[ID]`, `[NUMERIC_VERSION]`, `[NAME]`).
 pub fn read_mod_info(dir: &Path) -> Option<ModInfo> {
-    let bytes = std::fs::read(dir.join("info.txt")).ok()?;
+    // info.txt has no file-name line: its first line is already `[ID:...]`, so prepend an
+    // empty line for `tokenize` (which skips the first line).
+    let mut bytes = vec![b'\n'];
+    bytes.extend(std::fs::read(dir.join("info.txt")).ok()?);
     let (_, toks) = tokenize(&bytes);
     let get = |n: &str| toks.iter().find(|t| t.name == n).map(|t| t.arg(0).to_string()).unwrap_or_default();
     let mi = ModInfo { dir: dir.to_path_buf(), id: get("ID"), numeric_version: parse_version(&get("NUMERIC_VERSION")), name: get("NAME") };
@@ -636,6 +639,7 @@ mod tests {
         let r = resolve_mod_list(&dir, &[]);
         assert!(r.mods.is_empty() && !r.modules.is_empty());
         let all = installed_mods_all(&dir);
+        assert!(!all.is_empty(), "info.txt files must parse");
         if let Some(m) = all.iter().find(|m| m.id == "perspective_walls") {
             let entry = format!("perspective_walls:{}", m.numeric_version);
             let r = resolve_mod_list(&dir, &[entry, "no_such_mod:3".into()]);
