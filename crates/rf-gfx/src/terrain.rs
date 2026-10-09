@@ -1,5 +1,6 @@
 //! Terrain, item and building sprite lookup (DF Premium mapping, see README.md).
 
+use crate::plants::{self, TreeTt};
 use crate::{hash_pos, mat_class, Gfx, MatClass, Sprite};
 use rf_core::{Building, Dig, Item, Pos, Shape, TtMaterial, TtSpecial, World};
 use std::collections::HashMap;
@@ -152,17 +153,65 @@ impl StairSet {
     }
 }
 
-/// One workshop/furnace: sprites by [stage 0..=3][ty 0..=3][tx 0..=2] (ty 0 = row above).
+/// One workshop/furnace/depot: sprites by [stage 0..=3][ty 0..=h][tx 0..w] (ty 0 = the row
+/// above the footprint). 3x3 workshops use `stage:tx:ty`, 5x5 ones (trade depot, siege
+/// workshop) too; 1x1 ones (quern, millstone) use `stage:ty`.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct WorkshopGfx {
+    pub w: usize,
+    pub h: usize,
+    /// Highest stage with sprites (the built look).
+    pub max_stage: usize,
     pub base: Vec<Option<Sprite>>,
     pub overlay: Vec<Option<Sprite>>,
 }
 
 impl WorkshopGfx {
-    fn idx(stage: usize, ty: usize, tx: usize) -> usize {
-        (stage * 4 + ty) * 3 + tx
+    pub(crate) fn idx(&self, stage: usize, ty: usize, tx: usize) -> usize {
+        (stage * (self.h + 1) + ty) * self.w + tx
     }
+}
+
+/// Sprites of simple (non-workshop) buildings, resolved once at load.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct BldGfx {
+    pub farmplot: Option<Sprite>,
+    pub farmplot_planted: Option<Sprite>,
+    pub trap_cage: Option<Sprite>,
+    pub trap_stone: Option<Sprite>,
+    pub trap_weapon: Option<Sprite>,
+    pub plate: Option<Sprite>,
+    pub lever: Option<Sprite>,
+    pub well: Option<Sprite>,
+    /// Stone, wood, metal.
+    pub archery: [Option<Sprite>; 3],
+    pub support: [Option<Sprite>; 3],
+    pub chain: [Option<Sprite>; 2],
+    pub slab: Option<Sprite>,
+    /// Lowered bridges per family (stone, wood, metal, glass):
+    /// [NS_W, NS_CENTER, NS_E, NS_1, WE_N, WE_CENTER, WE_S, WE_1, 1x1].
+    pub bridge: [[Option<Sprite>; 9]; 4],
+    pub road_dirt: Option<Sprite>,
+    pub road_paved: Option<Sprite>,
+}
+
+/// Wall shadows on floors. Sides in order N, S, W, E; `near[side]` = the two tapered ends
+/// (N: [OPEN_NW, OPEN_NE], S: [OPEN_SW, OPEN_SE], W: [OPEN_NW, OPEN_SW], E: [OPEN_NE, OPEN_SE]);
+/// corners NW, NE, SW, SE.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ShadowSet {
+    pub straight: [Option<Sprite>; 4],
+    pub near: [[Option<Sprite>; 2]; 4],
+    pub corner: [Option<Sprite>; 4],
+}
+
+/// Graphics of one typed item subtype (`ITEM_WEAPON_PICK`, `ITEM_ARMOR_COAT`, ...).
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct TypedItem {
+    pub default: Option<Sprite>,
+    pub wood: Option<Sprite>,
+    pub metal: Option<Sprite>,
+    pub artifact: Option<Sprite>,
 }
 
 #[derive(Default)]
@@ -197,6 +246,11 @@ pub(crate) struct Tables {
     pub desig: HashMap<&'static str, Sprite>,
     pub stockpile: Option<Sprite>,
     pub workshops: HashMap<&'static str, WorkshopGfx>,
+    pub bld: BldGfx,
+    pub shadows: ShadowSet,
+    /// Typed item graphics (`ARMOR_GRAPHICS`, `WEAPON_GRAPHICS`, ...) by item subtype token.
+    pub typed: HashMap<String, TypedItem>,
+    pub remains: Option<Sprite>,
     /// Palette-recolorable terrain pages per material class.
     pub pal_pages: HashMap<MatClass, Vec<u16>>,
     pub item_pages: Vec<u16>,
@@ -232,7 +286,19 @@ const WORKSHOP_NAMES: &[(&str, &str)] = &[
     ("MagmaKiln", "FURNACE_KILN_LAVA"),
     ("GlassFurnace", "FURNACE_GLASS"),
     ("MagmaGlassFurnace", "FURNACE_GLASS_LAVA"),
+    ("Quern", "WORKSHOP_QUERN"),
+    ("Millstone", "WORKSHOP_MILLSTONE"),
+    ("Siege", "WORKSHOP_SIEGE"),
+    ("TradeDepot", "TRADE_DEPOT"),
 ];
+
+/// Premium graphics name of a workshop/furnace subtype (or `TradeDepot`).
+pub(crate) fn workshop_gfx_name(sub: &str) -> Option<&'static str> {
+    WORKSHOP_NAMES.iter().find(|(s, _)| *s == sub).map(|(_, n)| *n).or(match sub {
+        "Kennels" => Some("WORKSHOP_KENNEL"),
+        _ => None,
+    })
+}
 
 const WALL_PAGES: &[&str] = &[
     "WALL_STONE",
@@ -320,29 +386,75 @@ impl Tables {
         }
         // Workshops.
         for &(sub, name) in WORKSHOP_NAMES {
-            let mut wg = WorkshopGfx { base: vec![None; 4 * 4 * 3], overlay: vec![None; 4 * 4 * 3] };
-            let mut any = false;
             let ov = format!("{name}_OVERLAY");
-            for (target, nm) in [(0, name), (1, ov.as_str())] {
+            // (target, stage, tx, ty, sprite)
+            let mut parts: Vec<(u8, usize, usize, usize, Sprite)> = Vec::new();
+            for (target, nm) in [(0u8, name), (1, ov.as_str())] {
                 for td in g.db.tiles_named(nm) {
                     let Some(page) = g.page_id(&td.page) else { continue };
-                    let a: Vec<usize> = td.extra.iter().filter_map(|e| e.parse().ok()).collect();
-                    if a.len() < 3 || a[0] > 3 || a[1] > 2 || a[2] > 3 {
+                    // Only the leading numeric args (comments may follow).
+                    let a: Vec<usize> = td.extra.iter().map_while(|e| e.trim().parse().ok()).collect();
+                    let (stage, tx, ty) = match a.len() {
+                        0 | 1 => continue,
+                        2 => (a[0], 0, a[1]),
+                        _ => (a[0], a[1], a[2]),
+                    };
+                    if stage > 3 || tx > 8 || ty > 9 {
                         continue;
                     }
-                    let i = WorkshopGfx::idx(a[0], a[2], a[1]);
-                    let sp = Some(Sprite::simple(page, td.x, td.y));
-                    if target == 0 {
-                        wg.base[i] = sp;
-                    } else {
-                        wg.overlay[i] = sp;
-                    }
-                    any = true;
+                    parts.push((target, stage, tx, ty, Sprite::simple(page, td.x, td.y)));
                 }
             }
-            if any {
-                t.workshops.insert(sub, wg);
+            if parts.is_empty() {
+                continue;
             }
+            let w = parts.iter().map(|p| p.2).max().unwrap_or(0) + 1;
+            let h = parts.iter().map(|p| p.3).max().unwrap_or(1).max(1);
+            let max_stage = parts.iter().filter(|p| p.0 == 0).map(|p| p.1).max().unwrap_or(0);
+            let n = 4 * (h + 1) * w;
+            let mut wg = WorkshopGfx { w, h, max_stage, base: vec![None; n], overlay: vec![None; n] };
+            for (target, stage, tx, ty, s) in parts {
+                let i = wg.idx(stage, ty, tx);
+                if target == 0 {
+                    wg.base[i] = Some(s);
+                } else {
+                    wg.overlay[i] = Some(s);
+                }
+            }
+            t.workshops.insert(sub, wg);
+        }
+        // Simple buildings.
+        let mut b = BldGfx {
+            farmplot: n("FARMPLOT"),
+            farmplot_planted: n("FARMPLOT_PLANTED"),
+            trap_cage: n("TRAP_CAGE"),
+            trap_stone: n("TRAP_STONE"),
+            trap_weapon: n("TRAP_WEAPON"),
+            plate: n("TRAP_PLATE_READY"),
+            lever: n("LEVER_SET"),
+            well: n("BLD_WELL_WITH_ROPE").or(n("BLD_WELL")),
+            archery: [n("BLD_ARCHERY_TARGET_STONE"), n("BLD_ARCHERY_TARGET_WOOD"), n("BLD_ARCHERY_TARGET_METAL")],
+            support: [n("BLD_SUPPORT_STONE"), n("BLD_SUPPORT_WOOD"), n("BLD_SUPPORT_METAL")],
+            chain: [n("BLD_CHAIN_METAL"), n("BLD_CHAIN_ROPE")],
+            slab: n("ITEM_SLAB_BLANK"),
+            road_dirt: n("BLD_DIRT_ROAD"),
+            road_paved: n("BLD_PAVED_ROAD"),
+            ..Default::default()
+        };
+        for (fi, fam) in ["STONE", "WOOD", "METAL", "GLASS"].iter().enumerate() {
+            for (i, suf) in ["NS_W", "NS_CENTER", "NS_E", "NS_1", "WE_N", "WE_CENTER", "WE_S", "WE_1", "1"].iter().enumerate() {
+                b.bridge[fi][i] = n(&format!("BLD_BRIDGE_{fam}_{suf}"));
+            }
+        }
+        t.bld = b;
+        t.remains = n("ITEM_REMAINS");
+        let sides = [("N", "NW", "NE"), ("S", "SW", "SE"), ("W", "NW", "SW"), ("E", "NE", "SE")];
+        for (i, (d, a, b2)) in sides.iter().enumerate() {
+            t.shadows.straight[i] = n(&format!("WALL_SHADOW_STRAIGHT_{d}"));
+            t.shadows.near[i] = [n(&format!("WALL_SHADOW_NEAR_{d}_OPEN_{a}")), n(&format!("WALL_SHADOW_NEAR_{d}_OPEN_{b2}"))];
+        }
+        for (i, c) in ["NW", "NE", "SW", "SE"].iter().enumerate() {
+            t.shadows.corner[i] = n(&format!("WALL_SHADOW_AT_CORNER_{c}"));
         }
         // Palette pages per class.
         let ids = |list: &[&str]| -> Vec<u16> { list.iter().filter_map(|p| g.page_id(p)).collect() };
@@ -390,6 +502,67 @@ impl Tables {
     }
 }
 
+/// Typed item graphics from the item graphics raws:
+/// - `[ARMOR_GRAPHICS:PAGE:x:y:ITEM_ARMOR_COAT]` (also GLOVES/HELM/PANTS/SHOES/SHIELD/FOOD/
+///   TOY/TRAPCOMP/TOOL) with optional material variants like `[SHOES_GRAPHICS_METAL:PAGE:x:y:..]`
+///   or `[TOOL_GRAPHICS_WOOD:ALL:PAGE:x:y]`;
+/// - `[WEAPON_GRAPHICS:ITEM_WEAPON_PICK]` / `[AMMO_GRAPHICS:..]` with `*_DEFAULT`, `*_WOOD`,
+///   `*_ARTIFACT` sub-tokens (`PAGE:x:y`).
+pub(crate) fn typed_items(g: &Gfx, raws: &rf_raws::Raws) -> HashMap<String, TypedItem> {
+    const KINDS: &[&str] = &[
+        "ARMOR_GRAPHICS",
+        "GLOVES_GRAPHICS",
+        "HELM_GRAPHICS",
+        "PANTS_GRAPHICS",
+        "SHOES_GRAPHICS",
+        "SHIELD_GRAPHICS",
+        "FOOD_GRAPHICS",
+        "TOY_GRAPHICS",
+        "TRAPCOMP_GRAPHICS",
+        "TOOL_GRAPHICS",
+        "WEAPON_GRAPHICS",
+        "AMMO_GRAPHICS",
+        "SIEGEAMMO_GRAPHICS",
+    ];
+    // Sprite from the first arg that names a page, followed by x:y.
+    let sp = |t: &rf_raws::Token| -> Option<Sprite> {
+        let i = t.args.iter().position(|a| g.page_id(a).is_some())?;
+        let page = g.page_id(t.arg(i))?;
+        Some(Sprite::simple(page, t.arg_i32(i + 1)?.max(0) as u16, t.arg_i32(i + 2)?.max(0) as u16))
+    };
+    let mut out: HashMap<String, TypedItem> = HashMap::new();
+    for kind in KINDS {
+        for o in raws.of_kind(kind) {
+            let h = o.header();
+            // Header either `SUBTYPE` or `PAGE:x:y:SUBTYPE[:extra]`.
+            let (sub, head) = if h.args.len() >= 4 && g.page_id(h.arg(0)).is_some() { (h.arg(3), sp(h)) } else { (h.arg(0), None) };
+            if sub.is_empty() {
+                continue;
+            }
+            let e = out.entry(sub.to_string()).or_default();
+            e.default = e.default.or(head);
+            for t in &o.tokens[1..] {
+                let n = t.name.as_str();
+                if n.contains("UPRIGHT") || n.contains("WEAPON_TRAP") || n.contains("DIAGONAL") || n.contains("_HEAD") {
+                    continue;
+                }
+                let Some(s) = sp(t) else { continue };
+                if n.ends_with("_WOOD") || n.ends_with("_WOODEN") {
+                    e.wood = e.wood.or(Some(s));
+                } else if n.ends_with("_METAL") || n.ends_with("_MATERIAL") {
+                    e.metal = e.metal.or(Some(s));
+                } else if n.ends_with("_ARTIFACT") {
+                    e.artifact = e.artifact.or(Some(s));
+                } else if n.ends_with("_DEFAULT") {
+                    e.default = e.default.or(Some(s));
+                }
+            }
+        }
+    }
+    out.retain(|_, v| v.default.is_some() || v.wood.is_some() || v.metal.is_some());
+    out
+}
+
 fn first_on_page(g: &Gfx, token: &str) -> Option<Sprite> {
     let page = g.page_id(token)?;
     g.db.tiles.iter().find(|t| t.page == token).map(|t| Sprite::simple(page, t.x, t.y))
@@ -418,7 +591,10 @@ fn floor_kind(world: &World, p: Pos) -> FloorKind {
     if t.hidden() {
         return FloorKind::None;
     }
-    let tt = world.tiletypes.get(t.tt);
+    floor_kind_tt(world.tiletypes.get(t.tt))
+}
+
+fn floor_kind_tt(tt: &rf_core::TiletypeInfo) -> FloorKind {
     if !matches!(tt.shape, Shape::Floor | Shape::Pebbles | Shape::Boulder | Shape::Shrub | Shape::Sapling) {
         return FloorKind::None;
     }
@@ -450,17 +626,135 @@ fn terrain_at(g: &Gfx, world: &World, p: Pos, out: &mut Vec<Sprite>, depth: u8) 
         return;
     }
     let tt = world.tiletypes.get(tile.tt);
-    let start = out.len();
+    let cls = g.tree_tt(tile.tt);
+    if cls != TreeTt::None {
+        tree_tile(g, world, p, tile, tt, cls, h, out, depth);
+    } else {
+        match_shape(g, world, p, tile, tt, h, out, depth);
+    }
+    if depth > 0 {
+        return;
+    }
+    overlays(g, world, tile, tt, out);
+}
+
+/// Look down through open space at `p` (one level, darkened), like DF.
+fn look_down(g: &Gfx, world: &World, p: Pos, out: &mut Vec<Sprite>) {
+    if p.z <= 0 {
+        return;
+    }
+    let s0 = out.len();
+    terrain_at(g, world, p.offset(0, 0, -1), out, 1);
+    for s in &mut out[s0..] {
+        *s = s.mul_tint(DARKEN);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn tree_tile(g: &Gfx, world: &World, p: Pos, tile: &rf_core::Tile, tt: &rf_core::TiletypeInfo, cls: TreeTt, h: u32, out: &mut Vec<Sprite>, depth: u8) {
+    let plant = g.plant_of_mat(tile.mat);
+    let set = &g.plants_t.trees[plant.map(|p| p.tree as usize).unwrap_or(0).min(g.plants_t.trees.len().saturating_sub(1))];
+    let dead = plants::is_dead(tt);
+    let nb = |dx: i16, dy: i16| g.tree_tt_at(world, p.offset(dx, dy, 0));
+    let mask_of = |f: &dyn Fn(TreeTt) -> bool| -> u8 { (f(nb(0, -1)) as u8) | (f(nb(0, 1)) as u8) << 1 | (f(nb(-1, 0)) as u8) << 2 | (f(nb(1, 0)) as u8) << 3 };
+    match cls {
+        TreeTt::Trunk(_) | TreeTt::Thick(_) => {
+            let below = world.tile(p.offset(0, 0, -1)).map(|t| g.tree_tt(t.tt)).unwrap_or_default();
+            let base = !below.is_trunk();
+            if base {
+                // Ground level: the trunk with its roots on the floor of this level.
+                floor_under_tree(g, world, p, h, out);
+                let i = match cls {
+                    TreeTt::Thick(i) => i as usize,
+                    _ => 4,
+                };
+                if let Some(s) = set.base_trunk[i].or(set.trunk[0]) {
+                    out.push(s);
+                }
+            } else {
+                if depth == 0 {
+                    look_down(g, world, p, out);
+                }
+                let s = match cls {
+                    TreeTt::Thick(i) => set.trunk_thick[i as usize],
+                    TreeTt::Trunk(m) => set.trunk[m as usize].or(set.trunk[0]),
+                    _ => None,
+                };
+                out.extend(s);
+            }
+            if !dead {
+                if let TreeTt::Trunk(m) = cls {
+                    let leafy = mask_of(&|c| matches!(c, TreeTt::Twigs | TreeTt::Branches | TreeTt::Heavy(_)));
+                    if m != 0 && leafy != 0 && !base {
+                        out.extend(set.over_trunk[m as usize]);
+                    }
+                }
+            }
+        }
+        TreeTt::Heavy(m) => {
+            if depth == 0 {
+                look_down(g, world, p, out);
+            }
+            out.extend(set.heavy_branch[m as usize].or(set.heavy_branch[15]));
+            if !dead {
+                out.extend(set.over_heavy[m as usize]);
+            }
+        }
+        TreeTt::Branches => {
+            if depth == 0 {
+                look_down(g, world, p, out);
+            }
+            let m = mask_of(&|c| c.is_tree_solid());
+            out.extend(set.branch[m as usize].or(set.branch[0]));
+            if !dead {
+                out.extend(set.twigs_full[(h as usize >> 3) % 4]);
+            }
+        }
+        TreeTt::Twigs => {
+            // Open tile: the renderer draws the level below first (DF's look-down).
+            let m = mask_of(&|c| c.is_tree_solid());
+            let s = if dead {
+                set.leafless[m as usize].or(set.leafless[0])
+            } else if m == 0 {
+                set.twigs_full[(h as usize >> 3) % 4].or(set.twigs[0])
+            } else {
+                set.twigs[m as usize].or(set.twigs[0])
+            };
+            out.extend(s);
+        }
+        TreeTt::CapWall(m) => out.extend(set.cap_wall[m as usize].or(set.cap_pillar)),
+        TreeTt::CapThick(i) => out.extend(set.cap_thick[i as usize].or(set.cap_pillar)),
+        TreeTt::CapPillar => out.extend(set.cap_pillar),
+        TreeTt::CapFloor(v) => out.extend(set.cap_floor[v as usize].or(set.cap_floor[0])),
+        TreeTt::CapRamp => {
+            if depth == 0 {
+                look_down(g, world, p, out);
+            }
+        }
+        TreeTt::TrunkSlope => {
+            floor_under_tree(g, world, p, h, out);
+            out.extend(set.slope_top.or(set.trunk[0]));
+        }
+        TreeTt::None => {}
+    }
+}
+
+/// The floor a tree base stands on: grass outside, dirt below ground.
+fn floor_under_tree(g: &Gfx, world: &World, p: Pos, h: u32, out: &mut Vec<Sprite>) {
+    let t = &g.terrain_t;
+    let outside = world.tile(p).map(|t| t.flags & rf_core::tile_flags::OUTSIDE != 0).unwrap_or(true);
+    let s = if outside { t.grass.center(0, h).or(t.dirt.center(0, h)) } else { t.dirt.center(0, h) };
+    out.extend(s);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn match_shape(g: &Gfx, world: &World, p: Pos, tile: &rf_core::Tile, tt: &rf_core::TiletypeInfo, h: u32, out: &mut Vec<Sprite>, depth: u8) {
+    let t = &g.terrain_t;
     match tt.shape {
         Shape::Empty | Shape::RampTop | Shape::EndlessPit | Shape::None => {
             // Open space: show the level below, darkened (DF's look-down view).
-            if depth == 0 && p.z > 0 && tt.shape != Shape::None {
-                let below = p.offset(0, 0, -1);
-                let s0 = out.len();
-                terrain_at(g, world, below, out, 1);
-                for s in &mut out[s0..] {
-                    *s = s.mul_tint(DARKEN);
-                }
+            if depth == 0 && tt.shape != Shape::None {
+                look_down(g, world, p, out);
             }
         }
         Shape::Floor | Shape::Pebbles | Shape::Boulder | Shape::Shrub | Shape::Sapling | Shape::BrookBed | Shape::BrookTop => {
@@ -476,8 +770,13 @@ fn terrain_at(g: &Gfx, world: &World, p: Pos, out: &mut Vec<Sprite>, depth: u8) 
                         out.push(g.recolor(t.boulders[(h as usize >> 3) % t.boulders.len()], world, tile.mat));
                     }
                 }
-                Shape::Shrub => out.extend(t.shrub),
-                Shape::Sapling => out.extend(t.sapling),
+                Shape::Shrub => {
+                    let pg = g.plant_of_mat(tile.mat);
+                    let dead = matches!(tt.special, TtSpecial::Dead | TtSpecial::SmoothDead);
+                    let s = pg.and_then(|pg| if dead { pg.shrub_dead.or(pg.shrub) } else { pg.shrub });
+                    out.extend(s.or(t.shrub));
+                }
+                Shape::Sapling => out.extend(g.plant_of_mat(tile.mat).and_then(|pg| pg.sapling).or(t.sapling)),
                 _ => {}
             }
         }
@@ -553,14 +852,17 @@ fn terrain_at(g: &Gfx, world: &World, p: Pos, out: &mut Vec<Sprite>, depth: u8) 
             }
         }
         Shape::Branch | Shape::TrunkBranch | Shape::Twig => {
+            // Only without `prepare` (tree tiles are classified there).
             if tt.shape != Shape::Twig {
                 out.extend(t.tree_branch);
             }
         }
     }
-    if depth > 0 {
-        return;
-    }
+}
+
+/// Liquids and designation markers on top of a tile.
+fn overlays(g: &Gfx, _world: &World, tile: &rf_core::Tile, tt: &rf_core::TiletypeInfo, out: &mut Vec<Sprite>) {
+    let t = &g.terrain_t;
     // Liquids.
     let d = tile.liquid_depth();
     if d > 0 {
@@ -593,7 +895,6 @@ fn terrain_at(g: &Gfx, world: &World, p: Pos, out: &mut Vec<Sprite>, depth: u8) 
     if tile.flags & rf_core::tile_flags::DESIG_ENGRAVE != 0 {
         out.extend(t.desig.get("engrave").copied());
     }
-    let _ = start;
 }
 
 fn floor(g: &Gfx, world: &World, p: Pos, mat: u16, tt: &rf_core::TiletypeInfo, h: u32, out: &mut Vec<Sprite>) {
@@ -625,6 +926,15 @@ fn floor(g: &Gfx, world: &World, p: Pos, mat: u16, tt: &rf_core::TiletypeInfo, h
         }
         TtMaterial::Ashes => t.ashes,
         TtMaterial::Driftwood => t.dirt.center(tt.variant, h),
+        // Shrubs/saplings: the ground under the plant is not exported; grass outside, dirt
+        // underground (estimate).
+        TtMaterial::Plant => {
+            if world.tile(p).map(|t| t.flags & rf_core::tile_flags::OUTSIDE != 0).unwrap_or(false) {
+                t.grass.center(0, h)
+            } else {
+                t.dirt.center(0, h)
+            }
+        }
         _ => {
             if matches!(tt.special, TtSpecial::Smooth | TtSpecial::SmoothDead) {
                 t.smooth_floor
@@ -638,27 +948,80 @@ fn floor(g: &Gfx, world: &World, p: Pos, mat: u16, tt: &rf_core::TiletypeInfo, h
         out.extend(t.driftwood);
     }
     // Edge bleeding from higher-priority neighbor floors (grass over dirt over stone).
+    // One pass over the 8 neighbors (index (dy+1)*3 + (dx+1), 4 = this tile).
     let mine = floor_kind(world, p);
+    let mut walls = [false; 9];
     for dy in -1..=1i16 {
         for dx in -1..=1i16 {
             if dx == 0 && dy == 0 {
                 continue;
             }
-            let k = floor_kind(world, p.offset(dx, dy, 0));
-            if k <= mine || k == FloorKind::None {
-                continue;
-            }
-            let set = match k {
-                FloorKind::Grass => &t.grass,
-                FloorKind::Dirt => &t.dirt,
-                _ => &t.stone,
+            let q = p.offset(dx, dy, 0);
+            let ni = ((dy + 1) * 3 + (dx + 1)) as usize;
+            let nt = match world.tile(q) {
+                Some(nt) if !nt.hidden() => nt,
+                _ => {
+                    walls[ni] = true;
+                    continue;
+                }
             };
-            // The piece of the neighbor's 3x3 that lies on this tile.
-            let gx = (1 - dx) as usize;
-            let gy = (1 - dy) as usize;
-            if let Some(s) = set.pieces[gy * 3 + gx] {
-                out.push(s);
+            let ntt = world.tiletypes.get(nt.tt);
+            let k = floor_kind_tt(ntt);
+            let cls = g.tree_tt(nt.tt);
+            // Tree trunks cast their own (base) shadows, not wall shadows.
+            walls[ni] = cls == TreeTt::None && matches!(ntt.shape, Shape::Wall | Shape::None);
+            // Edge bleeding from higher-priority neighbor floors (grass over dirt over stone):
+            // the piece of the neighbor's 3x3 that lies on this tile.
+            if k > mine && k != FloorKind::None {
+                let set = match k {
+                    FloorKind::Grass => &t.grass,
+                    FloorKind::Dirt => &t.dirt,
+                    _ => &t.stone,
+                };
+                if let Some(s) = set.pieces[((1 - dy) * 3 + (1 - dx)) as usize] {
+                    out.push(s);
+                }
             }
+            // Shadows of tree bases next to this floor (TREE_BASE_SHADOW_<dir of this tile>).
+            if cls.is_trunk() && !g.tree_tt_at(world, q.offset(0, 0, -1)).is_trunk() {
+                let pg = world.tile(q).and_then(|t| g.plant_of_mat(t.mat));
+                let set = &g.plants_t.trees[pg.map(|p| p.tree as usize).unwrap_or(0).min(g.plants_t.trees.len().saturating_sub(1))];
+                if let Some(s) = set.base_shadow[((1 - dy) * 3 + (1 - dx)) as usize] {
+                    out.push(s);
+                }
+            }
+        }
+    }
+    wall_shadows(g, &walls, out);
+}
+
+/// Shadows cast by neighboring walls onto a floor (`SHADOWS_WALL` page): straight pieces for
+/// orthogonal walls (tapered `NEAR_<d>_OPEN_<diag>` where the wall run ends), corner pieces
+/// for diagonal walls whose two adjacent sides are open.
+fn wall_shadows(g: &Gfx, w: &[bool; 9], out: &mut Vec<Sprite>) {
+    let sh = &g.terrain_t.shadows;
+    // Neighbor indices: 0 NW, 1 N, 2 NE, 3 W, 5 E, 6 SW, 7 S, 8 SE.
+    let (nw, n, ne, wv, e, sw, s, se) = (w[0], w[1], w[2], w[3], w[5], w[6], w[7], w[8]);
+    // [straight, near_open_a, near_open_b] per side; a/b = the two diagonals of that side.
+    let sides = [(n, nw, ne, 0usize), (s, sw, se, 1), (wv, nw, sw, 2), (e, ne, se, 3)];
+    for (wall, da, db, i) in sides {
+        if !wall {
+            continue;
+        }
+        match (da, db) {
+            (true, true) => out.extend(sh.straight[i]),
+            (false, true) => out.extend(sh.near[i][0].or(sh.straight[i])),
+            (true, false) => out.extend(sh.near[i][1].or(sh.straight[i])),
+            (false, false) => {
+                out.extend(sh.near[i][0].or(sh.straight[i]));
+                out.extend(sh.near[i][1]);
+            }
+        }
+    }
+    // Corners: NW, NE, SW, SE.
+    for (i, (d, a, b)) in [(nw, n, wv), (ne, n, e), (sw, s, wv), (se, s, e)].into_iter().enumerate() {
+        if d && !a && !b {
+            out.extend(sh.corner[i]);
         }
     }
 }
@@ -742,11 +1105,32 @@ fn wall(g: &Gfx, world: &World, p: Pos, mat: u16, tt: &rf_core::TiletypeInfo, h:
 pub(crate) fn item_sprites_for_kind(g: &Gfx, kind: &str) -> [Option<Sprite>; 7] {
     let n = |s: &str| g.named.get(s).copied();
     let classes = [MatClass::Stone, MatClass::Soil, MatClass::Sand, MatClass::Wood, MatClass::Metal, MatClass::Glass, MatClass::Other];
+    // DF item type / building type (upper-cased) -> Premium name stem.
     let k = match kind {
         "ARMORSTAND" => "ARMOR_STAND",
         "WEAPONRACK" => "WEAPON_RACK",
         "BAR" => "BARS",
         "TRAPPARTS" => "MECHANISMS",
+        "ROUGH" => "ROUGH_GEM",
+        "SMALLGEM" => "GEMS",
+        "GEM" => "LARGE_GEM",
+        "ANIMALTRAP" => "ANIMAL_TRAP",
+        "HATCH" => "HATCH_COVER",
+        "TRACTIONBENCH" => "TRACTION_BENCH",
+        "SKIN_TANNED" => "TANNED_SKIN",
+        "TRAPCOMP" => "TRAP_COMPONENT",
+        "GRATEWALL" | "GRATEFLOOR" => "GRATE",
+        "WINDOWGLASS" => "WINDOW_GLASS",
+        "WINDOWGEM" => "WINDOW_GEM",
+        "BOOKCASE" => "CABINET",
+        "COIN" => "COINS_PILE",
+        "EGG" => "EGG_SIZE2",
+        "FOOD" => "PREPARED_MEAL",
+        "POWDER_MISC" => "POWDER",
+        "LIQUID_MISC" => "LIQUID",
+        // Estimate: Premium has no glob (fat/tallow) sprite; a liquid blob is closest.
+        "GLOB" => "LIQUID",
+        "INSTRUMENT" => "INSTRUMENT_STRINGED_HANDHELD",
         k => k,
     };
     let mut out = [None; 7];
@@ -757,15 +1141,28 @@ pub(crate) fn item_sprites_for_kind(g: &Gfx, kind: &str) -> [Option<Sprite>; 7] 
             MatClass::Glass => "GLASS",
             _ => "STONE",
         };
+        let wm = if *c == MatClass::Metal { "METAL" } else { "WOOD" };
         out[i] = match k {
             "DRINK" => n("ITEM_BARREL_WOOD_LIQUID"),
-            "BARREL" => n(&format!("ITEM_BARREL_{}_EMPTY", if *c == MatClass::Metal { "METAL" } else { "WOOD" })),
-            "BIN" => n(&format!("ITEM_BIN_{}_EMPTY", if *c == MatClass::Metal { "METAL" } else { "WOOD" })),
-            "BUCKET" => n(&format!("ITEM_BUCKET_{}", if *c == MatClass::Metal { "METAL" } else { "WOOD" })),
+            "BARREL" => n(&format!("ITEM_BARREL_{wm}_EMPTY")),
+            "BIN" => n(&format!("ITEM_BIN_{wm}_EMPTY")),
+            "BUCKET" => n(&format!("ITEM_BUCKET_{wm}")),
+            "ANIMAL_TRAP" => n(&format!("ITEM_ANIMAL_TRAP_{wm}")),
             "BAG" => n("ITEM_BAG_EMPTY"),
             "SEEDS" => n("SEEDS_FOR_BAG").or(n("ITEM_BAG_IN_USE")),
             "CAGE" => n(&format!("ITEM_CAGE_{}", if *c == MatClass::Stone || *c == MatClass::Other { "WOOD" } else { suffix })),
-            _ => n(&format!("ITEM_{k}_{suffix}")).or(n(&format!("ITEM_{k}"))).or(n(&format!("ITEM_{k}S"))),
+            "ARMOR_STAND" | "WEAPON_RACK" => n(&format!("ITEM_{k}_{suffix}_EMPTY")).or(n(&format!("ITEM_{k}_STONE_EMPTY"))),
+            "TRACTION_BENCH" => n(&format!("ITEM_TRACTION_BENCH_{}_ROPE", if *c == MatClass::Wood { "WOODEN" } else { suffix }))
+                .or(n("ITEM_TRACTION_BENCH_STONE_ROPE")),
+            "SLAB" => n("ITEM_SLAB_BLANK"),
+            "COFFIN" => n(&format!("ITEM_COFFIN_{suffix}")).or(n("ITEM_COFFIN")),
+            // Material families: own suffix, else metal (palette-recolored), else wood
+            // (crafts like amulets/crowns have no stone version).
+            _ => n(&format!("ITEM_{k}_{suffix}"))
+                .or(n(&format!("ITEM_{k}")))
+                .or(n(&format!("ITEM_{k}S")))
+                .or(n(&format!("ITEM_{k}_{}", if *c == MatClass::Wood { "WOOD" } else { "METAL" })))
+                .or(n(&format!("ITEM_{k}_WOOD"))),
         };
     }
     out
@@ -784,6 +1181,48 @@ fn class_index(c: MatClass) -> usize {
 }
 
 pub(crate) fn item(g: &Gfx, world: &World, it: &Item, out: &mut Vec<Sprite>) {
+    // Plant items use their plant's own graphics (PLANT_GRAPHICS PICKED / SEED / GROWTH_PICKED).
+    match it.kind.as_str() {
+        "PLANT" | "SEEDS" | "PLANT_GROWTH" => {
+            let s = match it.kind.as_str() {
+                "PLANT" => g.plant_of_mat(it.mat).and_then(|p| p.picked),
+                "SEEDS" => g.plant_of_mat(it.mat).and_then(|p| p.seed),
+                _ => g.mat_growth.get(it.mat as usize).copied().flatten(),
+            };
+            if let Some(s) = s {
+                out.push(s);
+                return;
+            }
+        }
+        "CORPSE" | "CORPSEPIECE" | "REMAINS" => {
+            if let Some(s) = g.corpse_cache.get(&it.id) {
+                out.push(*s);
+                return;
+            }
+            out.extend(g.terrain_t.remains);
+            return;
+        }
+        _ => {}
+    }
+    // Typed items (weapons, armor, tools, ...) by subtype, in their material.
+    if !it.subtype.is_empty() {
+        if let Some(ti) = g.terrain_t.typed.get(it.subtype.as_str()) {
+            let class = mat_class(world.material(it.mat));
+            let s = if it.flags.artifact && ti.artifact.is_some() {
+                ti.artifact
+            } else {
+                match class {
+                    MatClass::Wood => ti.wood.or(ti.default),
+                    MatClass::Metal => ti.metal.or(ti.default),
+                    _ => ti.default.or(ti.metal),
+                }
+            };
+            if let Some(s) = s.or(ti.wood) {
+                out.push(g.recolor(s, world, it.mat));
+                return;
+            }
+        }
+    }
     let Some(set) = g.item_cache(&it.kind) else { return };
     let c = class_index(mat_class(world.material(it.mat)));
     if let Some(s) = set[c].or(set[0]).or(set[6]) {
@@ -798,31 +1237,111 @@ pub(crate) fn item(g: &Gfx, world: &World, it: &Item, out: &mut Vec<Sprite>) {
 
 pub(crate) fn building(g: &Gfx, world: &World, b: &Building, p: Pos, out: &mut Vec<Sprite>) {
     let t = &g.terrain_t;
-    match b.kind.as_str() {
-        "Workshop" | "Furnace" => {
-            let Some(wg) = t.workshops.get(b.subtype.as_str()) else { return };
-            let lx = (p.x - b.x1) as usize;
-            let ly = (p.y - b.y1) as usize;
-            if lx > 2 || ly > 2 {
-                return;
-            }
-            let stage = if b.built || b.stage < 0 { 3 } else { (b.stage.clamp(0, 2)) as usize };
-            let emit = |ty: usize, dy: i16, out: &mut Vec<Sprite>| {
-                let i = WorkshopGfx::idx(stage, ty, lx);
-                if let Some(s) = wg.base[i] {
-                    out.push(g.recolor(s, world, b.mat).at(0, dy));
-                }
-                if let Some(s) = wg.overlay[i] {
-                    out.push(s.at(0, dy));
-                }
-            };
-            if ly == 0 {
-                emit(0, -1, out);
-            }
-            emit(ly + 1, 0, out);
+    let bl = &t.bld;
+    let class = mat_class(world.material(b.mat));
+    // Stone / wood / metal family index for buildings with three material looks.
+    let swm = match class {
+        MatClass::Wood => 1,
+        MatClass::Metal => 2,
+        _ => 0,
+    };
+    let rc = |s: Option<Sprite>, out: &mut Vec<Sprite>| {
+        if let Some(s) = s {
+            out.push(g.recolor(s, world, b.mat));
         }
+    };
+    let ws_key = match b.kind.as_str() {
+        "Workshop" | "Furnace" => Some(b.subtype.as_str()),
+        "TradeDepot" => Some("TradeDepot"),
+        _ => None,
+    };
+    if let Some(key) = ws_key {
+        let Some(wg) = t.workshops.get(key) else { return };
+        let lx = (p.x - b.x1) as usize;
+        let ly = (p.y - b.y1) as usize;
+        if lx >= wg.w || ly >= wg.h {
+            return;
+        }
+        let built = b.built || b.stage < 0;
+        let stage = if built { wg.max_stage } else { (b.stage.max(0) as usize).min(wg.max_stage.saturating_sub(1)) };
+        let emit = |ty: usize, dy: i16, out: &mut Vec<Sprite>| {
+            let i = wg.idx(stage, ty, lx);
+            if let Some(s) = wg.base[i] {
+                out.push(g.recolor(s, world, b.mat).at(0, dy));
+            }
+            if let Some(s) = wg.overlay[i] {
+                out.push(s.at(0, dy));
+            }
+        };
+        if ly == 0 {
+            emit(0, -1, out);
+        }
+        emit(ly + 1, 0, out);
+        return;
+    }
+    match b.kind.as_str() {
         "Stockpile" => out.extend(t.stockpile),
-        "Civzone" | "FarmPlot" | "Construction" => {}
+        "Civzone" | "Construction" => {}
+        "FarmPlot" => {
+            out.extend(bl.farmplot);
+            if let Some(s) = g.crops_at.get(&p) {
+                out.push(*s);
+            }
+        }
+        "Trap" => {
+            let s = match b.subtype.as_str() {
+                "CageTrap" => bl.trap_cage,
+                "StoneFallTrap" => bl.trap_stone,
+                "WeaponTrap" => bl.trap_weapon,
+                "Lever" => bl.lever,
+                "PressurePlate" => bl.plate,
+                _ => None,
+            };
+            rc(s, out);
+        }
+        "Well" => {
+            rc(bl.well, out);
+        }
+        "ArcheryTarget" => rc(bl.archery[swm], out),
+        "Support" => rc(bl.support[swm], out),
+        "Chain" => out.extend(bl.chain[0]),
+        "Slab" => rc(bl.slab, out),
+        "RoadDirt" => out.extend(bl.road_dirt),
+        "RoadPaved" => rc(bl.road_paved, out),
+        "Bridge" => {
+            let fam = match class {
+                MatClass::Wood => 1,
+                MatClass::Metal => 2,
+                MatClass::Glass => 3,
+                _ => 0,
+            };
+            let set = &bl.bridge[fam];
+            let (w, h) = (b.x2 - b.x1 + 1, b.y2 - b.y1 + 1);
+            // Lowered bridge. The span direction is not exported; a bridge longer north-south
+            // than wide (or square) is drawn as a north-south span (estimate).
+            let i = if w == 1 && h == 1 {
+                8
+            } else if h >= w {
+                if w == 1 {
+                    3
+                } else if p.x == b.x1 {
+                    0
+                } else if p.x == b.x2 {
+                    2
+                } else {
+                    1
+                }
+            } else if h == 1 {
+                7
+            } else if p.y == b.y1 {
+                4
+            } else if p.y == b.y2 {
+                6
+            } else {
+                5
+            };
+            rc(set[i].or(set[1]).or(bl.bridge[0][i]), out);
+        }
         k => {
             // Furniture: same sprites as the item lying around. Item cache is keyed by upper-case kind.
             let mut buf = [0u8; 32];

@@ -26,6 +26,14 @@ pub struct TileGraphicDef {
     pub name: String,
     /// Extra arguments after the name (e.g. workshop `stage:tx:ty`, animation frame).
     pub extra: Vec<String>,
+    /// Module folder the definition came from (e.g. `vanilla_environment`,
+    /// `perspective_walls (25)`).
+    pub module: String,
+}
+
+/// Is this module folder part of vanilla DF (`data/vanilla/...`)? Unknown/empty counts as vanilla.
+pub fn is_vanilla_module(module: &str) -> bool {
+    module.is_empty() || module.starts_with("vanilla_") || module == "examples and notes" || module == "interaction examples"
 }
 
 /// A `[PALETTE:ID]` (palette image: row 0 = colors used in the images, row N = replacements).
@@ -97,15 +105,34 @@ impl GraphicsDb {
                 }
             }
         }
+        // TILE_GRAPHICS: names may repeat (8 boulders, workshop build stages). A mod that
+        // defines a name replaces every earlier definition of that name (DF's override
+        // behavior, e.g. perspective_walls redefines all STONE_WALL_* pieces on its own
+        // WALL_STONE page); among vanilla modules all definitions are kept.
+        let mut all: Vec<TileGraphicDef> = Vec::new();
         for o in raws.of_kind("TILE_GRAPHICS") {
             let h = o.header();
-            let def = TileGraphicDef {
+            all.push(TileGraphicDef {
                 page: h.arg(0).to_string(),
                 x: h.arg_i32(1).unwrap_or(0).max(0) as u16,
                 y: h.arg_i32(2).unwrap_or(0).max(0) as u16,
                 name: h.arg(3).to_string(),
                 extra: h.args.iter().skip(4).cloned().collect(),
-            };
+                module: raws.files.get(o.file as usize).map(|f| f.module.clone()).unwrap_or_default(),
+            });
+        }
+        let mut last_mod: HashMap<&str, &str> = HashMap::new();
+        for d in &all {
+            if !is_vanilla_module(&d.module) {
+                last_mod.insert(d.name.as_str(), d.module.as_str());
+            }
+        }
+        let keep: Vec<bool> = all.iter().map(|d| last_mod.get(d.name.as_str()).map(|m| *m == d.module).unwrap_or(true)).collect();
+        drop(last_mod);
+        for (def, k) in all.into_iter().zip(keep) {
+            if !k {
+                continue;
+            }
             db.tile_index.entry(def.name.clone()).or_default().push(db.tiles.len());
             db.tiles.push(def);
         }

@@ -3,19 +3,39 @@
 rf-gfx reads the graphics raws and PNGs from the user's DF install at runtime (never from the repo) and answers "which sprites do I draw for this tile, unit, item or building". It does not render; rf-app uploads pages as textures and draws the returned `Sprite`s back to front.
 
 ```rust
-let mut gfx = rf_gfx::Gfx::load(&rf_gfx::df_dir())?;   // ~120 ms: raws + page index
+let mut gfx = rf_gfx::Gfx::load_for_world(&rf_gfx::df_dir(), &world)?; // ~150 ms: vanilla + the save's mods
 gfx.prepare(&world);                                    // creates palette variant pages (call again when the world changes)
 for i in 0..gfx.pages.len() { let (w, h, rgba) = gfx.page_rgba(i as u16)?; /* upload */ }
 gfx.terrain(&world, pos, &mut sprites);                 // allocation-free lookups
 ```
 
-Verify visually:
+`Gfx::load(df_dir)` still loads vanilla only (or every installed mod with `RUSTFORT_GFX_MODS=1`).
+
+Verify visually (paths relative to the repo; in a worktree use absolute export paths):
 
 ```
 cargo run -p rf-gfx --release --example preview -- --out target/preview_hall.png --rect 18,22,34,20
-cargo run -p rf-gfx --release --example preview -- --out target/preview_surface.png --z 21 --rect 0,0,40,24
-cargo run -p rf-gfx --release --example preview -- --export ../../export/tileshtulon --out target/fort.png --rect 70,95,48,36
+cargo run -p rf-gfx --release --example preview -- --export export/tileshtulon --out target/fort.png --z 127 --rect 70,88,56,30
+cargo run -p rf-gfx --release --example preview -- --export export/tileshtulon --z 134 --rect 120,40,32,24 --out target/canopy.png
 ```
+
+Preview flags:
+
+- `--mods a:25,b:1` overrides the world's mod list (`--mods none` = vanilla only). Without it the export's `manifest.json` `mods` are used.
+- `--debug-missing` marks every tile, building, item and unit of the level that got no sprite (magenta X) and prints a histogram of the missing kinds; `--scan` does the histogram for all levels (about 25 ms for the real fort). Civzones are skipped (the UI draws zones).
+- `--bench` times `terrain()` for 16 levels around `--z` and `item()`/`unit()` for everything (real fort: about 25 ns per tile, 0.5 ms for a 20k-tile frame).
+- `--half` writes the PNG at half size.
+
+On the v0.1 export of Gordon's fort `--scan` finds 4 sprite-less things left (3 procedural demons, 1 chicken), down from 17,525 (16,804 of them tree canopy tiles).
+
+## Mods (`Gfx::load_with_mods`, `Gfx::load_for_world`)
+
+- `World::meta.mods` (from the export's `manifest.json`, `"id:numeric_version"` in load order) picks exactly those mods from `data/installed_mods`, by `[ID]` and `[NUMERIC_VERSION]` in each folder's `info.txt` (several versions can be installed side by side, e.g. `perspective_walls (23)` and `(25)`). See `rf_raws::resolve_mod_list`.
+  - Vanilla modules named in the list are loaded in list order; if the list names none, all vanilla modules load first.
+  - A missing exact version falls back to the newest installed one (or a Steam workshop copy) and is reported in `Gfx::mod_warnings`; `Gfx::mods_loaded` lists what was loaded.
+  - An empty list = vanilla only.
+- Override rule (`rf_raws::GraphicsDb`): a mod's `[TILE_PAGE:X]` replaces the vanilla page X, and a mod's `[TILE_GRAPHICS]` for a name replaces *every* earlier definition of that name (repeats inside vanilla, like the 8 `BOULDER`s, are kept). This is what makes perspective_walls' `STONE_WALL_*` pieces and interface_tweaks' `BUILDING_ICON_*` win.
+- Gordon's mods: perspective_walls (wall pages with a front face; the generic wall autotiler handles them), reduced_zfog (replaces the z-fog tile, which rf-app draws itself), interface_tweaks (building icons and interface bits; reach them via `ui_icon`/`building_icon`).
 
 ## Pages and palettes
 
@@ -47,8 +67,8 @@ Lookups are driven by the `TiletypeInfo` attributes (shape, material, special, v
 | wall | see below |
 | stairs | `{GRASS,DIRT,STONE,SAND}_STAIR_{UP,DOWN,UPDOWN}`; constructed → `PALETTE_STAIR_*` recolored |
 | ramp | `{STONE,SOIL,GRASS,SAND_BEIGE}_RAMP_WITH_WALL_<dirs>`, see below; fallback `*_RAMP_OTHER` |
-| tree trunk / branches | grass floor plus `TREE_TRUNK_PILLAR` (or `TREE_BASE_TRUNK`); `TREE_BRANCH_NSWE` |
-| shrub / sapling | floor plus `SHRUB` / `SAPLING` |
+| tree trunk / branches / twigs / caps | per plant, see "Trees and plants" below |
+| shrub / sapling | the plant's own `SHRUB` / `SAPLING` (generic ones as fallback), see below |
 | fortification | floor plus `FORTIFICATION` (palette) |
 | liquids | `WATER` / `MAGMA_1`, alpha by depth 1..7 |
 | designations | `DESIGNATION_DIG_STANDARD`, `_CHOP` (tree), `_GATHER` (shrub), `_DIG_CHANNEL`, `_DIG_RAMP`, `_DIG_STAIR_{UP,DOWN,UPDOWN}`; the smooth/engrave flags → `DESIGNATION_SMOOTH` / `_ENGRAVE` |
@@ -72,6 +92,27 @@ Lookups are driven by the `TiletypeInfo` attributes (shape, material, special, v
 - Mineral tiles get the ore vein (or gem) overlay on top. The family is chosen by material class and special: smooth → smoothed, WORN_n → worn, construction → blocks/wood/metal.
 
 **Ramps** use a wall-neighbor mask: orthogonal walls, plus diagonal walls only where both adjacent orthogonals are open. The mask is looked up exactly, then without its diagonals, then falls back to `_RAMP_OTHER`.
+
+**Wall shadows**: floors next to walls (or unrevealed rock) get `WALL_SHADOW_STRAIGHT_<side>`, tapered `WALL_SHADOW_NEAR_<side>_OPEN_<diag>` where the wall run ends, and `WALL_SHADOW_AT_CORNER_<diag>` for lone diagonal walls (page `SHADOWS_WALL`). Tree trunks cast `TREE_BASE_SHADOW_*` instead.
+
+## Trees and plants (`[PLANT_GRAPHICS:<plant>]`)
+
+- The plant of a tile or item comes from its material token `PLANT:<ID>:<MAT>` (resolved per world material in `prepare`). Every tree tiletype is classified once per world tiletype (from DF's tiletype *name*, because a few `direction` attributes in DF's enum are wrong, e.g. `TreeCapWallThickS` says `N`).
+- Plants without own `TREE_TILE`s (oak, chestnut, apricot, ...) use the standard pieces of the `TREES` page; trees with their own page (tower cap, saguaro, pine, ...) use their `TREE_TILE`s, gaps filled from the standard set.
+
+| Tile | Sprites |
+|---|---|
+| trunk at ground level (tile below is no trunk) | floor (grass outside, dirt inside) + `TREE_BASE_TRUNK[_<pos>]`; neighbors get `TREE_BASE_SHADOW_<dir>` |
+| trunk above ground | look-down + `TREE_TRUNK_PILLAR` / `TREE_TRUNK_<NSWE dirs>` (`TreeTrunkBranchN` -> `TREE_TRUNK_N`), thick trunks `TREE_TRUNK_THICK_<pos>`; `TREE_OVERLEAVES_TRUNK_<dirs>` where leaves touch it |
+| directional branch (`TreeBranchNS`, ...) | look-down + `TREE_HEAVY_BRANCH_<dirs>` + `TREE_OVERLEAVES_HEAVY_BRANCH_<dirs>` |
+| light branches (`TreeBranches`) | look-down + `TREE_BRANCH_<mask of solid tree neighbors>` + `TREE_TWIGS_FULL1..4` |
+| twigs (the canopy; open tile, the renderer draws the level below first) | `TREE_TWIGS_<mask>` next to branches/trunk, else `TREE_TWIGS_FULL1..4`; dead trees `TREE_LEAFLESS_TWIGS_*` |
+| mushroom caps | `TREE_CAP_WALL_<dirs>`, `TREE_CAP_WALL_THICK_<pos>`, `TREE_CAP_PILLAR`, `TREE_CAP_FLOOR_n`, `TREE_CAP_RAMP` (empty) |
+| shrub / sapling | the plant's `SHRUB` (`SHRUB_DEAD`) / `SAPLING`, on grass outside or dirt inside (the ground under a plant is not exported) |
+| farm plot | `FARMPLOT` + the plant's `CROP` for each planted seed (seeds inside the plot, `prepare` caches them per tile; ripe look, since growth is not exported), else `FARMPLOT_PLANTED` |
+| items `PLANT` / `SEEDS` / `PLANT_GROWTH` | the plant's `PICKED` / `SEED` / `GROWTH_PICKED` (growth found via the plant raws' `GROWTH_ITEM ... LOCAL_PLANT_MAT:<mat>`) |
+
+Not yet: seasonal leaves (the `TREES_LEAVES`/`_FLOWERS`/`_FRUIT` pages: autumn colors, blossoms, fruit), per-grass `GRASS_1..4`, `TREE_TRUNK_SLOPE_*` beyond the top piece, crop growth stages (`CROP_SPROUT`).
 
 ## Units (`Gfx::unit`)
 
@@ -103,7 +144,20 @@ Lookups are driven by the `TiletypeInfo` attributes (shape, material, special, v
   - The base is recolored by the building material. `<NAME>_OVERLAY` is drawn on top unchanged.
   - Subtypes mapped: Carpenters, Masons, Craftsdwarfs, Still, Kitchen, Butchers, Tanners, Fishery, Farmers, Jewelers, Mechanics, MetalsmithsForge, MagmaForge, Loom, Leatherworks, Clothiers, Dyers, Bowyers, Ashery, Custom, Smelter, MagmaSmelter, WoodFurnace, Kiln, MagmaKiln, GlassFurnace, MagmaGlassFurnace.
   - For the top row of the footprint, an extra sprite with `dy = -1` is pushed.
-- Stockpiles: `STOCKPILE_FLOOR` on each tile. Civzones and farm plots: nothing yet (the UI draws zones).
+- Workshops of other sizes use the same `stage:tx:ty` scheme with the footprint read from the raws: 1x1 `WORKSHOP_QUERN`, `WORKSHOP_MILLSTONE` (`stage:ty`), 5x5 `WORKSHOP_SIEGE` and the trade depot (`TRADE_DEPOT`, building kind `TradeDepot`). Unbuilt workshops use their construction stage (`Building.stage`), built ones the highest stage.
+- Stockpiles: `STOCKPILE_FLOOR` on each tile. Civzones: nothing (the UI draws zones).
+- Traps: `CageTrap` -> `TRAP_CAGE`, `StoneFallTrap` -> `TRAP_STONE`, `WeaponTrap` -> `TRAP_WEAPON`, `Lever` -> `LEVER_SET`, `PressurePlate` -> `TRAP_PLATE_READY`.
+- `Well` -> `BLD_WELL_WITH_ROPE`, `ArcheryTarget` / `Support` -> `BLD_ARCHERY_TARGET_*` / `BLD_SUPPORT_*` (stone/wood/metal), `Chain` -> `BLD_CHAIN_METAL`, `Slab` -> `ITEM_SLAB_BLANK`, roads `BLD_DIRT_ROAD` / `BLD_PAVED_ROAD`.
+- Lowered bridges: `BLD_BRIDGE_<STONE|WOOD|METAL|GLASS>_<NS|WE>_<W|CENTER|E|N|S|1>`. The span direction is not exported; a bridge at least as long north-south as it is wide is drawn as a north-south span (estimate). Raised/retracting bridges are not drawn yet.
+- Item mapping additions: `ROUGH` -> `ITEM_ROUGH_GEM`, `SMALLGEM` -> `ITEM_GEMS`, `ARMORSTAND`/`WEAPONRACK` -> `ITEM_*_<mat>_EMPTY`, crafts without stone versions (amulet, crown, scepter, ...) -> the metal version recolored, `TRACTION_BENCH` -> `ITEM_TRACTION_BENCH_<mat>_ROPE`, `GLOB` -> `ITEM_LIQUID` (estimate, Premium has no glob sprite).
+- **Typed items** (`ARMOR_GRAPHICS`, `GLOVES_`, `HELM_`, `PANTS_`, `SHOES_`, `SHIELD_`, `FOOD_`, `TOY_`, `TRAPCOMP_`, `TOOL_`, `WEAPON_`, `AMMO_GRAPHICS`) are looked up by `Item.subtype` (e.g. `ITEM_WEAPON_PICK`), with the wood/metal/artifact variants, recolored by material.
+- **Corpses** (`CORPSE`, `CORPSEPIECE`, `REMAINS`): the creature's `[CORPSE]` / `[REMAINS]` sprite. The export has no race for these items, so the race is taken from `Item.subtype` if that is a creature token (exporters may put it there), else from the longest creature name in `Item.desc` ("stray horse skeleton" -> `HORSE`, a heuristic). Layered creatures (dwarves) and unknown races get `ITEM_REMAINS`.
+
+## Build menu (`building_ghost`, `building_size`, `building_icon`)
+
+- `Gfx::building_size(kind, subtype) -> (w, h)`: DF's footprint (3x3 workshops/furnaces, 1x1 quern/millstone, 5x5 trade depot/siege workshop, 1x1 otherwise).
+- `Gfx::building_ghost(kind, subtype) -> Vec<Sprite>`: the built look for placement previews, `dx`/`dy` relative to the top-left footprint tile (roof rows at `dy = -1`). Unrecolored; tint it yourself (e.g. alpha 150, red when the spot is invalid). Allocates, so cache it per selected building.
+- `Gfx::building_icon(kind, subtype) -> Option<Sprite>`: `BUILDING_ICON_*` (8x12-px interface tiles combined into one sprite), e.g. `BUILDING_ICON_WORKSHOP_MASON`, `BUILDING_ICON_FURNACE_SMELTER`, `BUILDING_ICON_TRAP_CAGE`, `BUILDING_ICON_BED`, `BUILDING_ICON_TRADE_DEPOT`. Category icons via `ui_icon`: `BUILDING_ICON_WORKSHOPS`, `_WORKSHOPS_FURNACES`, `_WORKSHOPS_FARMING`, `_WORKSHOPS_CLOTHING`, `_FURNITURE`, `_DISPLAY_FURNITURE`, `_DOORS_HATCHES`, `_WALLS_FLOORS`, `_MILITARY`, `_TRAPS`, `_MACHINES_FLUIDS`, `_CAGES_RESTRAINT`. With interface_tweaks loaded, its versions win.
 
 ## UI icons (`Gfx::ui_icon(name)`)
 
@@ -120,9 +174,10 @@ Lookups are driven by the `TiletypeInfo` attributes (shape, material, special, v
 
 ## Known gaps / next steps
 
-- Mods: `RUSTFORT_GFX_MODS=1` loads `data/installed_mods` (newest version per mod id). The save's actual mod list (for example perspective_walls) is not read yet.
+- rf-app still calls `Gfx::load`; switch it to `Gfx::load_for_world(&df, &world)` so the save's mods apply.
 - Floors are drawn as-is (no material tint), as DF does for floors.png. Engraved walls and floors need the engraving data from the export.
-- No wall shadows on floors (`WALL_SHADOW_*`), no `RAMP_OVERLAY`, no tree canopies or leaves, no plant-specific item sprites, no brooks or rivers, no spatter.
+- No `RAMP_OVERLAY` / ramp shadows, no brooks or rivers, no spatter, no vision shadows, no traffic/blueprint overlays (the `DESIGNATION_TRAFFIC_*` icons exist for the UI), no planned-construction look for unbuilt furniture.
 - `USE_STANDARD_PALETTE_FROM_ITEM` (clothing dyed by item material) is drawn uncolored.
-- The look cache is per unit id. A unit that changes profession or equipment keeps its old look until the cache is cleared; there is no public invalidation yet.
-- Workshops with other footprints (1x1 and 5x5 pages: quern, millstone, siege workshop, ...) are not mapped yet.
+- Custom workshops from mods (Crematorium, Armory) need the custom building token, which the export does not carry (`subtype` is `Custom`).
+- The look cache is per unit id. A unit that changes profession or equipment keeps its old look until the cache is cleared; there is no public invalidation yet. Corpse sprites are cached per item id.
+- Procedural creatures (`DEMON_*`, forgotten beasts, ...) have no graphics raws; DF builds those sprites at runtime.
