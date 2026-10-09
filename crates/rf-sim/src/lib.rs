@@ -2550,6 +2550,64 @@ mod tests {
     use super::*;
 
     #[test]
+    fn gait_900_moves_one_tile_per_9_ticks() {
+        let mut w = World::synthetic(48, 48, 20);
+        w.units.truncate(1);
+        let start = w.units[0].pos;
+        let mut sim = Sim::new(w, 1);
+        // Walk east along the hall row: 6 tiles.
+        let path: Vec<u32> = (1..=6).map(|k| sim.world.idx(start.offset(k, 0, 0)).unwrap() as u32).collect();
+        let ai = &mut sim.ai[0];
+        ai.task = Task::Wander;
+        ai.path = path;
+        ai.path_i = 0;
+        ai.wake = 1;
+        // First step on tick 1, then one every 9 ticks: after tick 1 + 9k the unit made k+1 steps.
+        sim.run_ticks(1);
+        assert_eq!(sim.world.units[0].pos, start.offset(1, 0, 0));
+        sim.run_ticks(9 * 3);
+        assert_eq!(sim.world.units[0].pos, start.offset(4, 0, 0));
+        sim.run_ticks(8);
+        assert_eq!(sim.world.units[0].pos, start.offset(4, 0, 0));
+        sim.run_ticks(1);
+        assert_eq!(sim.world.units[0].pos, start.offset(5, 0, 0));
+    }
+
+    #[test]
+    fn gait_fractional_speed_is_exact() {
+        // 950 ticks per 100 tiles: 100 steps take exactly 950 ticks.
+        let mut w = World::synthetic(48, 48, 20);
+        w.units.truncate(1);
+        w.units[0].walk_speed = 950;
+        let mut sim = Sim::new(w, 1);
+        let ai = &mut sim.ai[0];
+        let mut total = 0u64;
+        for _ in 0..100 {
+            let t = ai.speed + ai.frac;
+            ai.frac = t % 100;
+            total += (t / 100) as u64;
+        }
+        assert_eq!(total, 950);
+    }
+
+    #[test]
+    fn herbalist_gathers_shrubs() {
+        let mut w = World::synthetic(48, 48, 20);
+        let shrub = w.tiletypes.by_name("Shrub").unwrap();
+        let hz = (20i16 * 2 / 3) - 4;
+        let p = Pos::new(24 - 5, 24 + 4, hz);
+        w.tile_mut(p).unwrap().tt = shrub;
+        w.units[5].labors.push("HERBALISM".into());
+        let mut sim = Sim::new(w, 2);
+        let plants0 = sim.world.items.iter().filter(|i| i.kind == "PLANT").count();
+        sim.designate(p, p, DesignationKind::GatherPlants);
+        assert_eq!(sim.stats().open_jobs, 6);
+        sim.run_ticks(3000);
+        assert_eq!(sim.world.shape(p), Shape::Floor);
+        assert_eq!(sim.world.items.iter().filter(|i| i.kind == "PLANT").count(), plants0 + 1);
+    }
+
+    #[test]
     fn nav_basics_on_synthetic() {
         let w = World::synthetic(48, 48, 20);
         let sim = Sim::new(w, 1);
