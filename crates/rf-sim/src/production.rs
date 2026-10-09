@@ -282,6 +282,8 @@ pub(crate) struct FTile {
     pub claimed: bool,
     pub blocked_until: u64,
     pub poor: bool,
+    /// Farming skill of the planter when the seed was planted (decides the yield).
+    pub skill: u8,
 }
 
 pub(crate) struct Farm {
@@ -417,6 +419,20 @@ fn furniture_item_for(kind: &str) -> Option<&'static str> {
         "Slab" => "SLAB",
         _ => return None,
     })
+}
+
+/// Harvest yield of one farm tile (wiki "Farming", unfertilized): always 1 plant, plus one more
+/// with 50 % chance for each passed check: skill-in-5, skill-in-10, skill-in-15, skill-in-20 and
+/// (skill capped at 25)-in-75, where `skill` is the planter's Farming rating at planting time.
+pub fn harvest_yield(skill: u32, r: &mut Rng) -> i32 {
+    let mut n = 1;
+    for (d, cap) in [(5, 5), (10, 10), (15, 15), (20, 20), (75, 25)] {
+        let sk = skill.min(cap);
+        if r.below(d) < sk && r.chance(1, 2) {
+            n += 1;
+        }
+    }
+    n
 }
 
 pub(crate) fn compare(op: &str, n: i32, v: i32) -> bool {
@@ -908,7 +924,7 @@ impl Sim {
                 if !info.shape.has_floor() || !soil {
                     continue;
                 }
-                tiles.push(FTile { tile: i as u32, plant: NO_PLANT, ready: 0, claimed: false, blocked_until: 0, poor: sub && info.material == TtMaterial::Soil });
+                tiles.push(FTile { tile: i as u32, plant: NO_PLANT, ready: 0, claimed: false, blocked_until: 0, poor: sub && info.material == TtMaterial::Soil, skill: 0 });
             }
         }
         Farm { bid: b.id, bi, under, tiles }
@@ -1446,7 +1462,8 @@ impl Sim {
     }
 
     /// Find the nearest free item(s) matching `pred` near `site` within component `c`.
-    fn find_items(&self, site: u32, c: u32, now: u64, want: usize, out: &mut Vec<i32>, pred: impl Fn(&Sim, usize) -> bool) {
+    fn find_items(&mut self, site: u32, c: u32, now: u64, want: usize, out: &mut Vec<i32>, pred: impl Fn(&Sim, usize) -> bool) {
+        self.stats.prod_item_scans += 1;
         out.clear();
         let sp = self.nav.xyz(site as usize);
         let mut best: Vec<(i32, i32)> = Vec::new();
@@ -1468,6 +1485,17 @@ impl Sim {
             best.truncate(want);
         }
         out.extend(best.iter().map(|e| e.1));
+    }
+
+    pub(crate) fn try_prod_timed(&mut self, s: usize, now: u64) -> bool {
+        if self.ai[s].labors & labor::ANY_PROD == 0 {
+            return false;
+        }
+        let t = std::time::Instant::now();
+        self.stats.prod_searches += 1;
+        let r = self.try_prod(s, now);
+        self.stats.prod_search_secs += t.elapsed().as_secs_f64();
+        r
     }
 
     /// Look for workshop, farm or construction work (called by idle workers).
@@ -1958,24 +1986,27 @@ impl Sim {
             WK::Plant { bid, k, plant } => {
                 self.destroy_item(wj.items[0]);
                 let grow = self.plant(plant).map(|p| p.growdur).unwrap_or(DEFAULT_GROWDUR) as u64;
+                let skill = self.world.units[self.ai[s].uidx].skill("PLANT").clamp(0, 255) as u8;
                 if let Some(f) = self.prod.farms.iter_mut().find(|f| f.bid == bid) {
                     if let Some(t) = f.tiles.get_mut(k as usize) {
                         t.plant = plant;
                         t.ready = now + grow;
                         t.claimed = false;
+                        t.skill = skill;
                     }
                 }
                 self.add_xp(s, "PLANT", 20);
                 self.prod.done[DONE_PLANT] += 1;
             }
             WK::Harvest { bid, k } => {
-                let rating = self.world.units[self.ai[s].uidx].skill("PLANT").clamp(0, 15);
-                let mut n = (r.below((2 + rating / 3 + 1) as u32) as i32).min(6);
+                let mut n = 0;
                 let mut plant = NO_PLANT;
                 if let Some(f) = self.prod.farms.iter_mut().find(|f| f.bid == bid) {
                     if let Some(t) = f.tiles.get_mut(k as usize) {
                         plant = t.plant;
+                        n = harvest_yield(t.skill as u32, &mut r);
                         if t.poor {
+                            // Poor soil (soil layers outside caverns): -75 %, at least 1.
                             n = (n / 4).max(1);
                         }
                         t.plant = NO_PLANT;

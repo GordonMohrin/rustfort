@@ -37,7 +37,7 @@ fn main() {
         let build = t0.elapsed().as_secs_f64();
         sim.run_ticks(warmup);
         let mut rates = Vec::new();
-        let mut phase_sum = [0.0f64; 4];
+        let mut phase_sum = [0.0f64; 5];
         let before = sim.stats();
         for _ in 0..runs {
             let t = Instant::now();

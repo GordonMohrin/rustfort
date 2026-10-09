@@ -62,12 +62,19 @@ fn main() {
     let month = rf_core::TICKS_PER_MONTH as u64;
     let mut done = 0u64;
     let mut sim_secs = 0.0;
+    let mut phases: Vec<(&'static str, f64)> = Vec::new();
     while done < ticks {
         let n = month.min(ticks - done);
         let t = Instant::now();
         sim.run_ticks(n as u32);
         sim_secs += t.elapsed().as_secs_f64();
         done += n;
+        for (k, (name, v)) in sim.stats().phase_times.iter().enumerate() {
+            if phases.len() <= k {
+                phases.push((*name, 0.0));
+            }
+            phases[k].1 += v;
+        }
         for a in sim.drain_announcements() {
             if a.kind == AnnouncementKind::Death {
                 let cause = a.text.split(" has ").nth(1).unwrap_or(&a.text).trim_end_matches('.').to_string();
@@ -107,6 +114,25 @@ fn main() {
     println!(
         "ran {done} ticks in {wall:.2}s (sim {sim_secs:.2}s) = {:.0} ticks/s",
         done as f64 / sim_secs.max(1e-9)
+    );
+    let st = sim.stats();
+    println!(
+        "phases (us/tick): {}  |  production searches {} ({:.2}s), reagent scans {}, paths {}",
+        phases.iter().map(|(n, v)| format!("{n} {:.2}", v / done as f64 * 1e6)).collect::<Vec<_>>().join(", "),
+        st.prod_searches,
+        st.prod_search_secs,
+        st.prod_item_scans,
+        st.paths
+    );
+    let tk = done as f64;
+    println!(
+        "per tick: decisions {:.2}, steps {:.2}, job searches {:.3}, haul searches {:.3}, need searches {:.3}, items hauled {}",
+        st.decisions as f64 / tk,
+        st.steps as f64 / tk,
+        st.job_searches as f64 / tk,
+        st.haul_searches as f64 / tk,
+        st.need_searches as f64 / tk,
+        st.items_hauled
     );
     println!("citizens: {citizens0} at start, {} alive at end", sim.world.citizens().count());
     if deaths.is_empty() {

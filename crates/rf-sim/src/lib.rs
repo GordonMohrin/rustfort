@@ -224,6 +224,11 @@ pub struct SimStats {
     pub need_searches: u64,
     pub decisions: u64,
     pub steps: u64,
+    /// Production job searches by idle workers, full item scans for reagents, and the
+    /// wall-clock seconds spent in those searches.
+    pub prod_searches: u64,
+    pub prod_item_scans: u64,
+    pub prod_search_secs: f64,
 }
 
 /// A designation job (dig, fell tree, gather plants).
@@ -431,6 +436,8 @@ pub struct Sim {
     foods: Vec<i32>,
     /// Items waiting to be hauled (exact: not stored, not being hauled), with positions.
     haul: Vec<i32>,
+    /// Item index of each `haul` entry (valid until the next compaction, which rebuilds it).
+    haul_ix: Vec<u32>,
     haul_pos: HashMap<i32, u32>,
     haul_cnt: [u32; 17],
     contents: HashMap<i32, Vec<i32>>,
@@ -444,7 +451,7 @@ pub struct Sim {
     n_path: usize,
     failed: Vec<usize>,
     path_cache: HashMap<(u32, u32), Vec<u32>>,
-    phase: [f64; 4],
+    phase: [f64; 5],
     stats: SimStats,
     par_min_paths: usize,
     /// Workshops, farms, orders, construction (see `production`).
@@ -522,6 +529,7 @@ impl Sim {
             drinks: Vec::new(),
             foods: Vec::new(),
             haul: Vec::new(),
+            haul_ix: Vec::new(),
             haul_pos: HashMap::new(),
             haul_cnt: [0; 17],
             chunks: Vec::new(),
@@ -537,7 +545,7 @@ impl Sim {
             n_path: 0,
             failed: Vec::new(),
             path_cache: HashMap::new(),
-            phase: [0.0; 4],
+            phase: [0.0; 5],
             stats: SimStats::default(),
             par_min_paths: PAR_MIN_PATHS,
             prod: production::Prod::default(),
@@ -769,13 +777,13 @@ impl Sim {
 
     /// Advance the simulation by exactly one DF tick.
     pub fn tick(&mut self) {
-        self.phase = [0.0; 4];
+        self.phase = [0.0; 5];
         self.tick_inner();
         self.sync_units();
     }
 
     pub fn run_ticks(&mut self, n: u32) {
-        self.phase = [0.0; 4];
+        self.phase = [0.0; 5];
         for _ in 0..n {
             self.tick_inner();
         }
@@ -919,7 +927,7 @@ impl Sim {
         s.dead_units = self.ai.iter().filter(|a| a.kind == Kind::Dead && self.world.units[a.uidx].flags.dead).count();
         s.items = self.world.items.len();
         s.nav_rebuilds = self.nav.rebuilds;
-        s.phase_times = vec![("think", self.phase[0]), ("paths", self.phase[1]), ("commit", self.phase[2]), ("items", self.phase[3])];
+        s.phase_times = vec![("think", self.phase[0]), ("paths", self.phase[1]), ("commit", self.phase[2]), ("items", self.phase[3]), ("production", self.phase[4])];
         s
     }
 
@@ -1041,7 +1049,9 @@ impl Sim {
         self.world.calendar.advance(1);
         let now = self.ticks;
         if now % production::PROD_PERIOD == 0 {
+            let tp = Instant::now();
             self.production_pass(now);
+            self.phase[4] += tp.elapsed().as_secs_f64();
         }
         let t0 = Instant::now();
         for s in 0..self.ai.len() {
@@ -1409,8 +1419,16 @@ impl Sim {
         let jobs_changed = labors & labor::ANY_JOB != 0 && ai.seen_jobs != self.epoch_jobs;
         let haul_changed = labors & labor::ANY_HAUL != 0 && ai.seen_haul != self.epoch_haul;
         let prod_changed = labors & labor::ANY_PROD != 0 && ai.seen_prod != self.prod.epoch;
-        if jobs_changed || haul_changed || prod_changed || now >= ai.next_search {
-            if self.try_job(s, now) || self.try_prod(s, now) || self.try_haul(s, now) {
+        let periodic = now >= ai.next_search;
+        if jobs_changed || haul_changed || prod_changed || periodic {
+            // Each search only runs when its own work list changed (or periodically).
+            if (jobs_changed || periodic) && self.try_job(s, now) {
+                return;
+            }
+            if (prod_changed || periodic) && self.try_prod_timed(s, now) {
+                return;
+            }
+            if (haul_changed || periodic) && self.try_haul(s, now) {
                 return;
             }
             let (ej, eh, ep) = (self.epoch_jobs, self.epoch_haul, self.prod.epoch);
@@ -2381,8 +2399,10 @@ impl Sim {
         self.foods.retain(|id| idx.contains_key(id));
         self.haul.retain(|id| idx.contains_key(id));
         self.haul_pos.clear();
+        self.haul_ix.clear();
         for (p, &id) in self.haul.iter().enumerate() {
             self.haul_pos.insert(id, p as u32);
+            self.haul_ix.push(idx[&id]);
         }
         self.contents.retain(|cid, _| idx.contains_key(cid));
         for v in self.contents.values_mut() {
@@ -2443,6 +2463,7 @@ impl Sim {
 
     fn rebuild_haul(&mut self) {
         self.haul.clear();
+        self.haul_ix.clear();
         self.haul_pos.clear();
         self.haul_cnt = [0; 17];
         for idx in 0..self.world.items.len() {
@@ -2464,6 +2485,7 @@ impl Sim {
         }
         self.haul_pos.insert(id, self.haul.len() as u32);
         self.haul.push(id);
+        self.haul_ix.push(idx as u32);
         self.haul_cnt[cat as usize] += 1;
         self.epoch_haul += 1;
     }
@@ -2472,6 +2494,7 @@ impl Sim {
         if let Some(p) = self.haul_pos.remove(&id) {
             let p = p as usize;
             self.haul.swap_remove(p);
+            self.haul_ix.swap_remove(p);
             if p < self.haul.len() {
                 self.haul_pos.insert(self.haul[p], p as u32);
             }
@@ -2532,8 +2555,8 @@ impl Sim {
         let up = self.nav.xyz(pos);
         while want != 0 {
             let mut best = (i32::MAX, i32::MAX, 0usize);
-            for &id in &self.haul {
-                let idx = self.item_idx[&id] as usize;
+            for (k, &id) in self.haul.iter().enumerate() {
+                let idx = self.haul_ix[k] as usize;
                 let m = &self.imeta[idx];
                 if want & m.cat.bit() == 0 || m.reserved > 0 || m.blocked_until > now {
                     continue;
