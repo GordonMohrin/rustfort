@@ -15,10 +15,11 @@
 //!   is not used.
 //! - **Farming** (labor Farming (fields)): one seed per farm tile, growth = the plant's
 //!   `growdur` (plump helmet 30 000 ticks), only in the plant's seasons; when a season starts in
-//!   which the planted crop cannot grow, it is destroyed. Harvest yields 0..=6 plants depending
-//!   on skill; underground plots on soil are "poor" (-75 %, at least 1). Only soil/grass tiles
-//!   of a plot are farmed. Seeds come back from brewing and from eating plants raw, capped at
-//!   200 seeds per species.
+//!   which the planted crop cannot grow, it is destroyed. Harvest yield follows the wiki's
+//!   procedure (1 plant + 50 % chances on skill-in-5/10/15/20/75 checks, planter skill at
+//!   planting time; no fertilizer yet); plots on soil layers underground are "poor" (-75 %, at
+//!   least 1). Only soil/grass tiles of a plot are farmed. Seeds come back from brewing and from
+//!   eating plants raw, capped at 200 seeds per species.
 //! - **Wells** work when water at least 3/7 deep (or any 7/7) lies directly below; dwarves drink
 //!   from them when there is no booze (DF prefers alcohol).
 //! - **Work orders**: checked once a day; conditions are compared against the item stock;
@@ -34,8 +35,11 @@
 //! - Work times: brewing/cooking 300 ticks, furniture 400, blocks/pots 300, planting and
 //!   harvesting 100, building a workshop 300, installing furniture 100, a farm plot 200; all
 //!   scaled by skill like the v0.1 designation jobs.
-//! - Harvest yield: `below(2 + rating/3 + 1)` capped at 6 (mean 1 at Dabbling, 3 at Legendary).
-//! - Cavern soil is treated like any soil (all subterranean soil plots are "poor").
+//! - Cavern soil is treated like any soil (all subterranean soil plots are "poor"); crops
+//!   planted before the export are assumed half grown and planted by a Dabbling farmer.
+//! - Brewable plants with a FRUIT growth are brewed from the fruit, others from the plant
+//!   (the exported plant raws have no per-material DRINK_MAT flag in rf-core yet).
+//! - Leaves and flowers are not food; other growths (fruit, bulbs, pods) are eaten raw.
 //! - Construction labor: stone/block material -> Masonry, wood -> Carpentry, furniture ->
 //!   Furniture hauling, farm plot -> Farming.
 //! - Without exported plant raws (v0.1 exports) plant facts come from the material palette
@@ -1989,6 +1993,13 @@ impl Sim {
                     self.prod.shops[si].busy = NONE;
                 }
                 self.order_job_done(order_id);
+            }
+            WK::Plant { bid, k, plant } if self.plant(plant).map(|p| p.seasons & season_bit(self.prod.season) == 0).unwrap_or(true) => {
+                // The season changed while the seed was being brought: keep the seed.
+                self.release_reagent(wj.items[0]);
+                if let Some(t) = self.prod.farms.iter_mut().find(|f| f.bid == bid).and_then(|f| f.tiles.get_mut(k as usize)) {
+                    t.claimed = false;
+                }
             }
             WK::Plant { bid, k, plant } => {
                 self.destroy_item(wj.items[0]);

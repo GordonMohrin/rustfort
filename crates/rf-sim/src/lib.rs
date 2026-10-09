@@ -30,7 +30,11 @@
 //! - Tree felling turns the whole tree into open space and drops logs (one per trunk tile).
 //! - Hauling: one item at a time to the nearest free tile of a stockpile that accepts the
 //!   item's category, using the matching HAUL_* labor.
-//! - No booze: dwarves drink from water (any non-magma liquid next to a walkable tile).
+//! - No booze: dwarves drink from water (any non-magma liquid next to a walkable tile) or a
+//!   working well.
+//! - Production (round 2, see `production`): stills, kitchens, carpenters, masons and
+//!   craftsdwarfs run their job queues and the manager's work orders; farm plots are planted
+//!   and harvested by season; placed buildings are constructed from hauled materials.
 //!
 //! # Estimates and gaps (v0.1)
 //! - Work times are estimates (dig 120 ticks, fell 200, gather 60, scaled by skill as
