@@ -318,6 +318,9 @@ pub fn draw_ghost(g: &mut Game) {
             draw_rectangle(r.x, r.y, r.w, r.h, fill);
             sprites.clear();
             g.gfx.building(&g.sim.world, &tmp, p, &mut sprites);
+            if sprites.is_empty() && o.kind == "FarmPlot" {
+                sprites.extend(g.gfx.named("FARMPLOT"));
+            }
             for sp in sprites.iter() {
                 any |= g.rend.draw_sprite(&g.gfx, &sp.mul_tint(tint), r.x, r.y, tp);
             }
