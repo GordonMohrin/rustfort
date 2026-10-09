@@ -4,7 +4,7 @@
 
 use super::{col, icon_button, panel, BtnState, Ico};
 use crate::font::GH;
-use crate::game::{Game, Submenu, Tool, STOCK_PRESETS};
+use crate::game::{Game, Screen, Submenu, Tool, STOCK_PRESETS};
 use macroquad::prelude::*;
 use rf_sim::DesignationKind;
 
@@ -55,8 +55,8 @@ pub const LEFT: &[ToolButton] = &[
     tb(Action::Citizens, "Citizens", "BUTTON_INFO_CREATURES", Ico::Smiley, "D_UNITLIST", true),
     tb(Action::Tasks, "Tasks (not yet)", "BUTTON_INFO_TASKS", Ico::Glyph(19, [200, 200, 200]), "D_JOBLIST", false),
     tb(Action::Places, "Places (not yet)", "BUTTON_INFO_PLACES", Ico::Glyph(127, [200, 200, 200]), "", false),
-    tb(Action::Labor, "Labor (not yet)", "BUTTON_INFO_LABOR", Ico::Hammer, "", false),
-    tb(Action::WorkOrders, "Work orders (not yet)", "BUTTON_INFO_WORK_ORDERS", Ico::Glyph(240, [220, 200, 150]), "", false),
+    tb(Action::Labor, "Labor", "BUTTON_INFO_LABOR", Ico::Hammer, "D_LABOR", true),
+    tb(Action::WorkOrders, "Work orders", "BUTTON_INFO_WORK_ORDERS", Ico::Glyph(240, [220, 200, 150]), "D_ORDERS", true),
     tb(Action::Nobles, "Nobles (not yet)", "BUTTON_INFO_NOBLES", Ico::Glyph(157, [240, 210, 90]), "", false),
     tb(Action::Objects, "Objects (not yet)", "BUTTON_INFO_OBJECTS", Ico::Glyph(254, [180, 160, 120]), "", false),
     tb(Action::Justice, "Justice (not yet)", "BUTTON_INFO_JUSTICE", Ico::Glyph(241, [200, 200, 220]), "", false),
@@ -68,9 +68,9 @@ pub const CENTER: &[ToolButton] = &[
     tb(Action::Gather, "Gather plants", "BUTTON_DES_GATHER", Ico::Plant, "D_DESIGNATE_GATHER", true),
     tb(Action::Smooth, "Smooth stone (not yet)", "BUTTON_DES_SMOOTH", Ico::Smooth, "D_DESIGNATE_SMOOTH", false),
     tb(Action::Erase, "Erase designations", "BUTTON_DES_ERASE", Ico::Eraser, "D_DESIGNATE_ERASE", true),
-    tb(Action::Build, "Build (not yet)", "BUTTON_BUILDING", Ico::Hammer, "D_BUILDJOB", false),
+    tb(Action::Build, "Build", "BUTTON_BUILDING", Ico::Hammer, "D_BUILDING", true),
     tb(Action::Stockpile, "Stockpiles", "BUTTON_STOCKPILE", Ico::Crate, "D_STOCKPILES", true),
-    tb(Action::Zone, "Zones (not yet)", "BUTTON_ZONE", Ico::Zone, "D_CIVZONE", false),
+    tb(Action::Zone, "Zones", "BUTTON_ZONE", Ico::Zone, "D_CIVZONE", true),
     tb(Action::Burrow, "Burrows (not yet)", "BUTTON_BURROW", Ico::Glyph(176, [200, 160, 120]), "D_BURROWS", false),
     tb(Action::Hauling, "Hauling (not yet)", "BUTTON_HAULING", Ico::Glyph(26, [200, 200, 200]), "", false),
 ];
@@ -115,6 +115,10 @@ fn is_active(g: &Game, a: Action) -> bool {
         Action::Gather => g.tool == Tool::Designate(DesignationKind::GatherPlants),
         Action::Erase => g.tool == Tool::Designate(DesignationKind::Remove) && g.submenu == Submenu::None,
         Action::Stockpile => g.submenu == Submenu::Stockpile,
+        Action::Build => g.submenu == Submenu::Build,
+        Action::Zone => g.submenu == Submenu::Zone,
+        Action::Labor => g.screen == Screen::Labor,
+        Action::WorkOrders => g.screen == Screen::WorkOrders,
         _ => false,
     }
 }
@@ -132,6 +136,10 @@ fn press(g: &mut Game, a: Action) {
         Action::Gather => tool(g, DesignationKind::GatherPlants),
         Action::Erase => tool(g, DesignationKind::Remove),
         Action::Stockpile => g.open_stockpiles(),
+        Action::Build => g.open_build(),
+        Action::Zone => g.open_zones(),
+        Action::Labor => g.toggle_screen(Screen::Labor),
+        Action::WorkOrders => g.toggle_screen(Screen::WorkOrders),
         _ => {}
     }
 }
@@ -188,6 +196,8 @@ pub fn draw_toolbar(g: &mut Game) -> f32 {
     match g.submenu {
         Submenu::Dig => top = draw_dig_menu(g, cx, y),
         Submenu::Stockpile => top = draw_stock_menu(g, cx, y),
+        Submenu::Build => top = super::build::draw_build_menu(g, y),
+        Submenu::Zone => top = super::build::draw_zone_menu(g, y),
         Submenu::None => {
             if let Tool::Designate(k) = g.tool {
                 top = draw_hint(g, cx, y, &format!("{}: drag a rectangle. Right-click cancels.", kind_label(k)));

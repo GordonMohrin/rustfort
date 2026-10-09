@@ -2,9 +2,10 @@
 
 use std::time::Instant;
 
-pub fn run(export: Option<&std::path::Path>, synthetic: bool, size: (u16, u16, u16), ticks: u64, seed: u64) {
+pub fn run(args: &crate::Args) {
+    let (ticks, seed) = (args.ticks, args.seed);
     let t0 = Instant::now();
-    let loaded = crate::load::load_world(export, synthetic, size);
+    let loaded = crate::load::load(args);
     let load_s = t0.elapsed().as_secs_f64();
     if let Some(w) = &loaded.warning {
         eprintln!("note: {w}");

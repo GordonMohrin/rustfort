@@ -18,7 +18,7 @@ const FOG: [f32; 5] = [0.0, 0.42, 0.60, 0.72, 0.82];
 pub struct MapRenderer {
     tex: Vec<Option<Texture2D>>,
     tried: Vec<bool>,
-    buf: Vec<Sprite>,
+    pub buf: Vec<Sprite>,
 }
 
 impl MapRenderer {
@@ -213,7 +213,7 @@ pub fn visible_range(g: &Game) -> (i16, i16, i16, i16) {
 
 /// Integer screen rect of map tile (x, y), seamless at any zoom.
 #[inline]
-fn tile_rect(g: &Game, x: i16, y: i16) -> Rect {
+pub fn tile_rect(g: &Game, x: i16, y: i16) -> Rect {
     let a = g.cam.to_screen(x as f32, y as f32);
     let b = g.cam.to_screen(x as f32 + 1.0, y as f32 + 1.0);
     let (ax, ay) = (a.x.floor(), a.y.floor());
@@ -237,12 +237,16 @@ pub fn draw_map(g: &mut Game) {
         .buildings
         .iter()
         .enumerate()
-        .filter(|(_, b)| b.z == z && b.x2 >= x0 && b.x1 < x1 && b.y2 >= y0 && b.y1 < y1)
+        .filter(|(_, b)| b.z == z && b.kind != "Civzone" && b.x2 >= x0 && b.x1 < x1 && b.y2 >= y0 && b.y1 < y1)
         .map(|(i, _)| i)
         .collect();
     for bi in blds {
         draw_building(g, &mut sprites, bi);
     }
+    // ---- zones (only in zone mode / when selected, like DF)
+    g.rend.buf = std::mem::take(&mut sprites);
+    crate::ui::build::draw_zones(g, x0, y0, x1, y1);
+    sprites = std::mem::take(&mut g.rend.buf);
     // ---- items on the ground
     let tp = g.cam.tile_px();
     let world = &g.sim.world;
@@ -312,6 +316,7 @@ pub fn draw_map(g: &mut Game) {
         }
     }
     g.rend.buf = sprites;
+    crate::ui::build::draw_ghost(g);
     draw_selection_and_cursor(g);
 }
 
@@ -601,9 +606,19 @@ fn stockpile_color(b: &Building) -> [u8; 3] {
     [200, 190, 150]
 }
 
+/// Not yet constructed: workshops show DF's construction-stage sprites; everything else is
+/// drawn translucent. Both get a small hammer marker.
+fn unbuilt(b: &Building) -> bool {
+    !b.built && b.kind != "Stockpile" && b.kind != "Civzone"
+}
+
 fn draw_building(g: &mut Game, sprites: &mut Vec<Sprite>, bi: usize) {
     let tp = g.cam.tile_px();
     let b = &g.sim.world.buildings[bi];
+    let ghost = unbuilt(b);
+    let staged = matches!(b.kind.as_str(), "Workshop" | "Furnace");
+    let fade = if ghost && !staged { [255, 255, 255, 130] } else { [255; 4] };
+    let selected = g.selected == Selected::Building(b.id);
     // Ask rf-gfx for every tile first; if it knows the building, it draws all of it.
     let mut any = false;
     for y in b.y1..=b.y2 {
@@ -614,14 +629,57 @@ fn draw_building(g: &mut Game, sprites: &mut Vec<Sprite>, bi: usize) {
             }
             sprites.clear();
             g.gfx.building(&g.sim.world, b, p, sprites);
+            if sprites.is_empty() && b.kind == "FarmPlot" {
+                if let Some(sp) = g.gfx.named("FARMPLOT") {
+                    sprites.push(sp);
+                }
+            }
             let r = tile_rect(g, x, y);
             for s in sprites.iter() {
-                any |= g.rend.draw_sprite(&g.gfx, s, r.x, r.y, tp);
+                any |= g.rend.draw_sprite(&g.gfx, &s.mul_tint(fade), r.x, r.y, tp);
             }
         }
     }
     if any {
+        let b = &g.sim.world.buildings[bi];
+        if b.kind == "FarmPlot" {
+            draw_crop_marker(g, bi);
+        }
+        let b = &g.sim.world.buildings[bi];
+        if ghost {
+            construction_marker(g, b.x1, b.y1, b.x2, b.y2);
+        }
+        if selected {
+            let b = &g.sim.world.buildings[bi];
+            outline(g, b.x1, b.y1, b.x2, b.y2, Color::from_rgba(255, 230, 80, 255));
+        }
         return;
+    }
+    // No map sprite (weapon racks, armor stands, traps, ...): DF's building-menu icon is a
+    // better stand-in than a glyph.
+    let b = &g.sim.world.buildings[bi];
+    if b.kind != "Stockpile" && b.kind != "FarmPlot" && b.kind != "Civzone" {
+        let icon = crate::ui::build::option_icon(&b.kind, &b.subtype);
+        if g.gfx.ui_icon(&icon).is_some() {
+            let (x1, y1, x2, y2) = (b.x1, b.y1, b.x2, b.y2);
+            let a = g.cam.to_screen(x1 as f32, y1 as f32);
+            let e = g.cam.to_screen(x2 as f32 + 1.0, y2 as f32 + 1.0);
+            let alpha = if ghost { 0.55 } else { 1.0 };
+            if x1 != x2 || y1 != y2 {
+                draw_rectangle(a.x, a.y, e.x - a.x, e.y - a.y, Color::new(0.30, 0.22, 0.14, 0.55 * alpha));
+                draw_rectangle_lines(a.x, a.y, e.x - a.x, e.y - a.y, 1.0, Color::new(0.65, 0.5, 0.3, 0.8 * alpha));
+            }
+            let sz = tp.min(e.x - a.x).min(e.y - a.y);
+            let ir = Rect::new((a.x + e.x - sz) / 2.0, (a.y + e.y - sz) / 2.0, sz, sz);
+            crate::ui::draw_icon(&g.gfx, &mut g.rend, &icon, ir, Color::new(1.0, 1.0, 1.0, alpha));
+            if ghost {
+                construction_marker(g, x1, y1, x2, y2);
+            }
+            if selected {
+                outline(g, x1, y1, x2, y2, Color::from_rgba(255, 230, 80, 255));
+            }
+            return;
+        }
     }
     let is_pile = b.kind == "Stockpile";
     let is_zone = b.kind == "Civzone";
@@ -670,6 +728,59 @@ fn draw_building(g: &mut Game, sprites: &mut Vec<Sprite>, bi: usize) {
     let cx = (a.x + e.x) / 2.0 - cw / 2.0;
     let cy = (a.y + e.y) / 2.0 - ch / 2.0;
     g.font.glyph(code, cx, cy, cw, ch, Color::new(col.r, col.g, col.b, if is_pile { 0.75 } else { 1.0 }));
+    let b = &g.sim.world.buildings[bi];
+    let (bx1, by1, bx2, by2) = (b.x1, b.y1, b.x2, b.y2);
+    if unbuilt(b) {
+        construction_marker(g, bx1, by1, bx2, by2);
+    }
+    if g.selected == Selected::Building(b.id) {
+        outline(g, bx1, by1, bx2, by2, Color::from_rgba(255, 230, 80, 255));
+    }
+}
+
+/// Yellow corner brackets around a building's footprint (selection).
+fn outline(g: &Game, x1: i16, y1: i16, x2: i16, y2: i16, c: Color) {
+    let a = g.cam.to_screen(x1 as f32, y1 as f32);
+    let e = g.cam.to_screen(x2 as f32 + 1.0, y2 as f32 + 1.0);
+    let r = Rect::new(a.x, a.y, e.x - a.x, e.y - a.y);
+    corners(r, c, (g.cam.tile_px() / 2.5).max(4.0));
+}
+
+/// Dashed yellow frame plus a hammer glyph: "waiting for construction".
+fn construction_marker(g: &Game, x1: i16, y1: i16, x2: i16, y2: i16) {
+    let a = g.cam.to_screen(x1 as f32, y1 as f32);
+    let e = g.cam.to_screen(x2 as f32 + 1.0, y2 as f32 + 1.0);
+    let c = Color::new(1.0, 0.82, 0.25, 0.9);
+    let dash = (g.cam.tile_px() / 4.0).max(3.0);
+    let mut x = a.x;
+    while x < e.x {
+        let x2 = (x + dash).min(e.x);
+        draw_line(x, a.y + 1.0, x2, a.y + 1.0, 2.0, c);
+        draw_line(x, e.y - 1.0, x2, e.y - 1.0, 2.0, c);
+        x += dash * 2.0;
+    }
+    let mut y = a.y;
+    while y < e.y {
+        let y2 = (y + dash).min(e.y);
+        draw_line(a.x + 1.0, y, a.x + 1.0, y2, 2.0, c);
+        draw_line(e.x - 1.0, y, e.x - 1.0, y2, 2.0, c);
+        y += dash * 2.0;
+    }
+    let sz = (g.cam.tile_px() * 0.55).max(8.0);
+    crate::ui::draw_fallback_icon(&g.font, crate::ui::Ico::Hammer, e.x - sz - 2.0, a.y + 2.0, sz, sz);
+}
+
+/// Farm plots: the current season's crop as a tiny label/glyph (DF shows planted crops).
+fn draw_crop_marker(g: &Game, bi: usize) {
+    let b = &g.sim.world.buildings[bi];
+    let season = (g.sim.world.calendar.month() / 3).clamp(0, 3) as usize;
+    let crop = b.crops.get(season).map(|s| s.as_str()).unwrap_or("");
+    if crop.is_empty() || g.cam.tile_px() < 16.0 {
+        return;
+    }
+    let a = g.cam.to_screen(b.x1 as f32, b.y1 as f32);
+    let name = g.sim.world.plant_raws.iter().find(|p| p.token == crop).map(|p| p.name.clone()).unwrap_or_else(|| crate::ui::pretty(crop).to_lowercase());
+    g.font.draw_shadow(&crate::ui::clip(&name, 18), a.x + 2.0, a.y + 2.0, 1.0, Color::from_rgba(170, 240, 120, 255));
 }
 
 fn building_glyph(b: &Building) -> u8 {
@@ -792,7 +903,8 @@ fn draw_selection_and_cursor(g: &mut Game) {
     }
     let tool_on = g.tool != Tool::None;
     // Rectangle being placed.
-    if let (Some(d), Some(h)) = (g.drag, g.hover) {
+    let build_tool = matches!(g.tool, Tool::Build(_));
+    if let (Some(d), Some(h), false) = (g.drag, g.hover, build_tool) {
         let (lo, hi) = (
             Pos::new(d.a.x.min(h.x), d.a.y.min(h.y), d.a.z.min(h.z)),
             Pos::new(d.a.x.max(h.x), d.a.y.max(h.y), d.a.z.max(h.z)),
@@ -801,6 +913,7 @@ fn draw_selection_and_cursor(g: &mut Game) {
         let b = g.cam.to_screen(hi.x as f32 + 1.0, hi.y as f32 + 1.0);
         let c = match g.tool {
             Tool::Stockpile(_) => Color::new(0.85, 0.80, 0.55, 1.0),
+            Tool::Zone(_) => Color::new(0.45, 0.95, 0.45, 1.0),
             Tool::Designate(rf_sim::DesignationKind::Remove) => Color::new(1.0, 0.45, 0.45, 1.0),
             _ => Color::new(1.0, 0.85, 0.25, 1.0),
         };
@@ -823,7 +936,9 @@ fn draw_selection_and_cursor(g: &mut Game) {
     // Hover cursor.
     if let Some(h) = g.hover {
         let r = tile_rect(g, h.x, h.y);
-        if tool_on {
+        if build_tool {
+            // The placement ghost is the cursor.
+        } else if tool_on {
             draw_rectangle(r.x, r.y, r.w, r.h, Color::new(1.0, 0.85, 0.25, 0.18));
             draw_rectangle_lines(r.x, r.y, r.w, r.h, 2.0, Color::new(1.0, 0.85, 0.25, 1.0));
         } else {

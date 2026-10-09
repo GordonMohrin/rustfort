@@ -222,7 +222,9 @@ impl Bindings {
             [BIND:D_STOCKPILES:REPEAT_NOT][SYM:0:p][BIND:D_UNITLIST:REPEAT_NOT][SYM:0:u]\
             [BIND:DESIGNATE_DIG:REPEAT_NOT][SYM:0:m][BIND:DESIGNATE_STAIR_UPDOWN:REPEAT_NOT][SYM:0:t]\
             [BIND:DESIGNATE_RAMP:REPEAT_NOT][SYM:0:r][BIND:DESIGNATE_CHANNEL:REPEAT_NOT][SYM:0:u]\
-            [BIND:DESIGNATE_DIG_REMOVE_STAIRS_RAMPS:REPEAT_NOT][SYM:0:x]";
+            [BIND:DESIGNATE_DIG_REMOVE_STAIRS_RAMPS:REPEAT_NOT][SYM:0:x]\
+            [BIND:D_BUILDING:REPEAT_NOT][SYM:0:b][BIND:D_CIVZONE:REPEAT_NOT][SYM:0:z]\
+            [BIND:D_ORDERS:REPEAT_NOT][SYM:0:o][BIND:D_LABOR:REPEAT_NOT][SYM:0:y]";
         Bindings { map: parse(text), source: "built-in defaults".into(), hold_ms: 300.0, repeat_ms: 90.0 }
     }
 
@@ -247,6 +249,8 @@ impl Bindings {
         add("RF_SPEED_2", Trigger::Key { mods: 0, key: KeyCode::Key2 });
         add("RF_SPEED_3", Trigger::Key { mods: 0, key: KeyCode::Key3 });
         add("RF_SPEED_4", Trigger::Key { mods: 0, key: KeyCode::Key4 });
+        // F5 quicksaves (DF binds F5 to a map hotkey, which Rustfort does not use).
+        add("RF_QUICKSAVE", Trigger::Key { mods: 0, key: KeyCode::F5 });
     }
 
     pub fn triggers(&self, name: &str) -> &[Trigger] {

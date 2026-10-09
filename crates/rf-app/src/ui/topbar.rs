@@ -3,8 +3,55 @@
 
 use super::{col, panel, text_button, BtnState};
 use crate::font::GH;
-use crate::game::{date_string, season_string, Game, Speed, ZClass};
+use crate::game::{date_string, season_string, Game, Speed, Stocks, ZClass};
 use macroquad::prelude::*;
+use rf_core::World;
+
+/// Item kinds DF counts as food (prepared meals and raw edibles). PLANT and PLANT_GROWTH
+/// only count when the plant raw says they are edible raw or cooked.
+const FOOD_KINDS: &[&str] = &["FOOD", "MEAT", "FISH", "CHEESE", "EGG", "PLANT", "PLANT_GROWTH"];
+
+/// Drinks (sum of stack sizes, like DF's stocks screen), food units and food variety
+/// (distinct edible materials). Rotten and dumped items do not count.
+pub fn count_stocks(w: &World, now: f64) -> Stocks {
+    let mut st = Stocks { at: now, ..Default::default() };
+    let mut kinds: Vec<(u16, u8)> = Vec::new();
+    for it in &w.items {
+        if it.flags.rotten || it.flags.dump || it.flags.construction {
+            continue;
+        }
+        let k = it.kind.as_str();
+        if k == "DRINK" {
+            st.drinks += it.stack.max(1);
+            continue;
+        }
+        let Some(ki) = FOOD_KINDS.iter().position(|f| *f == k) else { continue };
+        if (k == "PLANT" || k == "PLANT_GROWTH") && !plant_edible(w, it.mat) {
+            continue;
+        }
+        st.food += it.stack.max(1);
+        let key = (it.mat, ki as u8);
+        if !kinds.contains(&key) {
+            kinds.push(key);
+        }
+    }
+    st.food_kinds = kinds.len();
+    st
+}
+
+/// Edibility of a plant material (`PLANT:<token>:...`) from the save's plant raws; without
+/// plant raws (old exports) every plant counts.
+fn plant_edible(w: &World, mat: u16) -> bool {
+    if w.plant_raws.is_empty() {
+        return true;
+    }
+    let Some(m) = w.material(mat) else { return true };
+    let tok = m.token.split(':').nth(1).unwrap_or("");
+    match w.plant_raws.iter().find(|p| p.token == tok) {
+        Some(p) => p.edible_raw || p.edible_cooked,
+        None => true,
+    }
+}
 
 pub const TOPBAR_H: f32 = 30.0;
 pub const ZBAR_W: f32 = 14.0;
@@ -75,8 +122,31 @@ pub fn draw_topbar(g: &mut Game) {
     let pw = g.font.width(&popt, s);
     let rx = sw - ZBAR_W * s - 12.0 * s - zw;
     g.font.draw(&ztxt, rx, ty, s, col::TEXT_HI);
-    let px = rx - pw - 22.0 * s;
+    let mut px = rx - pw - 22.0 * s;
     g.font.draw(&popt, px, ty, s, col::TEXT);
+    // Stocks: drinks and food (red when below 2 per citizen).
+    let st = g.stocks;
+    let low = (pop as i32 * 2).max(10);
+    let mut food_t = format!("Food {} ({} kinds)", st.food, st.food_kinds);
+    let drink_t = format!("Drink {}", st.drinks);
+    let dw = g.font.width(&drink_t, s);
+    if px - g.font.width(&food_t, s) - dw - 36.0 * s < x + 8.0 * s {
+        food_t = format!("Food {} ({})", st.food, st.food_kinds);
+    }
+    let fw = g.font.width(&food_t, s);
+    let sx = px - fw - dw - 36.0 * s;
+    if sx > x + 8.0 * s {
+        let dc = if st.drinks < low { col::TEXT_BAD } else { col::TEXT_CYAN };
+        let fc = if st.food < low { col::TEXT_BAD } else { col::TEXT_GOOD };
+        g.font.draw(&drink_t, sx, ty, s, dc);
+        g.font.draw(&food_t, sx + dw + 14.0 * s, ty, s, fc);
+        let sr = Rect::new(sx, 0.0, dw + fw + 14.0 * s, h);
+        if g.ui.hovered(sr) {
+            let tip = format!("Stocks: {} drinks, {} food in {} kinds (recounted every second)", st.drinks, st.food, st.food_kinds);
+            g.ui.tooltip = Some((tip, vec2(sx, h + 26.0 * s)));
+        }
+        px = sx;
+    }
 
     // Speed telemetry: ticks/s actually achieved vs target (dropped when there is no room).
     let target = if g.paused { 0.0 } else { g.speed.tps().unwrap_or(f64::INFINITY) };
