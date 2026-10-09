@@ -3,6 +3,9 @@
 //! dims, counts, citizens, item/building histograms, mods, work orders, workshop job queues,
 //! farm plots with crops, wells, drink/food stock, burrows/squads, walk speeds, tile histograms
 //! per z-range and an ASCII map of the z-level with the most citizens (or `--z N`).
+//! Round 3: stress categories, needs, most common thoughts, relationships, wounds, hostiles,
+//! squads (members, orders, uniform), burrows, creature raws with body part counts, the dwarf
+//! body part list, weapon/armor raws, material mechanics, corpses and aquifer tiles.
 
 use rf_core::{Pos, Shape, TtMaterial, World, NO_MAT};
 use std::collections::BTreeMap;

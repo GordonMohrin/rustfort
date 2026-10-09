@@ -6,6 +6,11 @@
 //! material or tiletype ids are replaced, missing z-files become hidden void, and every such
 //! repair is listed in [`ImportReport::warnings`]. Only a missing/unreadable `manifest.json`
 //! or `tiletypes.json` is a hard error.
+//!
+//! Optional files are loaded when present: round 2 (`work_orders.jsonl`, `plant_raws.json`) and
+//! round 3 (`creature_raws.json`, `weapon_raws.json`, `armor_raws.json`, and `squads.json` /
+//! `burrows.json` into `World::squads` / `World::burrows`; the round-2 layout of the last two
+//! loads as well).
 
 use rf_core::{
     tile_flags, ArmorRaw, Building, Burrow, Calendar, CreatureRaw, Dims, Item, MaterialInfo, Meta, Plant, Pos, Shape, Squad,

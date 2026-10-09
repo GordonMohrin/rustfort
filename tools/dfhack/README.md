@@ -48,7 +48,7 @@ Then load it in Rust:
 
 ```bash
 export PATH="$HOME/.cargo/bin:$PATH"
-cargo run -p rf-import --release --example inspect -- "$REPO/export/tileshtulon"   # incl. mods, work orders, workshop queues,
+cargo run -p rf-import --release --example inspect -- "$REPO/export/tileshtulon"   # incl. mods, work orders, workshop queues, needs/thoughts, wounds, raws,
                                                                                   # farm plots, wells, drink/food stock, burrows, squads
 RUSTFORT_EXPORT="$REPO/export/tileshtulon" cargo test -p rf-import    # includes the real-export test
 ```
@@ -97,6 +97,48 @@ Measured on Trussroads (10.10.2026, 00:10, year 274, game running):
 
 Verification (`spotcheck`, see below): a `--skip-map` export followed directly by `rustfort-verify.lua` (37 ticks apart): **orders 41/41**, **farm crops 28/28**, **mods 25/25**, **workshop job counts 28/29** (one mason finished a job in those 37 ticks), plant raws 225/225, units/citizens/buildings/plants identical, 375/375 tiles. The verify script counts jobs through a different path than the exporter (the global job list `world.jobs.list` + `dfhack.job.getHolder`). Against the full export (about 6 000 ticks later) the orders still matched 42/42 (amount_left had moved on for three), 2 of 28 farm plots had been replanted by then.
 
+## Round 3 (rev 2026-10-10b): psychology, bodies, raws, military
+
+The exporter now also writes (format: `docs/EXPORT_FORMAT.md`, "Additions for round 3"):
+
+- `units.jsonl`: `needs`, `emotions`, `values`, `relationships` (family links, siblings, friends/acquaintances with love/trust/meet counts), `wounds` (one entry per wound layer), `blood`/`blood_max`, `squad_position`, `invader_civ`; `body_size` is now in cm³.
+- `creature_raws.json`: fully expanded bodies (parts, tissue layers with palette materials, flags), attacks and caste flags for the races on the map, the corpses on the map and the world's civilizations.
+- `weapon_raws.json`, `armor_raws.json`: all item definitions (weapons, ammo, trap components; armor, helms, gloves, shoes, pants, shields).
+- `materials.json`: density, shear/impact yield/fracture/strain, max edge, value, heat points.
+- `squads.json` (members by position, current orders, uniform, alert routine) and `burrows.json` (tile lists) as `rf_core::Squad` / `rf_core::Burrow`.
+- corpse/remains items carry the creature token in `subtype`; map flag bit 14 = heavy aquifer.
+
+Where the data comes from in DF 53.16 / DFHack 53.16-r2:
+
+| data | source |
+|---|---|
+| needs, emotions, values, stress | `unit.status.current_soul.personality.needs/emotions/values`; `dfhack.units.getStressCategory`, `getStressCutoffs` |
+| family | `historical_figure.histfig_links` (`df.histfig_hf_link_type`); siblings through the parents' `CHILD` links |
+| friends, acquaintances | `historical_figure.info.relationships.hf_visual[i]`: `core.love/trust/respect/loyalty/fear`, `meet_count` (DF 53 has no rank: `rank` is -1 everywhere) |
+| wounds | `unit.body.wounds[i]` (`flags`, `pain`, `age`, attacker) and `.parts[j]` (`body_part_id`, `layer_idx`, `flags1/2`, `bleeding`, `pain`, `surface_perc`, ...) |
+| bodies | `caste.body_info.body_parts[i]` (`token`, `con_part_id`, `relsize`, `flags`, `layers[k]` with `tissue_id` → `creature.tissue`), `body_info.attacks` |
+| item raws | `world.raws.itemdefs.weapons/ammo/trapcomps/armor/helms/gloves/shoes/pants/shields` |
+| mechanics | `material.solid_density`, `material.strength.yield/fracture/strain_at_yield[df.strain_type]`, `max_edge`, `material_value`, `material.heat` |
+| squads | `squad.positions[i].occupant` / `.equipment.uniform[category]`, `squad.orders`, `squad.schedule.routine[cur_routine_idx].month[m].orders`, `plotinfo.alerts.routines` |
+| burrow tiles | `dfhack.burrows.listBlocks` + the block's `block_burrows` link → `tile_bitmask.bits[y]` bit x |
+| heavy aquifer | `tile_occupancy.heavy_aquifer` = occupancy bit 26 (found by setting single bits on an own `df.tile_occupancy` object) |
+
+DF keeps volumes in units of 10 cm³ (the dwarf's `[BODY_SIZE:12:0:60000]` is 6000 in memory, the whip's `[SIZE:100]` is 10, checked against `raw_strings`). The export writes cm³ as in the raws.
+
+Measured on Trussroads (10.10.2026, year 275, during and after a goblin siege; Gordon's game kept running and was paused and unpaused by him in between):
+
+| | value |
+|---|---|
+| total export time | **34.4 s** wall, **13.5 s Lua** inside DF, 431 frames (round 2: 11.4 s Lua). The wall time is longer because DF ran at a lower frame rate at the time (the machine was busy with 5 parallel Rust builds). |
+| longest slice | **32 ms** (budget 25 ms) in every phase (`max_slice_by_phase` in manifest.json). A first run had one 47 ms slice; the materials phase now checks the budget every 8 instead of 32 materials, units after every unit. |
+| `dfhack-run` round trip during the export | avg 150 ms, max 329 ms; the baseline right afterwards was avg 365 ms (machine under load), so no slowdown can be attributed to the export |
+| `--skip-map` export | 5.3 s wall |
+| exported | 357 units (90 citizens): 3 066 needs, 8 784 emotions, 823 values, 3 669 relationships, 261 wound layers, 34 invaders (goblins, civ 39); 67 creature raws (135 castes, dwarf 89 parts / 243 layers / 7 attacks), 44 weapon and 62 armor raws, 9 squads, 2 burrows with 1 771 tiles, 2 087 materials (2 079 with mechanics; +1 335 tissue materials) |
+| output | 44 MB map + 23 MB JSON (creature_raws.json 7 MB, units.jsonl 3.6 MB) |
+| import (`rf-import`, release) | 0.06-0.15 s, no count mismatches |
+
+Verification (`spotcheck`, see below), a `--skip-map` export followed directly by `rustfort-verify.lua` (270 ticks apart): **unit psychology fields 90/90** (needs, emotions, values, family and visual relationship counts, wound layers, blood, squad/position, civ of 10 units incl. a troglodyte and 3 demons), **squads 9/9** (positions, members, routine), **burrow tiles 32/32** (16 burrow tiles plus 16 neighbours, through `isAssignedTile`), **burrows 2/2** (tile count via `isAssignedBlockTile`), **corpse tokens 8/8**, **creature bodies 5/5** (DWARF, GOBLIN, HUMAN, ELF, CAT: castes/parts/layers/attacks/adult size), **material mechanics 5/5**, item raw counts 1/1. Against the full export: tiles 375/375, **aquifer flags 20/20** (10 aquifer tiles + 10 random). About 10 800 ticks after the full export the squads had all left the `Ready` alert and wounds had healed, which `compare` shows as differences.
+
 ## Spot check against the live game
 
 ```bash
@@ -106,7 +148,7 @@ cargo run -p rf-import --release --example spotcheck -- pick    "$REPO/export/ti
 cargo run -p rf-import --release --example spotcheck -- compare "$REPO/export/tileshtulon" $SP/result.txt
 ```
 
-The check samples 25 tiles for each tiletype material class and 3 citizens. Since round 2 the verify script also lists the live work orders, the job count of every workshop/furnace, the crops of every farm plot, the mod list and the number of plant raws, and `compare` checks them against the export (summary lines `orders:`, `workshop job counts:`, `farm crops:`, `mods:`). The game keeps running, so compare right after the export. On 09.10.2026 it gave:
+The check samples 25 tiles for each tiletype material class and 3 citizens. Since round 3 it also samples the psychology of 12 units (`psy`), 20 aquifer flags (`aq`), burrow tiles and their neighbours (`btile`) and 8 corpses (`corpse`), and the verify script lists squads, burrows, item raw counts, 5 creature bodies (`craw`) and 5 material mechanics (`mech`). Since round 2 the verify script also lists the live work orders, the job count of every workshop/furnace, the crops of every farm plot, the mod list and the number of plant raws, and `compare` checks them against the export (summary lines `orders:`, `workshop job counts:`, `farm crops:`, `mods:`). The game keeps running, so compare right after the export. On 09.10.2026 it gave:
 - **375 of 375 tiles matched**, in all 15 classes: Stone, Soil, Mineral, Construction, Feature, Hfs, LavaStone, Magma, GrassLight, GrassDark, Tree, Root, Mushroom, Plant and Pool.
 - The citizens' names and professions matched.
 - Unit and citizen counts were identical. Items, buildings and plants were within ±10, because the game had been running for 13 more days.
@@ -122,8 +164,9 @@ The verify script uses plain field access, `getTileType`, `getPlantAtTile` and `
 - FEATURE tiles take the init-feature material when available, else `RAW_ADAMANTINE` (local) or `SLADE` (global).
 - For GRASS tiles, the grass event with the largest amount wins. 2–3 grass tiles per export have no event and get no material.
 - Dead units (about 400 in `units.all`) and off-map items are not exported; the counts are in `notes`.
+- Round 3 estimates: relationship kinds from `love`/`meet_count` (wiki thresholds; `Grudge` = love < 0 is a guess, Trussroads has none), wound `severity` = `surface_perc` × 100. Emotions with emotion `ANYTHING` and thought `None` (about 40 %) are exported as DF stores them.
 - Not exported yet:
-  - jobs outside workshop/furnace queues (hauling, digging, planting), squad uniforms, orders and schedules, burrow tile lists, zones' detailed settings, stockpile item filters below category level
-  - historical figures, unit wounds and body state, needs and thoughts
-  - flows (miasma, smoke), the heavy aquifer flag, block hashes
+  - jobs outside workshop/furnace queues (hauling, digging, planting), zones' detailed settings, stockpile item filters below category level, squad ammunition and supplies, patrol routes
+  - historical figures beyond the relationship list, syndromes, preferences (likes/dislikes), dreams, mannerisms
+  - flows (miasma, smoke), block hashes
 - The tiletype special `SHODDY` (DF 53) has no `rf_core::TtSpecial` variant and is imported as `NONE`.
