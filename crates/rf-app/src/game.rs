@@ -187,6 +187,8 @@ pub struct Game {
     pan_drag: Option<(Vec2, f32, f32)>,
     /// Last feedback message of a tool (shown above the toolbar).
     pub status: Option<(String, f64)>,
+    /// Camera follows this unit (unit sheet "Follow").
+    pub follow: Option<i32>,
     /// Real-time budget per frame for sim ticks (seconds).
     pub sim_budget: f64,
 }
@@ -295,10 +297,11 @@ impl Game {
             hover: None,
             zclass,
             label: loaded.label,
-            ui_scale: 1.0,
+            ui_scale: args.ui_scale,
             quit: false,
             pan_drag: None,
             status: None,
+            follow: None,
             sim_budget: SIM_BUDGET_S.min(0.75 / args.gfps.max(10) as f64),
         };
         let now = get_time();
@@ -559,6 +562,12 @@ impl Game {
 
     fn update_camera(&mut self, dt: f32) {
         let dims = self.sim.world.dims;
+        if let Some(id) = self.follow {
+            match self.sim.world.unit(id).map(|u| u.pos) {
+                Some(p) if self.selected == Selected::Unit(id) => self.cam.focus(p),
+                _ => self.follow = None,
+            }
+        }
         if !self.menu_open {
             let b = &self.binds;
             let inp = &self.input;

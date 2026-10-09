@@ -41,16 +41,18 @@ pub struct Args {
     /// Frame cap when vsync is off (DF's G_FPS_CAP).
     pub gfps: u32,
     pub vsync: bool,
+    /// UI scale (1 = DF's 100 % interface: 8x12 font, 32x36 buttons).
+    pub ui_scale: f32,
 }
 
 const USAGE: &str = "usage:
   rustfort play  [--export DIR] [--synthetic] [--seed N] [--speed 1|2|5|max]
                  [--screenshot out.png --frames N] [--view x,y,z,zoom] [--ui citizens,unit,dig,stockpile,menu,tile]
-                 [--mouse x,y]
+                 [--mouse x,y] [--script \"frame:cmd; ...\"] [--ui-scale 2] [--gfps 60] [--size x,y,z]
   rustfort bench [--export DIR] [--synthetic] [--ticks N] [--seed N]";
 
 fn parse_args() -> Result<Args, String> {
-    let mut a = Args { cmd: "play".into(), seed: 1, ticks: 10_000, frames: 3, gfps: 60, size: (96, 96, 40), ..Default::default() };
+    let mut a = Args { cmd: "play".into(), seed: 1, ticks: 10_000, frames: 3, gfps: 60, ui_scale: 1.0, size: (96, 96, 40), ..Default::default() };
     let mut it = std::env::args().skip(1).peekable();
     if let Some(c) = it.peek() {
         if !c.starts_with('-') {
@@ -95,6 +97,7 @@ fn parse_args() -> Result<Args, String> {
             }
             "--speed" => a.speed = Some(val("--speed")?),
             "--script" => a.script = Some(val("--script")?),
+            "--ui-scale" => a.ui_scale = val("--ui-scale")?.parse::<f32>().map_err(|e| format!("--ui-scale: {e}"))?.clamp(0.5, 4.0),
             "--gfps" => a.gfps = val("--gfps")?.parse().map_err(|e| format!("--gfps: {e}"))?,
             "-h" | "--help" => return Err(String::new()),
             other => return Err(format!("unknown argument {other}")),

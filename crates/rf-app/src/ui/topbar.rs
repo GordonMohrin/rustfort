@@ -60,16 +60,7 @@ pub fn draw_topbar(g: &mut Game) {
     };
     x += g.font.draw(&season, x, ty, s, scol) + 18.0 * s;
 
-    // Speed telemetry: ticks/s actually achieved vs target.
-    let target = if g.paused { 0.0 } else { g.speed.tps().unwrap_or(f64::INFINITY) };
-    let tps_txt = format!("{:.0} ticks/s", g.tps);
-    let good = g.paused || g.tps >= target * 0.95 || target.is_infinite();
-    let tcol = if g.paused { col::TEXT_DIM } else if good { col::TEXT_GOOD } else { col::TEXT_BAD };
-    x += g.font.draw(&tps_txt, x, ty, s, tcol) + 6.0 * s;
-    let detail = format!("({:.0} FPS, sim {:.1} ms)", g.fps, g.sim_ms);
-    let _ = g.font.draw(&detail, x, ty, s, col::TEXT_DIM);
-
-    // Right side: population and z-level / elevation.
+    // Right side first: population and z-level / elevation.
     let w = &g.sim.world;
     let pop = w.citizens().count();
     let z = g.cam.z;
@@ -84,7 +75,22 @@ pub fn draw_topbar(g: &mut Game) {
     let pw = g.font.width(&popt, s);
     let rx = sw - ZBAR_W * s - 12.0 * s - zw;
     g.font.draw(&ztxt, rx, ty, s, col::TEXT_HI);
-    g.font.draw(&popt, rx - pw - 22.0 * s, ty, s, col::TEXT);
+    let px = rx - pw - 22.0 * s;
+    g.font.draw(&popt, px, ty, s, col::TEXT);
+
+    // Speed telemetry: ticks/s actually achieved vs target (dropped when there is no room).
+    let target = if g.paused { 0.0 } else { g.speed.tps().unwrap_or(f64::INFINITY) };
+    let tps_txt = format!("{:.0} ticks/s", g.tps);
+    let good = g.paused || g.tps >= target * 0.95 || target.is_infinite();
+    let tcol = if g.paused { col::TEXT_DIM } else if good { col::TEXT_GOOD } else { col::TEXT_BAD };
+    let room = px - 16.0 * s;
+    if x + g.font.width(&tps_txt, s) < room {
+        x += g.font.draw(&tps_txt, x, ty, s, tcol) + 6.0 * s;
+        let detail = format!("({:.0} FPS, sim {:.1} ms)", g.fps, g.sim_ms);
+        if x + g.font.width(&detail, s) < room {
+            g.font.draw(&detail, x, ty, s, col::TEXT_DIM);
+        }
+    }
 }
 
 /// Vertical z-level bar at the right edge: sky / surface / underground, with the current

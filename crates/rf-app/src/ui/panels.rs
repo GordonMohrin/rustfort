@@ -127,21 +127,33 @@ fn unit_sheet(g: &mut Game, id: i32, r: Rect) {
                 format!("Unit id {}{}", u.id, if u.hist_fig_id >= 0 { format!(", hist. figure {}", u.hist_fig_id) } else { String::new() }),
             ];
             for l in lines.iter().filter(|l| !l.is_empty()) {
+                if y > r.y + r.h - lh - pad {
+                    break;
+                }
                 g.font.draw(&clip(l, maxc), x, y, s, col::TEXT);
                 y += lh;
             }
             y += 6.0 * s;
-            if text_button(&mut g.ui, &g.font, Rect::new(x, y, 20.0 * 8.0 * s, GH * s + 8.0 * s), "Center camera", BtnState::Normal) {
+            let bw2 = 18.0 * 8.0 * s;
+            if text_button(&mut g.ui, &g.font, Rect::new(x, y, bw2, GH * s + 8.0 * s), "Center camera", BtnState::Normal) {
                 g.cam.focus(u.pos);
+            }
+            let following = g.follow == Some(u.id);
+            let fst = if following { BtnState::Active } else { BtnState::Normal };
+            if text_button(&mut g.ui, &g.font, Rect::new(x + bw2 + 8.0 * s, y, bw2, GH * s + 8.0 * s), "Follow", fst) {
+                g.follow = if following { None } else { Some(u.id) };
             }
             y += GH * s + 16.0 * s;
             // Top skills preview.
             let mut sk = u.skills.clone();
             sk.sort_by(|a, b| b.rating.cmp(&a.rating).then(b.xp.cmp(&a.xp)));
-            if !sk.is_empty() {
+            if !sk.is_empty() && y < r.y + r.h - 2.0 * lh - pad {
                 g.font.draw("Top skills", x, y, s, col::BORDER_HI);
                 y += lh;
                 for k in sk.iter().take(5) {
+                    if y > r.y + r.h - lh - pad {
+                        break;
+                    }
                     g.font.draw(&clip(&format!("{} {}", skill_level_name(k.rating), pretty(&k.id).to_lowercase()), maxc), x, y, s, col::TEXT);
                     y += lh;
                 }

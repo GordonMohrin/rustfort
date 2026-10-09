@@ -199,7 +199,7 @@ pub fn draw_toolbar(g: &mut Game) -> f32 {
 
 pub fn kind_label(k: DesignationKind) -> &'static str {
     match k {
-        DesignationKind::Mine => "Dig",
+        DesignationKind::Mine => "Mine",
         DesignationKind::Channel => "Channel",
         DesignationKind::UpDownStair => "Up/down stairs",
         DesignationKind::UpStair => "Up stair",
@@ -225,20 +225,19 @@ fn draw_dig_menu(g: &mut Game, x: f32, toolbar_y: f32) -> f32 {
     let s = g.ui.scale;
     let pad = 6.0 * s;
     let n = DIG_MENU.len();
-    let w = row_w(n, s) + 2.0 * pad;
-    let w = w.max(46.0 * 8.0 * s);
-    let h = BTN_H * s + 2.0 * pad + GH * s + 6.0 * s;
-    let r = Rect::new(x, toolbar_y - h - 4.0 * s, w, h);
-    panel(&mut g.ui, r);
     let cur = match g.tool {
         Tool::Designate(k) => Some(k),
         _ => None,
     };
     let title = match cur {
-        Some(k) => format!("Dig: {} - drag a box (z while dragging = 3D)", kind_label(k)),
+        Some(k) => format!("Dig: {} - drag a box (change z while dragging = 3D)", kind_label(k)),
         None => "Dig".to_string(),
     };
-    g.font.draw(&super::clip(&title, ((w - 2.0 * pad) / (8.0 * s)) as usize), r.x + pad, r.y + pad, s, col::TEXT_HI);
+    let w = (row_w(n, s) + 2.0 * pad).max(g.font.width(&title, s) + 2.0 * pad);
+    let h = BTN_H * s + 2.0 * pad + GH * s + 6.0 * s;
+    let r = Rect::new(x, toolbar_y - h - 4.0 * s, w, h);
+    panel(&mut g.ui, r);
+    g.font.draw(&title, r.x + pad, r.y + pad, s, col::TEXT_HI);
     let mut bx = r.x + pad;
     let by = r.y + pad + GH * s + 6.0 * s;
     for d in DIG_MENU {

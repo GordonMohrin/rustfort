@@ -291,6 +291,10 @@ pub fn draw_map(g: &mut Game) {
         .collect();
     for ui in units {
         let u = &g.sim.world.units[ui];
+        // Like DF: creatures in unexplored areas stay invisible.
+        if g.sim.world.tile(u.pos).map(|t| t.hidden()).unwrap_or(true) {
+            continue;
+        }
         let r = tile_rect(g, u.pos.x, u.pos.y);
         sprites.clear();
         g.gfx.unit(&g.sim.world, u, &mut sprites);
@@ -366,6 +370,10 @@ fn draw_terrain(g: &mut Game, sprites: &mut Vec<Sprite>, p: Pos, r: Rect) {
     if !ok {
         fallback_terrain(&g.font, w, p, &t, r, open);
         draw_designation(&g.font, w, &t, r);
+    } else if t.desig != 0 {
+        // rf-gfx drew the tile (and normally its designation sprite); keep a thin marker so
+        // designations stay visible either way.
+        draw_rectangle_lines(r.x + 1.0, r.y + 1.0, r.w - 2.0, r.h - 2.0, 1.0, Color::new(1.0, 0.82, 0.22, 0.55));
     }
 }
 
