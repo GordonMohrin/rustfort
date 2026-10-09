@@ -1,5 +1,6 @@
 //! Terrain, item and building sprite lookup (DF Premium mapping, see README.md).
 
+use crate::plants::{self, TreeTt};
 use crate::{hash_pos, mat_class, Gfx, MatClass, Sprite};
 use rf_core::{Building, Dig, Item, Pos, Shape, TtMaterial, TtSpecial, World};
 use std::collections::HashMap;
@@ -450,17 +451,135 @@ fn terrain_at(g: &Gfx, world: &World, p: Pos, out: &mut Vec<Sprite>, depth: u8) 
         return;
     }
     let tt = world.tiletypes.get(tile.tt);
-    let start = out.len();
+    let cls = g.tree_tt(tile.tt);
+    if cls != TreeTt::None {
+        tree_tile(g, world, p, tile, tt, cls, h, out, depth);
+    } else {
+        match_shape(g, world, p, tile, tt, h, out, depth);
+    }
+    if depth > 0 {
+        return;
+    }
+    overlays(g, world, tile, tt, out);
+}
+
+/// Look down through open space at `p` (one level, darkened), like DF.
+fn look_down(g: &Gfx, world: &World, p: Pos, out: &mut Vec<Sprite>) {
+    if p.z <= 0 {
+        return;
+    }
+    let s0 = out.len();
+    terrain_at(g, world, p.offset(0, 0, -1), out, 1);
+    for s in &mut out[s0..] {
+        *s = s.mul_tint(DARKEN);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn tree_tile(g: &Gfx, world: &World, p: Pos, tile: &rf_core::Tile, tt: &rf_core::TiletypeInfo, cls: TreeTt, h: u32, out: &mut Vec<Sprite>, depth: u8) {
+    let plant = g.plant_of_mat(tile.mat);
+    let set = &g.plants_t.trees[plant.map(|p| p.tree as usize).unwrap_or(0).min(g.plants_t.trees.len().saturating_sub(1))];
+    let dead = plants::is_dead(tt);
+    let nb = |dx: i16, dy: i16| g.tree_tt_at(world, p.offset(dx, dy, 0));
+    let mask_of = |f: &dyn Fn(TreeTt) -> bool| -> u8 { (f(nb(0, -1)) as u8) | (f(nb(0, 1)) as u8) << 1 | (f(nb(-1, 0)) as u8) << 2 | (f(nb(1, 0)) as u8) << 3 };
+    match cls {
+        TreeTt::Trunk(_) | TreeTt::Thick(_) => {
+            let below = world.tile(p.offset(0, 0, -1)).map(|t| g.tree_tt(t.tt)).unwrap_or_default();
+            let base = !below.is_trunk();
+            if base {
+                // Ground level: the trunk with its roots on the floor of this level.
+                floor_under_tree(g, world, p, h, out);
+                let i = match cls {
+                    TreeTt::Thick(i) => i as usize,
+                    _ => 4,
+                };
+                if let Some(s) = set.base_trunk[i].or(set.trunk[0]) {
+                    out.push(s);
+                }
+            } else {
+                if depth == 0 {
+                    look_down(g, world, p, out);
+                }
+                let s = match cls {
+                    TreeTt::Thick(i) => set.trunk_thick[i as usize],
+                    TreeTt::Trunk(m) => set.trunk[m as usize].or(set.trunk[0]),
+                    _ => None,
+                };
+                out.extend(s);
+            }
+            if !dead {
+                if let TreeTt::Trunk(m) = cls {
+                    let leafy = mask_of(&|c| matches!(c, TreeTt::Twigs | TreeTt::Branches | TreeTt::Heavy(_)));
+                    if m != 0 && leafy != 0 && !base {
+                        out.extend(set.over_trunk[m as usize]);
+                    }
+                }
+            }
+        }
+        TreeTt::Heavy(m) => {
+            if depth == 0 {
+                look_down(g, world, p, out);
+            }
+            out.extend(set.heavy_branch[m as usize].or(set.heavy_branch[15]));
+            if !dead {
+                out.extend(set.over_heavy[m as usize]);
+            }
+        }
+        TreeTt::Branches => {
+            if depth == 0 {
+                look_down(g, world, p, out);
+            }
+            let m = mask_of(&|c| c.is_tree_solid());
+            out.extend(set.branch[m as usize].or(set.branch[0]));
+            if !dead {
+                out.extend(set.twigs_full[(h as usize >> 3) % 4]);
+            }
+        }
+        TreeTt::Twigs => {
+            // Open tile: the renderer draws the level below first (DF's look-down).
+            let m = mask_of(&|c| c.is_tree_solid());
+            let s = if dead {
+                set.leafless[m as usize].or(set.leafless[0])
+            } else if m == 0 {
+                set.twigs_full[(h as usize >> 3) % 4].or(set.twigs[0])
+            } else {
+                set.twigs[m as usize].or(set.twigs[0])
+            };
+            out.extend(s);
+        }
+        TreeTt::CapWall(m) => out.extend(set.cap_wall[m as usize].or(set.cap_pillar)),
+        TreeTt::CapThick(i) => out.extend(set.cap_thick[i as usize].or(set.cap_pillar)),
+        TreeTt::CapPillar => out.extend(set.cap_pillar),
+        TreeTt::CapFloor(v) => out.extend(set.cap_floor[v as usize].or(set.cap_floor[0])),
+        TreeTt::CapRamp => {
+            if depth == 0 {
+                look_down(g, world, p, out);
+            }
+        }
+        TreeTt::TrunkSlope => {
+            floor_under_tree(g, world, p, h, out);
+            out.extend(set.slope_top.or(set.trunk[0]));
+        }
+        TreeTt::None => {}
+    }
+}
+
+/// The floor a tree base stands on: grass outside, dirt below ground.
+fn floor_under_tree(g: &Gfx, world: &World, p: Pos, h: u32, out: &mut Vec<Sprite>) {
+    let t = &g.terrain_t;
+    let outside = world.tile(p).map(|t| t.flags & rf_core::tile_flags::OUTSIDE != 0).unwrap_or(true);
+    let s = if outside { t.grass.center(0, h).or(t.dirt.center(0, h)) } else { t.dirt.center(0, h) };
+    out.extend(s);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn match_shape(g: &Gfx, world: &World, p: Pos, tile: &rf_core::Tile, tt: &rf_core::TiletypeInfo, h: u32, out: &mut Vec<Sprite>, depth: u8) {
+    let t = &g.terrain_t;
     match tt.shape {
         Shape::Empty | Shape::RampTop | Shape::EndlessPit | Shape::None => {
             // Open space: show the level below, darkened (DF's look-down view).
-            if depth == 0 && p.z > 0 && tt.shape != Shape::None {
-                let below = p.offset(0, 0, -1);
-                let s0 = out.len();
-                terrain_at(g, world, below, out, 1);
-                for s in &mut out[s0..] {
-                    *s = s.mul_tint(DARKEN);
-                }
+            if depth == 0 && tt.shape != Shape::None {
+                look_down(g, world, p, out);
             }
         }
         Shape::Floor | Shape::Pebbles | Shape::Boulder | Shape::Shrub | Shape::Sapling | Shape::BrookBed | Shape::BrookTop => {
@@ -476,8 +595,13 @@ fn terrain_at(g: &Gfx, world: &World, p: Pos, out: &mut Vec<Sprite>, depth: u8) 
                         out.push(g.recolor(t.boulders[(h as usize >> 3) % t.boulders.len()], world, tile.mat));
                     }
                 }
-                Shape::Shrub => out.extend(t.shrub),
-                Shape::Sapling => out.extend(t.sapling),
+                Shape::Shrub => {
+                    let pg = g.plant_of_mat(tile.mat);
+                    let dead = matches!(tt.special, TtSpecial::Dead | TtSpecial::SmoothDead);
+                    let s = pg.and_then(|pg| if dead { pg.shrub_dead.or(pg.shrub) } else { pg.shrub });
+                    out.extend(s.or(t.shrub));
+                }
+                Shape::Sapling => out.extend(g.plant_of_mat(tile.mat).and_then(|pg| pg.sapling).or(t.sapling)),
                 _ => {}
             }
         }
@@ -553,14 +677,17 @@ fn terrain_at(g: &Gfx, world: &World, p: Pos, out: &mut Vec<Sprite>, depth: u8) 
             }
         }
         Shape::Branch | Shape::TrunkBranch | Shape::Twig => {
+            // Only without `prepare` (tree tiles are classified there).
             if tt.shape != Shape::Twig {
                 out.extend(t.tree_branch);
             }
         }
     }
-    if depth > 0 {
-        return;
-    }
+}
+
+/// Liquids and designation markers on top of a tile.
+fn overlays(g: &Gfx, _world: &World, tile: &rf_core::Tile, tt: &rf_core::TiletypeInfo, out: &mut Vec<Sprite>) {
+    let t = &g.terrain_t;
     // Liquids.
     let d = tile.liquid_depth();
     if d > 0 {
@@ -593,7 +720,6 @@ fn terrain_at(g: &Gfx, world: &World, p: Pos, out: &mut Vec<Sprite>, depth: u8) 
     if tile.flags & rf_core::tile_flags::DESIG_ENGRAVE != 0 {
         out.extend(t.desig.get("engrave").copied());
     }
-    let _ = start;
 }
 
 fn floor(g: &Gfx, world: &World, p: Pos, mat: u16, tt: &rf_core::TiletypeInfo, h: u32, out: &mut Vec<Sprite>) {
@@ -657,6 +783,24 @@ fn floor(g: &Gfx, world: &World, p: Pos, mat: u16, tt: &rf_core::TiletypeInfo, h
             let gx = (1 - dx) as usize;
             let gy = (1 - dy) as usize;
             if let Some(s) = set.pieces[gy * 3 + gx] {
+                out.push(s);
+            }
+        }
+    }
+    // Shadows of tree bases next to this floor (TREE_BASE_SHADOW_<dir of this tile>).
+    for dy in -1..=1i16 {
+        for dx in -1..=1i16 {
+            if dx == 0 && dy == 0 {
+                continue;
+            }
+            let q = p.offset(dx, dy, 0);
+            let c = g.tree_tt_at(world, q);
+            if !c.is_trunk() || g.tree_tt_at(world, q.offset(0, 0, -1)).is_trunk() {
+                continue;
+            }
+            let pg = world.tile(q).and_then(|t| g.plant_of_mat(t.mat));
+            let set = &g.plants_t.trees[pg.map(|p| p.tree as usize).unwrap_or(0).min(g.plants_t.trees.len().saturating_sub(1))];
+            if let Some(s) = set.base_shadow[((1 - dy) * 3 + (1 - dx)) as usize] {
                 out.push(s);
             }
         }
@@ -784,6 +928,21 @@ fn class_index(c: MatClass) -> usize {
 }
 
 pub(crate) fn item(g: &Gfx, world: &World, it: &Item, out: &mut Vec<Sprite>) {
+    // Plant items use their plant's own graphics (PLANT_GRAPHICS PICKED / SEED / GROWTH_PICKED).
+    match it.kind.as_str() {
+        "PLANT" | "SEEDS" | "PLANT_GROWTH" => {
+            let s = match it.kind.as_str() {
+                "PLANT" => g.plant_of_mat(it.mat).and_then(|p| p.picked),
+                "SEEDS" => g.plant_of_mat(it.mat).and_then(|p| p.seed),
+                _ => g.mat_growth.get(it.mat as usize).copied().flatten(),
+            };
+            if let Some(s) = s {
+                out.push(s);
+                return;
+            }
+        }
+        _ => {}
+    }
     let Some(set) = g.item_cache(&it.kind) else { return };
     let c = class_index(mat_class(world.material(it.mat)));
     if let Some(s) = set[c].or(set[0]).or(set[6]) {

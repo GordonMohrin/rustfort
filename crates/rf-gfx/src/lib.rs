@@ -16,6 +16,7 @@
 //! - `terrain`/`unit`/`item`/`building` push sprites back to front without allocating.
 
 mod creature;
+mod plants;
 mod terrain;
 
 use rf_core::{Building, Item, MaterialInfo, Pos, Unit, World};
@@ -171,6 +172,19 @@ pub struct Gfx {
     /// Unit id -> evaluated look (layers), filled by `prepare`.
     looks: HashMap<i32, creature::UnitLook>,
     pub df_dir: PathBuf,
+    pub(crate) plants_t: plants::PlantTables,
+    /// Per world tiletype id: tree classification (filled by `prepare`).
+    pub(crate) tt_tree: Vec<plants::TreeTt>,
+    /// Per world material: plant graphics index (`u16::MAX` = none), filled by `prepare`.
+    pub(crate) mat_plant: Vec<u16>,
+    /// Per world material: picked-growth item sprite (`PLANT:X:LEAF` -> leaves), by `prepare`.
+    pub(crate) mat_growth: Vec<Option<Sprite>>,
+    /// Farm plot tile -> crop sprite (planted seeds), rebuilt by `prepare`.
+    pub(crate) crops_at: HashMap<Pos, Sprite>,
+    /// Non-vanilla mods whose graphics were loaded (`id:numeric_version`, load order).
+    pub mods_loaded: Vec<String>,
+    /// Mod list entries that could not be matched exactly (see [`Gfx::load_with_mods`]).
+    pub mod_warnings: Vec<String>,
 }
 
 impl Gfx {
@@ -183,6 +197,32 @@ impl Gfx {
         let raws = Raws::load_df_dir(df_dir, &LoadOptions { include_mods, ..Default::default() })
             .map_err(|e| GfxError(format!("raws: {e}")))?;
         Self::from_raws(&raws, df_dir)
+    }
+
+    /// Load vanilla plus exactly the given active mods (`"id:numeric_version"` in load order,
+    /// as in `World::meta.mods`), each from its matching version folder in
+    /// `data/installed_mods`. An empty list loads vanilla only. Unmatched entries are listed
+    /// in [`Gfx::mod_warnings`].
+    pub fn load_with_mods(df_dir: &Path, mods: &[String]) -> Result<Gfx, GfxError> {
+        if mods.is_empty() {
+            let raws = Raws::load_df_dir(df_dir, &LoadOptions::default()).map_err(|e| GfxError(format!("raws: {e}")))?;
+            return Self::from_raws(&raws, df_dir);
+        }
+        let res = rf_raws::resolve_mod_list(df_dir, mods);
+        if !df_dir.join("data").join("vanilla").is_dir() {
+            return Err(GfxError(format!("{}: no data/vanilla", df_dir.display())));
+        }
+        let raws = Raws::load_modules(&res.modules, &LoadOptions::default()).map_err(|e| GfxError(format!("raws: {e}")))?;
+        let mut g = Self::from_raws(&raws, df_dir)?;
+        g.mods_loaded = res.mods.iter().map(|m| format!("{}:{}", m.id, m.numeric_version)).collect();
+        g.mod_warnings = res.warnings;
+        Ok(g)
+    }
+
+    /// [`Gfx::load_with_mods`] with the world's active mod list (`world.meta.mods`).
+    /// Use this in the app after loading a save so its mods (perspective_walls, ...) apply.
+    pub fn load_for_world(df_dir: &Path, world: &World) -> Result<Gfx, GfxError> {
+        Self::load_with_mods(df_dir, &world.meta.mods)
     }
 
     /// Build from already loaded raws (objects + graphics).
@@ -237,8 +277,32 @@ impl Gfx {
         }
         g.db = db;
         g.terrain_t = terrain::Tables::build(&g);
+        g.plants_t = plants::PlantTables::build(&g, raws);
         g.creatures = creature::parse_all(&mut g, raws);
         Ok(g)
+    }
+
+    /// Tree classification of a tiletype id (needs `prepare`).
+    #[inline]
+    pub(crate) fn tree_tt(&self, tt: u16) -> plants::TreeTt {
+        self.tt_tree.get(tt as usize).copied().unwrap_or_default()
+    }
+
+    #[inline]
+    pub(crate) fn tree_tt_at(&self, world: &World, p: Pos) -> plants::TreeTt {
+        match world.tile(p) {
+            Some(t) if !t.hidden() => self.tree_tt(t.tt),
+            _ => plants::TreeTt::None,
+        }
+    }
+
+    /// Plant graphics of a world material (needs `prepare`).
+    #[inline]
+    pub(crate) fn plant_of_mat(&self, mat: u16) -> Option<&plants::PlantGfx> {
+        match self.mat_plant.get(mat as usize) {
+            Some(&i) if i != u16::MAX => self.plants_t.plants.get(i as usize),
+            _ => None,
+        }
     }
 
     pub(crate) fn page_id(&self, token: &str) -> Option<u16> {
@@ -376,6 +440,45 @@ impl Gfx {
     pub fn prepare(&mut self, world: &World) -> usize {
         let before = self.pages.len();
         self.mat_rows = world.materials.iter().map(|m| self.std_row_for_rgb(m.rgb)).collect();
+        // Plants and trees.
+        if self.tt_tree.len() != world.tiletypes.infos.len() {
+            let max = world.tiletypes.infos.iter().map(|i| i.id as usize + 1).max().unwrap_or(0);
+            let mut v = vec![plants::TreeTt::None; max];
+            for i in &world.tiletypes.infos {
+                v[i.id as usize] = plants::classify(i);
+            }
+            self.tt_tree = v;
+        }
+        if self.mat_plant.len() != world.materials.len() {
+            self.mat_plant = Vec::with_capacity(world.materials.len());
+            self.mat_growth = Vec::with_capacity(world.materials.len());
+            for m in &world.materials {
+                let (pi, growth) = match self.plants_t.plant_of_token(&m.token) {
+                    Some((pi, id, local)) => {
+                        let gid = self.plants_t.growth_mats.get(id).and_then(|v| v.iter().find(|(lm, _)| lm == local)).map(|(_, g)| g.as_str());
+                        let pg = &self.plants_t.plants[pi as usize];
+                        let gs = gid.and_then(|gid| pg.growths.iter().find(|(g, _)| g == gid)).map(|(_, s)| *s);
+                        (pi, gs)
+                    }
+                    None => (u16::MAX, None),
+                };
+                self.mat_plant.push(pi);
+                self.mat_growth.push(growth);
+            }
+        }
+        // Crops: planted seeds inside farm plots.
+        self.crops_at.clear();
+        let has_farms = world.buildings.iter().any(|b| b.kind == "FarmPlot");
+        if has_farms {
+            for it in world.items.iter().filter(|i| i.kind == "SEEDS" && i.flags.in_building) {
+                let Some(pg) = self.plant_of_mat(it.mat) else { continue };
+                // Without growth data the ripe crop is shown (estimate; DF shows CROP_SPROUT
+                // until the plant has grown).
+                if let Some(s) = pg.crop.or(pg.crop_sprout) {
+                    self.crops_at.insert(it.pos, s);
+                }
+            }
+        }
         let Some(pal) = self.std_pal else { return 0 };
         // Which (material, class-specific page set) combinations are used?
         let mut need: HashSet<(u16, u8)> = HashSet::new(); // (mat, kind 0 terrain 1 item 2 building)

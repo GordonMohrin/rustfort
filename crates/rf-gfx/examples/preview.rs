@@ -11,13 +11,97 @@ use rf_gfx::{Gfx, Sprite};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+/// What a "missing sprite" debug scan found: key -> (count, first position).
+type Missing = HashMap<String, (usize, Pos)>;
+
+fn note(m: &mut Missing, key: String, p: Pos) {
+    m.entry(key).or_insert((0, p)).0 += 1;
+}
+
+/// Look up every visible tile/building/item/unit of level `z` and record those without sprites.
+fn scan_level(gfx: &Gfx, world: &World, z: i16, missing: &mut Missing, marks: Option<&mut Vec<Pos>>) {
+    let mut sprites = Vec::new();
+    let mut marks = marks;
+    let mut mark = |p: Pos, marks: &mut Option<&mut Vec<Pos>>| {
+        if let Some(m) = marks.as_deref_mut() {
+            m.push(p);
+        }
+    };
+    for y in 0..world.dims.y as i16 {
+        for x in 0..world.dims.x as i16 {
+            let p = Pos::new(x, y, z);
+            let Some(t) = world.tile(p) else { continue };
+            if t.hidden() {
+                continue;
+            }
+            let tt = world.tiletypes.get(t.tt);
+            if tt.shape == Shape::Empty && t.liquid_depth() == 0 {
+                continue;
+            }
+            sprites.clear();
+            gfx.terrain(world, p, &mut sprites);
+            if sprites.is_empty() {
+                note(missing, format!("terrain {}", tt.name), p);
+                mark(p, &mut marks);
+            }
+        }
+    }
+    for b in world.buildings.iter().filter(|b| b.z == z) {
+        if world.tile(b.center).map(|t| t.hidden()).unwrap_or(true) {
+            continue;
+        }
+        let mut any = false;
+        for y in b.y1..=b.y2 {
+            for x in b.x1..=b.x2 {
+                let p = Pos::new(x, y, z);
+                if b.contains(p) {
+                    sprites.clear();
+                    gfx.building(world, b, p, &mut sprites);
+                    any |= !sprites.is_empty();
+                }
+            }
+        }
+        if !any {
+            note(missing, format!("building {}:{}", b.kind, b.subtype), b.center);
+            mark(b.center, &mut marks);
+        }
+    }
+    for it in world.items.iter().filter(|i| i.pos.z == z && i.flags.on_ground && !i.flags.hidden) {
+        if world.tile(it.pos).map(|t| t.hidden()).unwrap_or(true) {
+            continue;
+        }
+        sprites.clear();
+        gfx.item(world, it, &mut sprites);
+        if sprites.is_empty() {
+            note(missing, format!("item {}:{}", it.kind, it.subtype), it.pos);
+            mark(it.pos, &mut marks);
+        }
+    }
+    for u in world.units.iter().filter(|u| u.pos.z == z && !u.flags.dead && !u.flags.inactive) {
+        sprites.clear();
+        gfx.unit(world, u, &mut sprites);
+        if sprites.is_empty() {
+            note(missing, format!("unit {}", u.race), u.pos);
+            mark(u.pos, &mut marks);
+        }
+    }
+}
+
+fn print_missing(title: &str, m: &Missing) {
+    let mut v: Vec<(&String, &(usize, Pos))> = m.iter().collect();
+    v.sort_by(|a, b| b.1 .0.cmp(&a.1 .0).then(a.0.cmp(b.0)));
+    let total: usize = v.iter().map(|e| e.1 .0).sum();
+    eprintln!("missing sprites ({title}): {total} in {} kinds", v.len());
+    for (k, (n, p)) in v {
+        eprintln!("  {n:7}  {k:48} e.g. ({},{},{})", p.x, p.y, p.z);
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let get = |k: &str| args.iter().position(|a| a == k).and_then(|i| args.get(i + 1)).cloned();
+    let flag = |k: &str| args.iter().any(|a| a == k);
     let out = PathBuf::from(get("--out").unwrap_or_else(|| "target/preview.png".into()));
-    let t0 = std::time::Instant::now();
-    let mut gfx = Gfx::load(&rf_gfx::df_dir()).expect("load gfx");
-    eprintln!("gfx loaded: {} pages in {:.0} ms", gfx.pages.len(), t0.elapsed().as_secs_f64() * 1000.0);
     let (world, default_z) = match get("--export") {
         Some(dir) => {
             let w = load_export(&PathBuf::from(dir));
@@ -26,6 +110,21 @@ fn main() {
         }
         None => synthetic_plus(),
     };
+    // Mods: `--mods a:1,b:2` overrides the world's list; `--mods none` = vanilla only.
+    let mods: Vec<String> = match get("--mods") {
+        Some(s) if s == "none" => Vec::new(),
+        Some(s) => s.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect(),
+        None => world.meta.mods.clone(),
+    };
+    let t0 = std::time::Instant::now();
+    let mut gfx = Gfx::load_with_mods(&rf_gfx::df_dir(), &mods).expect("load gfx");
+    eprintln!(
+        "gfx loaded: {} pages in {:.0} ms; mods {:?} {:?}",
+        gfx.pages.len(),
+        t0.elapsed().as_secs_f64() * 1000.0,
+        gfx.mods_loaded,
+        gfx.mod_warnings
+    );
     let z: i16 = get("--z").and_then(|s| s.parse().ok()).unwrap_or(default_z);
     let (x0, y0, w, h) = match get("--rect") {
         Some(r) => {
@@ -70,6 +169,13 @@ fn main() {
                 sprites.clear();
                 match pass {
                     0 => {
+                        // Like the app: twigs (tree canopy) are open, the level below shows through.
+                        if world.shape(p) == Shape::Twig && z > 0 {
+                            gfx.terrain(&world, p.offset(0, 0, -1), &mut sprites);
+                            for s in sprites.iter_mut() {
+                                *s = s.mul_tint([150, 150, 165, 255]);
+                            }
+                        }
                         gfx.terrain(&world, p, &mut sprites);
                         for b in world.buildings.iter().filter(|b| b.contains(p)) {
                             gfx.building(&world, b, p, &mut sprites);
@@ -99,8 +205,58 @@ fn main() {
         }
     }
     eprintln!("composed {nsprites} sprites in {:.0} ms ({} pages decoded)", t2.elapsed().as_secs_f64() * 1000.0, cache.len());
+    // Debug: mark everything without a sprite (magenta frame) and print a histogram.
+    if flag("--debug-missing") || flag("--scan") {
+        let mut missing = Missing::new();
+        let mut marks = Vec::new();
+        scan_level(&gfx, &world, z, &mut missing, Some(&mut marks));
+        for p in marks {
+            if p.x < x0 || p.y < y0 || p.x >= x0 + w || p.y >= y0 + h {
+                continue;
+            }
+            let (ox, oy) = ((p.x - x0) as i32 * ts, (p.y - y0) as i32 * ts);
+            for i in 0..ts {
+                for (xx, yy) in [(ox + i, oy), (ox + i, oy + ts - 1), (ox, oy + i), (ox + ts - 1, oy + i), (ox + i, oy + i), (ox + ts - 1 - i, oy + i)] {
+                    let di = ((yy * iw + xx) * 4) as usize;
+                    if di + 3 < img.len() {
+                        img[di..di + 4].copy_from_slice(&[255, 0, 255, 255]);
+                    }
+                }
+            }
+        }
+        print_missing(&format!("z={z}"), &missing);
+    }
+    if flag("--scan") {
+        // Whole map, every level.
+        let mut missing = Missing::new();
+        let t3 = std::time::Instant::now();
+        for zz in 0..world.dims.z as i16 {
+            scan_level(&gfx, &world, zz, &mut missing, None);
+        }
+        eprintln!("scan of all {} levels took {:.0} ms", world.dims.z, t3.elapsed().as_secs_f64() * 1000.0);
+        print_missing("all levels", &missing);
+    }
     if let Some(d) = out.parent() {
         let _ = std::fs::create_dir_all(d);
+    }
+    // `--half`: downscale 2x (big rectangles stay readable as PNG).
+    if flag("--half") {
+        let (hw, hh) = (iw / 2, ih / 2);
+        let mut small = vec![0u8; (hw * hh * 4) as usize];
+        for y in 0..hh {
+            for x in 0..hw {
+                for c in 0..4 {
+                    let s: u32 = [(0, 0), (1, 0), (0, 1), (1, 1)]
+                        .iter()
+                        .map(|(dx, dy)| img[(((y * 2 + dy) * iw + x * 2 + dx) * 4 + c) as usize] as u32)
+                        .sum();
+                    small[((y * hw + x) * 4 + c) as usize] = (s / 4) as u8;
+                }
+            }
+        }
+        image::save_buffer(&out, &small, hw as u32, hh as u32, image::ColorType::Rgba8).expect("save");
+        println!("wrote {} ({}x{} px, z={z})", out.display(), hw, hh);
+        return;
     }
     image::save_buffer(&out, &img, iw as u32, ih as u32, image::ColorType::Rgba8).expect("save");
     println!("wrote {} ({}x{} px, z={z})", out.display(), iw, ih);
@@ -339,8 +495,18 @@ fn load_export(dir: &std::path::Path) -> World {
     fn jsonl<T: serde::de::DeserializeOwned>(p: std::path::PathBuf) -> Vec<T> {
         std::fs::read_to_string(p).unwrap_or_default().lines().filter_map(|l| serde_json::from_str(l).ok()).collect()
     }
+    let mods: Vec<String> =
+        manifest["mods"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
+    let plant_raws: Vec<PlantRaw> =
+        fs::read_to_string(dir.join("plant_raws.json")).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
     World {
-        meta: Meta { fort_name: manifest["fort_name"].as_str().unwrap_or("").into(), source: format!("export:{}", dir.display()), ..Default::default() },
+        meta: Meta {
+            fort_name: manifest["fort_name"].as_str().unwrap_or("").into(),
+            source: format!("export:{}", dir.display()),
+            mods,
+            ..Default::default()
+        },
+        plant_raws,
         dims,
         tiles,
         tiletypes: TiletypeTable::new(infos),

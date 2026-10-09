@@ -110,11 +110,15 @@ pub struct LoadOptions {
     pub objects: bool,
     /// Load `graphics/` folders.
     pub graphics: bool,
+    /// The save's active mod list in load order (`"id:numeric_version"` or just `"id"`, as in
+    /// `World::meta.mods`). When set and non-empty, exactly these modules are loaded in this
+    /// order and `include_mods`/`mod_filter` are ignored; see [`resolve_mod_list`].
+    pub mod_list: Option<Vec<String>>,
 }
 
 impl Default for LoadOptions {
     fn default() -> Self {
-        LoadOptions { include_mods: false, mod_filter: None, objects: true, graphics: true }
+        LoadOptions { include_mods: false, mod_filter: None, objects: true, graphics: true, mod_list: None }
     }
 }
 
@@ -276,24 +280,125 @@ pub struct ModInfo {
     pub name: String,
 }
 
+/// Leading integer of a version string (`"25"` -> 25, `"1.0"` -> 1, junk -> 0).
+fn parse_version(s: &str) -> i32 {
+    let s = s.trim();
+    let end = s.char_indices().find(|&(i, c)| !(c.is_ascii_digit() || (i == 0 && c == '-'))).map(|(i, _)| i).unwrap_or(s.len());
+    s[..end].parse().unwrap_or(0)
+}
+
+/// Read a module folder's `info.txt` (`[ID]`, `[NUMERIC_VERSION]`, `[NAME]`).
+pub fn read_mod_info(dir: &Path) -> Option<ModInfo> {
+    let bytes = std::fs::read(dir.join("info.txt")).ok()?;
+    let (_, toks) = tokenize(&bytes);
+    let get = |n: &str| toks.iter().find(|t| t.name == n).map(|t| t.arg(0).to_string()).unwrap_or_default();
+    let mi = ModInfo { dir: dir.to_path_buf(), id: get("ID"), numeric_version: parse_version(&get("NUMERIC_VERSION")), name: get("NAME") };
+    (!mi.id.is_empty()).then_some(mi)
+}
+
+/// All module folders with an `info.txt` under `dir` (every version), sorted by folder.
+fn list_modules(dir: &Path) -> Vec<ModInfo> {
+    let mut v: Vec<ModInfo> = match std::fs::read_dir(dir) {
+        Ok(rd) => rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).filter_map(|p| read_mod_info(&p)).collect(),
+        Err(_) => Vec::new(),
+    };
+    v.sort_by(|a, b| a.dir.cmp(&b.dir));
+    v
+}
+
+/// Every installed mod folder of `data/installed_mods` (all versions side by side).
+pub fn installed_mods_all(df_dir: &Path) -> Vec<ModInfo> {
+    list_modules(&df_dir.join("data").join("installed_mods"))
+}
+
+/// Result of [`resolve_mod_list`].
+#[derive(Clone, Debug, Default)]
+pub struct ResolvedMods {
+    /// Module folders to load, in load order (vanilla modules included).
+    pub modules: Vec<PathBuf>,
+    /// The non-vanilla mods that were found, with the version actually used.
+    pub mods: Vec<ModInfo>,
+    /// Entries that could not be matched exactly (missing, or another version used).
+    pub warnings: Vec<String>,
+}
+
+/// Split `"id:numeric_version"` (or a bare `"id"`) into id and version.
+pub fn parse_mod_entry(e: &str) -> (String, Option<i32>) {
+    match e.trim().rsplit_once(':') {
+        Some((id, v)) if v.trim().chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) => {
+            (id.trim().to_string(), Some(parse_version(v)))
+        }
+        _ => (e.trim().to_string(), None),
+    }
+}
+
+/// Turn a save's active mod list (`"id:numeric_version"` in load order, as in
+/// `World::meta.mods`) into module folders, the way DF loads a save:
+/// - vanilla ids (`vanilla_creatures`, ...) map to `data/vanilla/<id>`. If the list names no
+///   vanilla module at all, every vanilla module is loaded first and the list only adds mods;
+/// - other ids map to the `data/installed_mods` folder with the same `[ID]` and exactly that
+///   `[NUMERIC_VERSION]` (several versions can be installed side by side, e.g.
+///   `perspective_walls (23)` and `(25)`). Without an exact match the newest installed (or
+///   Steam workshop) version is used and a warning is recorded.
+///
+/// An empty list loads vanilla only.
+pub fn resolve_mod_list(df_dir: &Path, list: &[String]) -> ResolvedMods {
+    let vanilla_root = df_dir.join("data").join("vanilla");
+    let vanilla = list_modules(&vanilla_root);
+    // Folders without info.txt are loaded too (as `load_df_dir` does).
+    let mut vanilla_dirs: Vec<PathBuf> =
+        std::fs::read_dir(&vanilla_root).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect()).unwrap_or_default();
+    vanilla_dirs.sort();
+    let installed = installed_mods_all(df_dir);
+    // Steam workshop copies: <steamapps>/workshop/content/975370/<item>/ (975370 = DF's app id).
+    let workshop = df_dir
+        .parent()
+        .and_then(|common| common.parent())
+        .map(|steamapps| list_modules(&steamapps.join("workshop").join("content").join("975370")))
+        .unwrap_or_default();
+    let parsed: Vec<(String, Option<i32>)> = list.iter().map(|e| parse_mod_entry(e)).filter(|(id, _)| !id.is_empty()).collect();
+    let mut out = ResolvedMods::default();
+    if !parsed.iter().any(|(id, _)| vanilla.iter().any(|m| &m.id == id)) {
+        out.modules.extend(vanilla_dirs.iter().cloned());
+    }
+    for (id, ver) in &parsed {
+        if let Some(m) = vanilla.iter().find(|m| &m.id == id) {
+            if !out.modules.contains(&m.dir) {
+                out.modules.push(m.dir.clone());
+            }
+            continue;
+        }
+        let exact = |v: &[ModInfo]| v.iter().find(|m| &m.id == id && Some(m.numeric_version) == *ver).cloned();
+        let newest = |v: &[ModInfo]| v.iter().filter(|m| &m.id == id).max_by_key(|m| m.numeric_version).cloned();
+        let found = match exact(&installed).or_else(|| exact(&workshop)) {
+            Some(m) => Some(m),
+            None => {
+                let alt = newest(&installed).or_else(|| newest(&workshop));
+                match (&alt, ver) {
+                    (Some(m), Some(v)) => out.warnings.push(format!("mod {id}: version {v} not installed, using {}", m.numeric_version)),
+                    (None, _) => out.warnings.push(format!("mod {id}{}: not installed, skipped", ver.map(|v| format!(":{v}")).unwrap_or_default())),
+                    _ => {}
+                }
+                alt
+            }
+        };
+        if let Some(m) = found {
+            if !out.modules.contains(&m.dir) {
+                out.modules.push(m.dir.clone());
+                out.mods.push(m);
+            }
+        }
+    }
+    out
+}
+
 /// Lists `data/installed_mods`, keeping only the highest numeric version per mod id.
 pub fn installed_mods(df_dir: &Path) -> Vec<ModInfo> {
     let mut best: HashMap<String, ModInfo> = HashMap::new();
     if let Ok(rd) = std::fs::read_dir(df_dir.join("data").join("installed_mods")) {
         for e in rd.flatten() {
             let dir = e.path();
-            let Ok(bytes) = std::fs::read(dir.join("info.txt")) else { continue };
-            let (_, toks) = tokenize(&bytes);
-            let get = |n: &str| toks.iter().find(|t| t.name == n).map(|t| t.arg(0).to_string()).unwrap_or_default();
-            let mi = ModInfo {
-                dir: dir.clone(),
-                id: get("ID"),
-                numeric_version: get("NUMERIC_VERSION").parse().unwrap_or(0),
-                name: get("NAME"),
-            };
-            if mi.id.is_empty() {
-                continue;
-            }
+            let Some(mi) = read_mod_info(&dir) else { continue };
             match best.get(&mi.id) {
                 Some(b) if b.numeric_version >= mi.numeric_version => {}
                 _ => {
@@ -311,6 +416,12 @@ impl Raws {
     /// Load vanilla raws (and optionally installed mods) from a DF install folder.
     pub fn load_df_dir(df_dir: &Path, opts: &LoadOptions) -> Result<Raws, RawsError> {
         let vanilla = df_dir.join("data").join("vanilla");
+        if let Some(list) = opts.mod_list.as_ref().filter(|l| !l.is_empty()) {
+            if !vanilla.is_dir() {
+                return Err(RawsError(format!("{}: not found", vanilla.display())));
+            }
+            return Self::load_modules(&resolve_mod_list(df_dir, list).modules, opts);
+        }
         let mut modules: Vec<PathBuf> = Vec::new();
         let rd = std::fs::read_dir(&vanilla).map_err(|e| RawsError(format!("{}: {e}", vanilla.display())))?;
         let mut v: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
@@ -491,6 +602,48 @@ mod tests {
         assert_eq!(r.count("TILE_GRAPHICS"), 2);
         assert_eq!(r.get("TILE_GRAPHICS", "STONE_FLOOR_2").unwrap().header().arg(1), "1");
         assert_eq!(r.get("CREATURE_GRAPHICS", "CAT").unwrap().tokens.len(), 2);
+    }
+
+    #[test]
+    fn mod_tile_graphics_replace_vanilla() {
+        let v = "v\n[OBJECT:GRAPHICS][TILE_GRAPHICS:WALL_STONE:0:0:STONE_WALL_N][TILE_GRAPHICS:B:0:0:BOULDER][TILE_GRAPHICS:B:1:0:BOULDER][TILE_GRAPHICS:WALL_STONE:5:5:KEEP]";
+        let m = "m\n[OBJECT:GRAPHICS][TILE_GRAPHICS:WALL_STONE:2:3:STONE_WALL_N]";
+        let mut r = Raws::from_texts(&[("v", v), ("m", m)]);
+        r.files[0].module = "vanilla_environment".into();
+        r.files[1].module = "perspective_walls (25)".into();
+        let db = GraphicsDb::from_raws(&r);
+        let w: Vec<_> = db.tiles_named("STONE_WALL_N").collect();
+        assert_eq!(w.len(), 1);
+        assert_eq!((w[0].x, w[0].y), (2, 3));
+        assert_eq!(db.tiles_named("BOULDER").count(), 2, "vanilla repeats are kept");
+        assert!(db.tile("KEEP").is_some());
+    }
+
+    #[test]
+    fn mod_entries_parse() {
+        assert_eq!(parse_mod_entry("perspective_walls:25"), ("perspective_walls".into(), Some(25)));
+        assert_eq!(parse_mod_entry("reduced_zfog"), ("reduced_zfog".into(), None));
+        assert_eq!(parse_mod_entry("x:1.0"), ("x".into(), Some(1)));
+    }
+
+    #[test]
+    fn resolves_installed_mods_if_present() {
+        let dir = df_dir();
+        if !dir.join("data").join("installed_mods").is_dir() {
+            eprintln!("DF install not found, skipping");
+            return;
+        }
+        let r = resolve_mod_list(&dir, &[]);
+        assert!(r.mods.is_empty() && !r.modules.is_empty());
+        let all = installed_mods_all(&dir);
+        if let Some(m) = all.iter().find(|m| m.id == "perspective_walls") {
+            let entry = format!("perspective_walls:{}", m.numeric_version);
+            let r = resolve_mod_list(&dir, &[entry, "no_such_mod:3".into()]);
+            assert_eq!(r.mods.len(), 1);
+            assert_eq!(r.mods[0].dir, m.dir, "exact version folder");
+            assert_eq!(r.warnings.len(), 1);
+            assert!(r.modules.len() > r.mods.len(), "vanilla modules come first");
+        }
     }
 
     #[test]
