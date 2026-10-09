@@ -181,6 +181,10 @@ pub struct Gfx {
     pub(crate) mat_growth: Vec<Option<Sprite>>,
     /// Farm plot tile -> crop sprite (planted seeds), rebuilt by `prepare`.
     pub(crate) crops_at: HashMap<Pos, Sprite>,
+    /// (lower-case creature name, creature id), longest first.
+    creature_names: Vec<(String, String)>,
+    /// Item id -> corpse/remains sprite (filled by `prepare`).
+    pub(crate) corpse_cache: HashMap<i32, Sprite>,
     /// Non-vanilla mods whose graphics were loaded (`id:numeric_version`, load order).
     pub mods_loaded: Vec<String>,
     /// Mod list entries that could not be matched exactly (see [`Gfx::load_with_mods`]).
@@ -278,8 +282,54 @@ impl Gfx {
         g.db = db;
         g.terrain_t = terrain::Tables::build(&g);
         g.plants_t = plants::PlantTables::build(&g, raws);
+        g.terrain_t.typed = terrain::typed_items(&g, raws);
         g.creatures = creature::parse_all(&mut g, raws);
+        // Creature display names (singular, plural, child names) for corpses whose race the
+        // export does not carry: longest names first so "giant cave spider" beats "spider".
+        let mut names: Vec<(String, String)> = Vec::new();
+        for o in raws.of_kind("CREATURE") {
+            for tn in ["NAME", "GENERAL_CHILD_NAME", "CASTE_NAME"] {
+                for t in o.all(tn) {
+                    for a in t.args.iter().take(2) {
+                        let a = a.trim().to_lowercase();
+                        if a.len() >= 3 && !names.iter().any(|(n, id)| n == &a && id == &o.id) {
+                            names.push((a, o.id.clone()));
+                        }
+                    }
+                }
+            }
+        }
+        names.sort_by(|a, b| b.0.len().cmp(&a.0.len()).then(a.0.cmp(&b.0)));
+        g.creature_names = names;
         Ok(g)
+    }
+
+    /// Race of a corpse-like item: its `subtype` if that is a creature token (exporters may
+    /// put the race there), else the longest creature name found in its description
+    /// (e.g. "stray horse skeleton" -> HORSE). The description match is a heuristic.
+    fn corpse_race(&self, it: &Item) -> Option<&str> {
+        if !it.subtype.is_empty() && self.creatures.contains_key(&it.subtype) {
+            return self.creatures.get_key_value(&it.subtype).map(|(k, _)| k.as_str());
+        }
+        let d = it.desc.to_lowercase();
+        let bytes = d.as_bytes();
+        for (n, id) in &self.creature_names {
+            let mut from = 0;
+            while let Some(i) = d[from..].find(n.as_str()) {
+                let s = from + i;
+                let e = s + n.len();
+                let ok_l = s == 0 || !bytes[s - 1].is_ascii_alphabetic();
+                let ok_r = e >= bytes.len() || !bytes[e].is_ascii_alphabetic();
+                if ok_l && ok_r {
+                    return Some(id.as_str());
+                }
+                from = s + 1;
+                if from >= d.len() {
+                    break;
+                }
+            }
+        }
+        None
     }
 
     /// Tree classification of a tiletype id (needs `prepare`).
@@ -511,6 +561,22 @@ impl Gfx {
         }
         for (p, row) in pages_for {
             self.make_variant(p, pal, row);
+        }
+        // Corpses, body parts and remains: the creature's own sprite.
+        for it in world.items.iter().filter(|i| matches!(i.kind.as_str(), "CORPSE" | "CORPSEPIECE" | "REMAINS")) {
+            if self.corpse_cache.contains_key(&it.id) {
+                continue;
+            }
+            let cg = self.corpse_race(it).and_then(|r| self.creatures.get(r));
+            let s = match (it.kind.as_str(), cg) {
+                ("REMAINS", Some(c)) => c.remains.or(c.corpse),
+                (_, Some(c)) => c.corpse.or(c.remains),
+                _ => None,
+            }
+            .or(self.terrain_t.remains);
+            if let Some(s) = s {
+                self.corpse_cache.insert(it.id, s);
+            }
         }
         // Item sprite cache.
         let kinds: HashSet<String> = world.items.iter().map(|i| i.kind.clone()).chain(world.buildings.iter().map(|b| b.kind.to_uppercase())).collect();

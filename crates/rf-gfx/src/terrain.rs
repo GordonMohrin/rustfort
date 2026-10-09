@@ -153,17 +153,56 @@ impl StairSet {
     }
 }
 
-/// One workshop/furnace: sprites by [stage 0..=3][ty 0..=3][tx 0..=2] (ty 0 = row above).
+/// One workshop/furnace/depot: sprites by [stage 0..=3][ty 0..=h][tx 0..w] (ty 0 = the row
+/// above the footprint). 3x3 workshops use `stage:tx:ty`, 5x5 ones (trade depot, siege
+/// workshop) too; 1x1 ones (quern, millstone) use `stage:ty`.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct WorkshopGfx {
+    pub w: usize,
+    pub h: usize,
+    /// Highest stage with sprites (the built look).
+    pub max_stage: usize,
     pub base: Vec<Option<Sprite>>,
     pub overlay: Vec<Option<Sprite>>,
 }
 
 impl WorkshopGfx {
-    fn idx(stage: usize, ty: usize, tx: usize) -> usize {
-        (stage * 4 + ty) * 3 + tx
+    pub(crate) fn idx(&self, stage: usize, ty: usize, tx: usize) -> usize {
+        (stage * (self.h + 1) + ty) * self.w + tx
     }
+}
+
+/// Sprites of simple (non-workshop) buildings, resolved once at load.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct BldGfx {
+    pub farmplot: Option<Sprite>,
+    pub farmplot_planted: Option<Sprite>,
+    pub trap_cage: Option<Sprite>,
+    pub trap_stone: Option<Sprite>,
+    pub trap_weapon: Option<Sprite>,
+    pub plate: Option<Sprite>,
+    pub lever: Option<Sprite>,
+    pub well: Option<Sprite>,
+    pub well_top: Option<Sprite>,
+    /// Stone, wood, metal.
+    pub archery: [Option<Sprite>; 3],
+    pub support: [Option<Sprite>; 3],
+    pub chain: [Option<Sprite>; 2],
+    pub slab: Option<Sprite>,
+    /// Lowered bridges per family (stone, wood, metal, glass):
+    /// [NS_W, NS_CENTER, NS_E, NS_1, WE_N, WE_CENTER, WE_S, WE_1, 1x1].
+    pub bridge: [[Option<Sprite>; 9]; 4],
+    pub road_dirt: Option<Sprite>,
+    pub road_paved: Option<Sprite>,
+}
+
+/// Graphics of one typed item subtype (`ITEM_WEAPON_PICK`, `ITEM_ARMOR_COAT`, ...).
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct TypedItem {
+    pub default: Option<Sprite>,
+    pub wood: Option<Sprite>,
+    pub metal: Option<Sprite>,
+    pub artifact: Option<Sprite>,
 }
 
 #[derive(Default)]
@@ -198,6 +237,10 @@ pub(crate) struct Tables {
     pub desig: HashMap<&'static str, Sprite>,
     pub stockpile: Option<Sprite>,
     pub workshops: HashMap<&'static str, WorkshopGfx>,
+    pub bld: BldGfx,
+    /// Typed item graphics (`ARMOR_GRAPHICS`, `WEAPON_GRAPHICS`, ...) by item subtype token.
+    pub typed: HashMap<String, TypedItem>,
+    pub remains: Option<Sprite>,
     /// Palette-recolorable terrain pages per material class.
     pub pal_pages: HashMap<MatClass, Vec<u16>>,
     pub item_pages: Vec<u16>,
@@ -233,6 +276,10 @@ const WORKSHOP_NAMES: &[(&str, &str)] = &[
     ("MagmaKiln", "FURNACE_KILN_LAVA"),
     ("GlassFurnace", "FURNACE_GLASS"),
     ("MagmaGlassFurnace", "FURNACE_GLASS_LAVA"),
+    ("Quern", "WORKSHOP_QUERN"),
+    ("Millstone", "WORKSHOP_MILLSTONE"),
+    ("Siege", "WORKSHOP_SIEGE"),
+    ("TradeDepot", "TRADE_DEPOT"),
 ];
 
 const WALL_PAGES: &[&str] = &[
@@ -321,30 +368,69 @@ impl Tables {
         }
         // Workshops.
         for &(sub, name) in WORKSHOP_NAMES {
-            let mut wg = WorkshopGfx { base: vec![None; 4 * 4 * 3], overlay: vec![None; 4 * 4 * 3] };
-            let mut any = false;
             let ov = format!("{name}_OVERLAY");
-            for (target, nm) in [(0, name), (1, ov.as_str())] {
+            // (target, stage, tx, ty, sprite)
+            let mut parts: Vec<(u8, usize, usize, usize, Sprite)> = Vec::new();
+            for (target, nm) in [(0u8, name), (1, ov.as_str())] {
                 for td in g.db.tiles_named(nm) {
                     let Some(page) = g.page_id(&td.page) else { continue };
-                    let a: Vec<usize> = td.extra.iter().filter_map(|e| e.parse().ok()).collect();
-                    if a.len() < 3 || a[0] > 3 || a[1] > 2 || a[2] > 3 {
+                    // Only the leading numeric args (comments may follow).
+                    let a: Vec<usize> = td.extra.iter().map_while(|e| e.trim().parse().ok()).collect();
+                    let (stage, tx, ty) = match a.len() {
+                        0 | 1 => continue,
+                        2 => (a[0], 0, a[1]),
+                        _ => (a[0], a[1], a[2]),
+                    };
+                    if stage > 3 || tx > 8 || ty > 9 {
                         continue;
                     }
-                    let i = WorkshopGfx::idx(a[0], a[2], a[1]);
-                    let sp = Some(Sprite::simple(page, td.x, td.y));
-                    if target == 0 {
-                        wg.base[i] = sp;
-                    } else {
-                        wg.overlay[i] = sp;
-                    }
-                    any = true;
+                    parts.push((target, stage, tx, ty, Sprite::simple(page, td.x, td.y)));
                 }
             }
-            if any {
-                t.workshops.insert(sub, wg);
+            if parts.is_empty() {
+                continue;
+            }
+            let w = parts.iter().map(|p| p.2).max().unwrap_or(0) + 1;
+            let h = parts.iter().map(|p| p.3).max().unwrap_or(1).max(1);
+            let max_stage = parts.iter().filter(|p| p.0 == 0).map(|p| p.1).max().unwrap_or(0);
+            let n = 4 * (h + 1) * w;
+            let mut wg = WorkshopGfx { w, h, max_stage, base: vec![None; n], overlay: vec![None; n] };
+            for (target, stage, tx, ty, s) in parts {
+                let i = wg.idx(stage, ty, tx);
+                if target == 0 {
+                    wg.base[i] = Some(s);
+                } else {
+                    wg.overlay[i] = Some(s);
+                }
+            }
+            t.workshops.insert(sub, wg);
+        }
+        // Simple buildings.
+        let mut b = BldGfx {
+            farmplot: n("FARMPLOT"),
+            farmplot_planted: n("FARMPLOT_PLANTED"),
+            trap_cage: n("TRAP_CAGE"),
+            trap_stone: n("TRAP_STONE"),
+            trap_weapon: n("TRAP_WEAPON"),
+            plate: n("TRAP_PLATE_READY"),
+            lever: n("LEVER_SET"),
+            well: n("BLD_WELL_WITH_ROPE").or(n("BLD_WELL")),
+            well_top: n("BLD_WELL_ROPE"),
+            archery: [n("BLD_ARCHERY_TARGET_STONE"), n("BLD_ARCHERY_TARGET_WOOD"), n("BLD_ARCHERY_TARGET_METAL")],
+            support: [n("BLD_SUPPORT_STONE"), n("BLD_SUPPORT_WOOD"), n("BLD_SUPPORT_METAL")],
+            chain: [n("BLD_CHAIN_METAL"), n("BLD_CHAIN_ROPE")],
+            slab: n("ITEM_SLAB_BLANK"),
+            road_dirt: n("BLD_DIRT_ROAD"),
+            road_paved: n("BLD_PAVED_ROAD"),
+            ..Default::default()
+        };
+        for (fi, fam) in ["STONE", "WOOD", "METAL", "GLASS"].iter().enumerate() {
+            for (i, suf) in ["NS_W", "NS_CENTER", "NS_E", "NS_1", "WE_N", "WE_CENTER", "WE_S", "WE_1", "1"].iter().enumerate() {
+                b.bridge[fi][i] = n(&format!("BLD_BRIDGE_{fam}_{suf}"));
             }
         }
+        t.bld = b;
+        t.remains = n("ITEM_REMAINS");
         // Palette pages per class.
         let ids = |list: &[&str]| -> Vec<u16> { list.iter().filter_map(|p| g.page_id(p)).collect() };
         t.pal_pages.insert(
@@ -389,6 +475,67 @@ impl Tables {
     pub(crate) fn palette_pages(&self, c: MatClass) -> &[u16] {
         self.pal_pages.get(&c).map(|v| v.as_slice()).unwrap_or(&[])
     }
+}
+
+/// Typed item graphics from the item graphics raws:
+/// - `[ARMOR_GRAPHICS:PAGE:x:y:ITEM_ARMOR_COAT]` (also GLOVES/HELM/PANTS/SHOES/SHIELD/FOOD/
+///   TOY/TRAPCOMP/TOOL) with optional material variants like `[SHOES_GRAPHICS_METAL:PAGE:x:y:..]`
+///   or `[TOOL_GRAPHICS_WOOD:ALL:PAGE:x:y]`;
+/// - `[WEAPON_GRAPHICS:ITEM_WEAPON_PICK]` / `[AMMO_GRAPHICS:..]` with `*_DEFAULT`, `*_WOOD`,
+///   `*_ARTIFACT` sub-tokens (`PAGE:x:y`).
+pub(crate) fn typed_items(g: &Gfx, raws: &rf_raws::Raws) -> HashMap<String, TypedItem> {
+    const KINDS: &[&str] = &[
+        "ARMOR_GRAPHICS",
+        "GLOVES_GRAPHICS",
+        "HELM_GRAPHICS",
+        "PANTS_GRAPHICS",
+        "SHOES_GRAPHICS",
+        "SHIELD_GRAPHICS",
+        "FOOD_GRAPHICS",
+        "TOY_GRAPHICS",
+        "TRAPCOMP_GRAPHICS",
+        "TOOL_GRAPHICS",
+        "WEAPON_GRAPHICS",
+        "AMMO_GRAPHICS",
+        "SIEGEAMMO_GRAPHICS",
+    ];
+    // Sprite from the first arg that names a page, followed by x:y.
+    let sp = |t: &rf_raws::Token| -> Option<Sprite> {
+        let i = t.args.iter().position(|a| g.page_id(a).is_some())?;
+        let page = g.page_id(t.arg(i))?;
+        Some(Sprite::simple(page, t.arg_i32(i + 1)?.max(0) as u16, t.arg_i32(i + 2)?.max(0) as u16))
+    };
+    let mut out: HashMap<String, TypedItem> = HashMap::new();
+    for kind in KINDS {
+        for o in raws.of_kind(kind) {
+            let h = o.header();
+            // Header either `SUBTYPE` or `PAGE:x:y:SUBTYPE[:extra]`.
+            let (sub, head) = if h.args.len() >= 4 && g.page_id(h.arg(0)).is_some() { (h.arg(3), sp(h)) } else { (h.arg(0), None) };
+            if sub.is_empty() {
+                continue;
+            }
+            let e = out.entry(sub.to_string()).or_default();
+            e.default = e.default.or(head);
+            for t in &o.tokens[1..] {
+                let n = t.name.as_str();
+                if n.contains("UPRIGHT") || n.contains("WEAPON_TRAP") || n.contains("DIAGONAL") || n.contains("_HEAD") {
+                    continue;
+                }
+                let Some(s) = sp(t) else { continue };
+                if n.ends_with("_WOOD") || n.ends_with("_WOODEN") {
+                    e.wood = e.wood.or(Some(s));
+                } else if n.ends_with("_METAL") || n.ends_with("_MATERIAL") {
+                    e.metal = e.metal.or(Some(s));
+                } else if n.ends_with("_ARTIFACT") {
+                    e.artifact = e.artifact.or(Some(s));
+                } else if n.ends_with("_DEFAULT") {
+                    e.default = e.default.or(Some(s));
+                }
+            }
+        }
+    }
+    out.retain(|_, v| v.default.is_some() || v.wood.is_some() || v.metal.is_some());
+    out
 }
 
 fn first_on_page(g: &Gfx, token: &str) -> Option<Sprite> {
@@ -886,11 +1033,32 @@ fn wall(g: &Gfx, world: &World, p: Pos, mat: u16, tt: &rf_core::TiletypeInfo, h:
 pub(crate) fn item_sprites_for_kind(g: &Gfx, kind: &str) -> [Option<Sprite>; 7] {
     let n = |s: &str| g.named.get(s).copied();
     let classes = [MatClass::Stone, MatClass::Soil, MatClass::Sand, MatClass::Wood, MatClass::Metal, MatClass::Glass, MatClass::Other];
+    // DF item type / building type (upper-cased) -> Premium name stem.
     let k = match kind {
         "ARMORSTAND" => "ARMOR_STAND",
         "WEAPONRACK" => "WEAPON_RACK",
         "BAR" => "BARS",
         "TRAPPARTS" => "MECHANISMS",
+        "ROUGH" => "ROUGH_GEM",
+        "SMALLGEM" => "GEMS",
+        "GEM" => "LARGE_GEM",
+        "ANIMALTRAP" => "ANIMAL_TRAP",
+        "HATCH" => "HATCH_COVER",
+        "TRACTIONBENCH" => "TRACTION_BENCH",
+        "SKIN_TANNED" => "TANNED_SKIN",
+        "TRAPCOMP" => "TRAP_COMPONENT",
+        "GRATEWALL" | "GRATEFLOOR" => "GRATE",
+        "WINDOWGLASS" => "WINDOW_GLASS",
+        "WINDOWGEM" => "WINDOW_GEM",
+        "BOOKCASE" => "CABINET",
+        "COIN" => "COINS_PILE",
+        "EGG" => "EGG_SIZE2",
+        "FOOD" => "PREPARED_MEAL",
+        "POWDER_MISC" => "POWDER",
+        "LIQUID_MISC" => "LIQUID",
+        // Estimate: Premium has no glob (fat/tallow) sprite; a liquid blob is closest.
+        "GLOB" => "LIQUID",
+        "INSTRUMENT" => "INSTRUMENT_STRINGED_HANDHELD",
         k => k,
     };
     let mut out = [None; 7];
@@ -901,15 +1069,28 @@ pub(crate) fn item_sprites_for_kind(g: &Gfx, kind: &str) -> [Option<Sprite>; 7] 
             MatClass::Glass => "GLASS",
             _ => "STONE",
         };
+        let wm = if *c == MatClass::Metal { "METAL" } else { "WOOD" };
         out[i] = match k {
             "DRINK" => n("ITEM_BARREL_WOOD_LIQUID"),
-            "BARREL" => n(&format!("ITEM_BARREL_{}_EMPTY", if *c == MatClass::Metal { "METAL" } else { "WOOD" })),
-            "BIN" => n(&format!("ITEM_BIN_{}_EMPTY", if *c == MatClass::Metal { "METAL" } else { "WOOD" })),
-            "BUCKET" => n(&format!("ITEM_BUCKET_{}", if *c == MatClass::Metal { "METAL" } else { "WOOD" })),
+            "BARREL" => n(&format!("ITEM_BARREL_{wm}_EMPTY")),
+            "BIN" => n(&format!("ITEM_BIN_{wm}_EMPTY")),
+            "BUCKET" => n(&format!("ITEM_BUCKET_{wm}")),
+            "ANIMAL_TRAP" => n(&format!("ITEM_ANIMAL_TRAP_{wm}")),
             "BAG" => n("ITEM_BAG_EMPTY"),
             "SEEDS" => n("SEEDS_FOR_BAG").or(n("ITEM_BAG_IN_USE")),
             "CAGE" => n(&format!("ITEM_CAGE_{}", if *c == MatClass::Stone || *c == MatClass::Other { "WOOD" } else { suffix })),
-            _ => n(&format!("ITEM_{k}_{suffix}")).or(n(&format!("ITEM_{k}"))).or(n(&format!("ITEM_{k}S"))),
+            "ARMOR_STAND" | "WEAPON_RACK" => n(&format!("ITEM_{k}_{suffix}_EMPTY")).or(n(&format!("ITEM_{k}_STONE_EMPTY"))),
+            "TRACTION_BENCH" => n(&format!("ITEM_TRACTION_BENCH_{}_ROPE", if *c == MatClass::Wood { "WOODEN" } else { suffix }))
+                .or(n("ITEM_TRACTION_BENCH_STONE_ROPE")),
+            "SLAB" => n("ITEM_SLAB_BLANK"),
+            "COFFIN" => n(&format!("ITEM_COFFIN_{suffix}")).or(n("ITEM_COFFIN")),
+            // Material families: own suffix, else metal (palette-recolored), else wood
+            // (crafts like amulets/crowns have no stone version).
+            _ => n(&format!("ITEM_{k}_{suffix}"))
+                .or(n(&format!("ITEM_{k}")))
+                .or(n(&format!("ITEM_{k}S")))
+                .or(n(&format!("ITEM_{k}_{}", if *c == MatClass::Wood { "WOOD" } else { "METAL" })))
+                .or(n(&format!("ITEM_{k}_WOOD"))),
         };
     }
     out
@@ -941,7 +1122,34 @@ pub(crate) fn item(g: &Gfx, world: &World, it: &Item, out: &mut Vec<Sprite>) {
                 return;
             }
         }
+        "CORPSE" | "CORPSEPIECE" | "REMAINS" => {
+            if let Some(s) = g.corpse_cache.get(&it.id) {
+                out.push(*s);
+                return;
+            }
+            out.extend(g.terrain_t.remains);
+            return;
+        }
         _ => {}
+    }
+    // Typed items (weapons, armor, tools, ...) by subtype, in their material.
+    if !it.subtype.is_empty() {
+        if let Some(ti) = g.terrain_t.typed.get(it.subtype.as_str()) {
+            let class = mat_class(world.material(it.mat));
+            let s = if it.flags.artifact && ti.artifact.is_some() {
+                ti.artifact
+            } else {
+                match class {
+                    MatClass::Wood => ti.wood.or(ti.default),
+                    MatClass::Metal => ti.metal.or(ti.default),
+                    _ => ti.default.or(ti.metal),
+                }
+            };
+            if let Some(s) = s.or(ti.wood) {
+                out.push(g.recolor(s, world, it.mat));
+                return;
+            }
+        }
     }
     let Some(set) = g.item_cache(&it.kind) else { return };
     let c = class_index(mat_class(world.material(it.mat)));
@@ -957,31 +1165,111 @@ pub(crate) fn item(g: &Gfx, world: &World, it: &Item, out: &mut Vec<Sprite>) {
 
 pub(crate) fn building(g: &Gfx, world: &World, b: &Building, p: Pos, out: &mut Vec<Sprite>) {
     let t = &g.terrain_t;
-    match b.kind.as_str() {
-        "Workshop" | "Furnace" => {
-            let Some(wg) = t.workshops.get(b.subtype.as_str()) else { return };
-            let lx = (p.x - b.x1) as usize;
-            let ly = (p.y - b.y1) as usize;
-            if lx > 2 || ly > 2 {
-                return;
-            }
-            let stage = if b.built || b.stage < 0 { 3 } else { (b.stage.clamp(0, 2)) as usize };
-            let emit = |ty: usize, dy: i16, out: &mut Vec<Sprite>| {
-                let i = WorkshopGfx::idx(stage, ty, lx);
-                if let Some(s) = wg.base[i] {
-                    out.push(g.recolor(s, world, b.mat).at(0, dy));
-                }
-                if let Some(s) = wg.overlay[i] {
-                    out.push(s.at(0, dy));
-                }
-            };
-            if ly == 0 {
-                emit(0, -1, out);
-            }
-            emit(ly + 1, 0, out);
+    let bl = &t.bld;
+    let class = mat_class(world.material(b.mat));
+    // Stone / wood / metal family index for buildings with three material looks.
+    let swm = match class {
+        MatClass::Wood => 1,
+        MatClass::Metal => 2,
+        _ => 0,
+    };
+    let rc = |s: Option<Sprite>, out: &mut Vec<Sprite>| {
+        if let Some(s) = s {
+            out.push(g.recolor(s, world, b.mat));
         }
+    };
+    let ws_key = match b.kind.as_str() {
+        "Workshop" | "Furnace" => Some(b.subtype.as_str()),
+        "TradeDepot" => Some("TradeDepot"),
+        _ => None,
+    };
+    if let Some(key) = ws_key {
+        let Some(wg) = t.workshops.get(key) else { return };
+        let lx = (p.x - b.x1) as usize;
+        let ly = (p.y - b.y1) as usize;
+        if lx >= wg.w || ly >= wg.h {
+            return;
+        }
+        let built = b.built || b.stage < 0;
+        let stage = if built { wg.max_stage } else { (b.stage.max(0) as usize).min(wg.max_stage.saturating_sub(1)) };
+        let emit = |ty: usize, dy: i16, out: &mut Vec<Sprite>| {
+            let i = wg.idx(stage, ty, lx);
+            if let Some(s) = wg.base[i] {
+                out.push(g.recolor(s, world, b.mat).at(0, dy));
+            }
+            if let Some(s) = wg.overlay[i] {
+                out.push(s.at(0, dy));
+            }
+        };
+        if ly == 0 {
+            emit(0, -1, out);
+        }
+        emit(ly + 1, 0, out);
+        return;
+    }
+    match b.kind.as_str() {
         "Stockpile" => out.extend(t.stockpile),
-        "Civzone" | "FarmPlot" | "Construction" => {}
+        "Civzone" | "Construction" => {}
+        "FarmPlot" => {
+            out.extend(bl.farmplot);
+            if let Some(s) = g.crops_at.get(&p) {
+                out.push(*s);
+            }
+        }
+        "Trap" => {
+            let s = match b.subtype.as_str() {
+                "CageTrap" => bl.trap_cage,
+                "StoneFallTrap" => bl.trap_stone,
+                "WeaponTrap" => bl.trap_weapon,
+                "Lever" => bl.lever,
+                "PressurePlate" => bl.plate,
+                _ => None,
+            };
+            rc(s, out);
+        }
+        "Well" => {
+            rc(bl.well, out);
+        }
+        "ArcheryTarget" => rc(bl.archery[swm], out),
+        "Support" => rc(bl.support[swm], out),
+        "Chain" => out.extend(bl.chain[0]),
+        "Slab" => rc(bl.slab, out),
+        "RoadDirt" => out.extend(bl.road_dirt),
+        "RoadPaved" => rc(bl.road_paved, out),
+        "Bridge" => {
+            let fam = match class {
+                MatClass::Wood => 1,
+                MatClass::Metal => 2,
+                MatClass::Glass => 3,
+                _ => 0,
+            };
+            let set = &bl.bridge[fam];
+            let (w, h) = (b.x2 - b.x1 + 1, b.y2 - b.y1 + 1);
+            // Lowered bridge. The span direction is not exported; a bridge longer north-south
+            // than wide (or square) is drawn as a north-south span (estimate).
+            let i = if w == 1 && h == 1 {
+                8
+            } else if h >= w {
+                if w == 1 {
+                    3
+                } else if p.x == b.x1 {
+                    0
+                } else if p.x == b.x2 {
+                    2
+                } else {
+                    1
+                }
+            } else if h == 1 {
+                7
+            } else if p.y == b.y1 {
+                4
+            } else if p.y == b.y2 {
+                6
+            } else {
+                5
+            };
+            rc(set[i].or(set[1]).or(bl.bridge[0][i]), out);
+        }
         k => {
             // Furniture: same sprites as the item lying around. Item cache is keyed by upper-case kind.
             let mut buf = [0u8; 32];

@@ -73,6 +73,9 @@ pub(crate) struct LayerSet {
 pub(crate) struct CreatureGfx {
     pub default: Option<Sprite>,
     pub child: Option<Sprite>,
+    /// `[CORPSE:...]` / `[REMAINS:...]` sprites (simple creatures).
+    pub corpse: Option<Sprite>,
+    pub remains: Option<Sprite>,
     pub sets: Vec<LayerSet>,
 }
 
@@ -130,6 +133,8 @@ pub(crate) fn parse_all(g: &mut Gfx, raws: &Raws) -> HashMap<String, CreatureGfx
             }
             match t.name.as_str() {
                 "DEFAULT" if cur_set.is_none() => cg.default = sprite_ref(g, t, 0),
+                "CORPSE" if cur_set.is_none() && cg.corpse.is_none() => cg.corpse = sprite_ref(g, t, 0),
+                "REMAINS" if cur_set.is_none() && cg.remains.is_none() => cg.remains = sprite_ref(g, t, 0),
                 "CHILD" if cur_set.is_none() && t.args.last().map(|s| s == "DEFAULT").unwrap_or(false) => cg.child = sprite_ref(g, t, 0),
                 "LAYER_SET" => {
                     flush(&mut cur_set, &mut layer, in_group);

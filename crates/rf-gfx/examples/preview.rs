@@ -46,7 +46,8 @@ fn scan_level(gfx: &Gfx, world: &World, z: i16, missing: &mut Missing, marks: Op
             }
         }
     }
-    for b in world.buildings.iter().filter(|b| b.z == z) {
+    // Zones are drawn by the UI (only in zone mode), not by sprites.
+    for b in world.buildings.iter().filter(|b| b.z == z && b.kind != "Civzone") {
         if world.tile(b.center).map(|t| t.hidden()).unwrap_or(true) {
             continue;
         }
