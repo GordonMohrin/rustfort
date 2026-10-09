@@ -30,6 +30,8 @@ pub struct Meta {
     pub region_z: i32,
     /// Where this world came from (`export:<path>` or `synthetic`).
     pub source: String,
+    /// Active mods of the save in load order (DF mod ids with version, e.g. `perspective_walls:25`).
+    pub mods: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,6 +83,12 @@ pub struct World {
     pub items: Vec<Item>,
     pub buildings: Vec<Building>,
     pub plants: Vec<Plant>,
+    /// Manager work orders.
+    #[serde(default)]
+    pub work_orders: Vec<WorkOrder>,
+    /// Plant raws (crops, brewables, trees) of the save.
+    #[serde(default)]
+    pub plant_raws: Vec<PlantRaw>,
 }
 
 impl World {

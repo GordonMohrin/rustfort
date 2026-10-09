@@ -403,6 +403,7 @@ pub fn load_export(dir: &Path) -> Result<(World, ImportReport), ImportError> {
             region_y: manifest.region_y,
             region_z: manifest.region_z,
             source: format!("export:{}", dir.display()),
+            ..Default::default()
         },
         // Entities were exported last, so the end tick is the state they describe.
         calendar: if manifest.year_end > 0 {
@@ -418,6 +419,7 @@ pub fn load_export(dir: &Path) -> Result<(World, ImportReport), ImportError> {
         items,
         buildings,
         plants,
+        ..Default::default()
     };
     validate(&mut world, &manifest, &mut w);
 

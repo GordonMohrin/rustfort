@@ -43,6 +43,8 @@
 //! - Path cache hit rate is low; batches are usually too small for rayon to pay off
 //!   (threshold: 8 requests per tick), so the sim is effectively single-threaded today.
 
+pub mod build_api;
+pub use build_api::{BuildOption, OrderTemplate, ZONE_KINDS};
 pub mod gen;
 pub mod items;
 pub mod nav;

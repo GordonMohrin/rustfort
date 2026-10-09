@@ -208,6 +208,103 @@ pub struct Building {
     pub extents: Vec<u8>,
     /// Item ids contained/built in.
     pub items: Vec<i32>,
+    /// Workshop/furnace job queue (DF `bld.jobs`, excluding the construction job).
+    pub jobs: Vec<BuildingJob>,
+    /// Farm plots: crop plant token per season (spring, summer, autumn, winter), "" = fallow.
+    pub crops: Vec<String>,
+}
+
+/// One queued job in a workshop/furnace (DF `job` linked to the building).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BuildingJob {
+    /// DF `job_type` name, e.g. `BrewDrink`, `PrepareMeal`, `ConstructBarrel`, `CustomReaction`.
+    pub job: String,
+    /// Reaction token for `CustomReaction` (e.g. `BREW_DRINK_FROM_PLANT`), else empty.
+    pub reaction: String,
+    /// Product item type/subtype for item jobs (DF names), else empty.
+    pub item_type: String,
+    pub item_subtype: String,
+    /// Required material token (e.g. `INORGANIC:IRON`), or empty = any.
+    pub mat: String,
+    /// DF `job_material_category` flags that are set (e.g. `wood`, `stone`, `cloth`).
+    pub mat_category: Vec<String>,
+    pub repeat: bool,
+    pub suspended: bool,
+    /// Manager work order this job came from, or -1.
+    pub order_id: i32,
+}
+
+/// A manager work order (DF `manager_order`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WorkOrder {
+    pub id: i32,
+    pub job: String,
+    pub reaction: String,
+    pub item_type: String,
+    pub item_subtype: String,
+    pub mat: String,
+    pub mat_category: Vec<String>,
+    pub amount_left: i32,
+    pub amount_total: i32,
+    /// `OneTime`, `Daily`, `Monthly`, `Seasonally`, `Yearly`.
+    pub frequency: String,
+    /// Workshop building id the order is restricted to, or -1.
+    pub workshop_id: i32,
+    pub active: bool,
+    pub validated: bool,
+    /// Item-count conditions ("only if fewer than N drinks"), all must hold.
+    pub conditions: Vec<OrderCondition>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OrderCondition {
+    /// `AtLeast`, `AtMost`, `GreaterThan`, `LessThan`, `Exactly`, `Not`.
+    pub compare: String,
+    pub value: i32,
+    /// DF item type name the condition counts (e.g. `DRINK`), or empty = any.
+    pub item_type: String,
+    pub item_subtype: String,
+    pub mat: String,
+    /// Material flags / traits, e.g. `BREWABLE`, `EDIBLE_COOKED`, `UNROTTEN`.
+    pub flags: Vec<String>,
+}
+
+/// Plant raw facts the simulation needs (from the save's raws, via the exporter).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PlantRaw {
+    /// Plant token, e.g. `MUSHROOM_HELMET_PLUMP`.
+    pub token: String,
+    pub name: String,
+    pub name_plural: String,
+    /// Ticks from planting to harvest (DF `GROWDUR` x 10 game-ticks... stored in ticks).
+    pub growdur: i32,
+    /// Seasons it can be planted in.
+    pub spring: bool,
+    pub summer: bool,
+    pub autumn: bool,
+    pub winter: bool,
+    /// Grows underground (subterranean farm plots) / above ground.
+    pub underground: bool,
+    pub aboveground: bool,
+    pub is_tree: bool,
+    pub is_shrub: bool,
+    /// Has a DRINK material (can be brewed).
+    pub brewable: bool,
+    pub edible_raw: bool,
+    pub edible_cooked: bool,
+    /// Can be milled / processed (thread, etc.).
+    pub millable: bool,
+    pub threshable: bool,
+    /// Has SEED material.
+    pub has_seed: bool,
+    /// Palette indices of the plant's main materials, NO_MAT if not in the palette.
+    pub mat_structural: u16,
+    pub mat_drink: u16,
+    pub mat_seed: u16,
 }
 
 impl Building {
