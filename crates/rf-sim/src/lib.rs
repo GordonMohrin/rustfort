@@ -111,6 +111,10 @@ pub mod skills; // [skills9] experience per job, item quality, training, social 
 pub mod growth; // [skills9] saplings grow into trees, trees regrow
 pub mod persist; // [saves10] module runtime state across save/load (World::sim_state)
 mod saves11; // [saves11] exact runtime snapshot (World::sim_exact)
+mod climbing; // [siege12] invaders climb walls and trees, jump gaps
+pub mod siegeengines; // [siege12] ballistae, catapults, bolt throwers
+pub use climbing::ClimbStats; // [siege12]
+pub use siegeengines::{EngineInfo, SiegeStats}; // [siege12]
 pub use persist::saved_ticks; // [saves10]
 pub use justice::JusticeReport; // [society2]
 pub use lifestyle::LifestyleReport; // [society2]
@@ -200,6 +204,9 @@ pub mod labor {
     pub const SPINNER: u64 = 1 << 38;
     /// [gaps10] Pump operating (DF `OPERATE_PUMP`).
     pub const OPERATE_PUMP: u64 = 1 << 46;
+    /// [siege12] Siege engineering (DF `SIEGECRAFT`) and siege operating (DF `SIEGEOPERATE`).
+    pub const SIEGECRAFT: u64 = 1 << 47;
+    pub const SIEGEOPERATE: u64 = 1 << 48;
     // [animals] high bits to stay clear of other additions.
     pub const MILK: u64 = 1 << 50;
     pub const MAKE_CHEESE: u64 = 1 << 51;
@@ -236,6 +243,8 @@ pub mod labor {
             "PROCESS_PLANT" => PROCESS_PLANT,
             "MILLER" => MILLER,
             "OPERATE_PUMP" => OPERATE_PUMP, // [gaps10]
+            "SIEGECRAFT" => SIEGECRAFT,     // [siege12]
+            "SIEGEOPERATE" => SIEGEOPERATE, // [siege12]
             "BUILD_CONSTRUCTION" => BUILD_CONSTRUCTION,
             "MECHANIC" => MECHANIC,
             "HAUL_STONE" => HAUL_STONE,
@@ -435,6 +444,8 @@ enum Task {
     PullLever(i32),
     /// [gaps10] Walk to a screw pump (building id) and work it by hand.
     OperatePump(i32),
+    /// [siege12] Siege operator at engine (building id): fetch ammo, load, fire.
+    SiegeOperate(i32),
     /// [defense] Re-arm trap `.0` with cage/stone item `.1` (fetch, carry, load).
     LoadTrap(i32, i32),
     GoJob(u32),
@@ -565,6 +576,9 @@ struct PathJob {
     ok: bool,
     nodes: u32,
     out: Vec<u32>,
+    /// [siege12] Search over the climbing graph (climbing invaders).
+    #[serde(default)]
+    climb: bool,
 }
 
 thread_local! {
@@ -1180,6 +1194,7 @@ impl Sim {
             (Kind::Dead, _) => ("Dead", None),
             (_, Task::PullLever(b)) => ("Pull the Lever", self.world.building(b).map(|b| b.center)), // [defense]
             (_, Task::OperatePump(b)) => ("Operate Pump", self.world.building(b).map(|b| b.center)), // [gaps10]
+            (_, Task::SiegeOperate(b)) => (self.engines_caption(b), self.world.building(b).map(|b| b.center)), // [siege12]
             (_, Task::LoadTrap(b, _)) => (self.defense_reload_caption(b), self.world.building(b).map(|b| b.center)), // [defense]
             (_, Task::Idle) | (_, Task::Wander) => ("No Job", None),
             (_, Task::GoJob(j)) | (_, Task::Job(j)) => {
@@ -1419,11 +1434,16 @@ impl Sim {
 
     fn solve_paths(&mut self) {
         let nav = &self.nav;
+        let cg = nav::ClimbGraph { nav, tiles: &self.world.tiles, cls: &self.combat.climb.cls }; // [siege12]
         let jobs = &mut self.path_jobs[..self.n_path];
         let solve = |pj: &mut PathJob| {
             ASTAR.with(|a| {
                 let mut a = a.borrow_mut();
-                pj.ok = a.search(nav, pj.start, &pj.goals, MAX_NODES, &mut pj.out);
+                pj.ok = if pj.climb {
+                    a.search_climb(&cg, pj.start, &pj.goals, climbing::CLIMB_MAX_NODES, &mut pj.out) // [siege12]
+                } else {
+                    a.search(nav, pj.start, &pj.goals, MAX_NODES, &mut pj.out)
+                };
                 pj.nodes = a.last_expanded;
             });
         };
@@ -1454,7 +1474,7 @@ impl Sim {
                 std::mem::swap(&mut ai.path, &mut pj.out);
                 ai.path_i = 0;
                 ai.wake = now + 1;
-                if pj.goals.n == 1 && ai.path.len() >= 8 && self.path_cache.len() < PATH_CACHE_MAX {
+                if pj.goals.n == 1 && ai.path.len() >= 8 && self.path_cache.len() < PATH_CACHE_MAX && !pj.climb { // [siege12]
                     self.path_cache.insert((pj.start, pj.goals.t[0]), ai.path.clone());
                 }
             } else {
@@ -1501,7 +1521,7 @@ impl Sim {
         ai.wake = u64::MAX;
         let req = ai.req;
         if self.n_path == self.path_jobs.len() {
-            self.path_jobs.push(PathJob { slot: 0, req: 0, start: 0, goals: Goals::default(), ok: false, nodes: 0, out: Vec::new() });
+            self.path_jobs.push(PathJob { slot: 0, req: 0, start: 0, goals: Goals::default(), ok: false, nodes: 0, out: Vec::new(), climb: false });
         }
         let pj = &mut self.path_jobs[self.n_path];
         pj.slot = s;
@@ -1509,6 +1529,34 @@ impl Sim {
         pj.start = start;
         pj.goals = goals;
         pj.ok = false;
+        pj.climb = false; // [siege12]
+        self.n_path += 1;
+    }
+
+    /// [siege12] Path request over the climbing graph (climbing invaders; never cached).
+    pub(crate) fn request_path_climb(&mut self, s: usize, goals: Goals, now: u64) {
+        let start = self.ai[s].pos;
+        let ai = &mut self.ai[s];
+        ai.path.clear();
+        ai.path_i = 0;
+        ai.req = ai.req.wrapping_add(1);
+        if goals.as_slice().contains(&start) {
+            ai.wake = now + 1;
+            return;
+        }
+        ai.waiting = true;
+        ai.wake = u64::MAX;
+        let req = ai.req;
+        if self.n_path == self.path_jobs.len() {
+            self.path_jobs.push(PathJob { slot: 0, req: 0, start: 0, goals: Goals::default(), ok: false, nodes: 0, out: Vec::new(), climb: true });
+        }
+        let pj = &mut self.path_jobs[self.n_path];
+        pj.slot = s;
+        pj.req = req;
+        pj.start = start;
+        pj.goals = goals;
+        pj.ok = false;
+        pj.climb = true;
         self.n_path += 1;
     }
 
@@ -1758,10 +1806,16 @@ impl Sim {
         let ai = &self.ai[s];
         let next = ai.path[ai.path_i];
         if !self.nav.walkable(next as usize) {
+            if self.climb_step(s, next, now) {
+                return; // [siege12] climbing invaders hang on walls and trees
+            }
             // The way got blocked: search again towards the same destination.
-            let dest = *ai.path.last().unwrap();
+            let dest = *self.ai[s].path.last().unwrap();
             self.request_path(s, Goals::one(dest), now);
             return;
+        }
+        if !self.nav.walkable(self.ai[s].pos as usize) && self.climb_step(s, next, now) {
+            return; // [siege12] climbing off a wall onto its top
         }
         self.ai[s].path_i += 1;
         self.move_to(s, next, now);
@@ -1826,6 +1880,9 @@ impl Sim {
         }
         if pf!(4, self.power_try_job(s, now)) {
             return; // [gaps10] Operate pump by hand
+        }
+        if self.engines_try_job(s, now) {
+            return; // [siege12] load and fire siege engines
         }
         if restricted && self.alert_burial(s, now) {
             return; // [military2] burial inside the alert burrow
@@ -1922,6 +1979,7 @@ impl Sim {
         match task {
             Task::PullLever(b) => self.defense_arrive_lever(s, b, now), // [defense]
             Task::OperatePump(b) => self.power_arrive_pump(s, b, now), // [gaps10]
+            Task::SiegeOperate(b) => self.engines_arrive(s, b, now), // [siege12]
             Task::LoadTrap(b, it) => self.defense_arrive_reload(s, b, it, now), // [defense]
             Task::Wander | Task::Idle => {
                 self.ai[s].task = Task::Idle;
@@ -2076,6 +2134,7 @@ impl Sim {
         match task {
             Task::PullLever(b) => self.defense_cancel_lever(s, b), // [defense]
             Task::OperatePump(b) => self.power_cancel_pump(s, b), // [gaps10]
+            Task::SiegeOperate(b) => self.engines_cancel(s, b), // [siege12]
             Task::LoadTrap(b, it) => self.defense_cancel_reload(s, b, it), // [defense]
             Task::GoJob(j) | Task::Job(j) => {
                 if self.jobs[j as usize].claimed == s as u32 {

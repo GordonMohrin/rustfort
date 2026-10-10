@@ -86,6 +86,11 @@ const OPTIONS: &[BuildOption] = &[
     BuildOption { kind: "Box", subtype: "", label: "Chest", category: "Furniture", size: (1, 1), needs: "1 chest or coffer", dragged: false },
     BuildOption { kind: "Coffin", subtype: "", label: "Coffin", category: "Furniture", size: (1, 1), needs: "1 coffin", dragged: false },
     BuildOption { kind: "Well", subtype: "", label: "Well", category: "Other", size: (1, 1), needs: "1 block, 1 bucket, 1 chain or rope, 1 mechanism; open space above water", dragged: false },
+    // [siege12] siege workshop and siege engines (wiki Siege engine; engines can stand on walls)
+    BuildOption { kind: "Workshop", subtype: "Siege", label: "Siege workshop", category: "Workshops", size: (5, 5), needs: BUILDING_MAT, dragged: false },
+    BuildOption { kind: "SiegeEngine", subtype: "Ballista", label: "Ballista", category: "Siege engines", size: (3, 3), needs: "3 ballista parts", dragged: false },
+    BuildOption { kind: "SiegeEngine", subtype: "Catapult", label: "Catapult", category: "Siege engines", size: (3, 3), needs: "3 catapult parts", dragged: false },
+    BuildOption { kind: "SiegeEngine", subtype: "BoltThrower", label: "Bolt thrower", category: "Siege engines", size: (1, 1), needs: "1 bolt thrower parts, 1 mechanism, 1 chain", dragged: false },
 ];
 
 /// A bed slot that no longer exists (its building was removed).
@@ -123,6 +128,11 @@ impl Sim {
                 if o.kind == "Well" {
                     if !matches!(info.shape, Shape::Empty | Shape::RampTop) || !self.water_below(p) {
                         return Err("needs open space above water at least 3/7 deep".into());
+                    }
+                } else if o.kind == "SiegeEngine" {
+                    // [siege12] on any floor or on top of a wall
+                    if !self.is_walkable(p) {
+                        return Err("needs a floor or a wall top".into());
                     }
                 } else if !info.shape.has_floor() {
                     return Err("needs open floor".into());

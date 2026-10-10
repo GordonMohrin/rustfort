@@ -11,7 +11,7 @@
 //!   in the CPU cache). Expansion order and tie-breaks are unchanged, so every path is
 //!   exactly the one the earlier version found.
 
-use crate::nav::{Nav, LM_INF, LM_K, MAX_NEIGHBORS};
+use crate::nav::{ClimbGraph, Nav, CLIMB_MAXN, LM_INF, LM_K, MAX_NEIGHBORS}; // [siege12] climbing graph
 use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
 
@@ -384,6 +384,95 @@ impl AStar {
         self.last_expanded = expanded;
         false
     }
+
+    /// [siege12] A* for a climbing creature over [`ClimbGraph`] (walking, climbing and jumping
+    /// moves). Plain distance heuristic (the landmark tables are walking distances, which a
+    /// climber can undercut). Same output format as [`AStar::search`].
+    pub fn search_climb(&mut self, g: &ClimbGraph, start: u32, goals: &Goals, max_nodes: u32, out: &mut Vec<u32>) -> bool {
+        out.clear();
+        if goals.n == 0 {
+            return false;
+        }
+        self.last_expanded = 0;
+        if goals.as_slice().contains(&start) {
+            return true;
+        }
+        self.reset();
+        let nav = g.nav;
+        let mut gp = [(0i32, 0i32, 0i32); MAX_GOALS];
+        for (k, &t) in goals.as_slice().iter().enumerate() {
+            let (x, y, z) = nav.xyz(t as usize);
+            gp[k] = (x as i32, y as i32, z as i32);
+        }
+        let gp = &gp[..goals.n];
+        let mc = nav.min_cost;
+        let h = |i: u32| -> u32 {
+            let (x, y, z) = nav.xyz(i as usize);
+            let (x, y, z) = (x as i32, y as i32, z as i32);
+            let mut best = u32::MAX;
+            for &(gx, gy, gz) in gp {
+                let d = ((gx - x).abs().max((gy - y).abs())).max((gz - z).abs()) as u32;
+                best = best.min(d);
+            }
+            // A jump covers two tiles for at least JUMP_COST * min_cost >= 2 * min_cost.
+            best * mc
+        };
+        let s0 = self.slot(start);
+        self.nodes[s0].g = 0;
+        let h0 = h(start);
+        self.heap.base = h0;
+        self.heap.push(Entry { f: h0, h: h0, idx: start, slot: s0 as u32 });
+        let mut buf = [(0u32, 0u32); CLIMB_MAXN];
+        let mut expanded = 0u32;
+        while let Some(e) = self.heap.pop() {
+            let hint = self.nodes[e.slot as usize];
+            let s = if hint.stamp == self.gen && hint.key == e.idx {
+                e.slot as usize
+            } else {
+                match self.find(e.idx) {
+                    Some(s) => s,
+                    None => continue,
+                }
+            };
+            if self.nodes[s].parent & CLOSED != 0 {
+                continue;
+            }
+            self.nodes[s].parent |= CLOSED;
+            let gc = self.nodes[s].g;
+            if goals.as_slice().contains(&e.idx) {
+                let mut cur = e.idx;
+                while cur != start {
+                    out.push(cur);
+                    let cs = self.find(cur).unwrap();
+                    cur = self.nodes[cs].parent & !CLOSED;
+                }
+                out.reverse();
+                self.expanded_total += expanded as u64;
+                self.last_expanded = expanded;
+                return true;
+            }
+            expanded += 1;
+            if expanded > max_nodes {
+                break;
+            }
+            let n = g.edges(e.idx as usize, &mut buf);
+            for &(q, c) in &buf[..n] {
+                let ng = gc + c;
+                let qs = self.slot(q);
+                let node = &mut self.nodes[qs];
+                if node.parent & CLOSED != 0 || ng >= node.g {
+                    continue;
+                }
+                node.g = ng;
+                node.parent = e.idx;
+                let hq = h(q);
+                self.heap.push(Entry { f: (ng + hq).max(e.f), h: hq, idx: q, slot: qs as u32 });
+            }
+        }
+        self.expanded_total += expanded as u64;
+        self.last_expanded = expanded;
+        false
+    }
 }
 
 /// [perf11] Shared paths to one goal tile: a resumable reverse Dijkstra ("flow field").
@@ -408,11 +497,14 @@ pub struct Flow {
     heap: Queue,
     /// Tiles settled so far.
     pub expanded: u64,
+    /// [siege12] Flow over the climbing graph (for climbers only).
+    #[serde(default)]
+    pub climb: bool,
 }
 
 impl Flow {
     pub fn new(goal: u32, now: u64, rebuilds: u64) -> Flow {
-        let mut f = Flow { goal, made: now, used: now, rebuilds, nodes: vec![Node::default(); 1usize << MIN_BITS], bits: MIN_BITS, len: 0, heap: Queue::default(), expanded: 0 };
+        let mut f = Flow { goal, made: now, used: now, rebuilds, nodes: vec![Node::default(); 1usize << MIN_BITS], bits: MIN_BITS, len: 0, heap: Queue::default(), expanded: 0, climb: false };
         let s = f.slot(goal);
         f.nodes[s].g = 0;
         f.heap.push(Entry { f: 0, h: 0, idx: goal, slot: s as u32 });
@@ -512,6 +604,56 @@ impl Flow {
             let ng = self.nodes[s].g + nav.cost(e.idx as usize);
             let k = nav.neighbors(e.idx as usize, &mut buf);
             for &q in &buf[..k] {
+                let qs = self.slot(q);
+                let node = &mut self.nodes[qs];
+                if node.parent & CLOSED != 0 || ng >= node.g {
+                    continue;
+                }
+                node.g = ng;
+                node.parent = e.idx;
+                self.heap.push(Entry { f: ng, h: 0, idx: q, slot: qs as u32 });
+            }
+            if e.idx == t {
+                return true;
+            }
+            n += 1;
+            if n >= cap {
+                return false;
+            }
+        }
+        false
+    }
+
+    /// [siege12] `settle` over the climbing graph (a flow made with `climb = true`). A move
+    /// q -> e costs e's traffic cost times the move's factor (the same both ways).
+    pub fn settle_climb(&mut self, g: &ClimbGraph, t: u32, cap: u32) -> bool {
+        if self.settled(t) {
+            return true;
+        }
+        let nav = g.nav;
+        let mut buf = [(0u32, 0u32); CLIMB_MAXN];
+        let mut n = 0u32;
+        while let Some(e) = self.heap.pop() {
+            let hint = self.nodes[e.slot as usize];
+            let s = if hint.stamp != 0 && hint.key == e.idx {
+                e.slot as usize
+            } else {
+                match self.find(e.idx) {
+                    Some(s) => s,
+                    None => continue,
+                }
+            };
+            if self.nodes[s].parent & CLOSED != 0 {
+                continue;
+            }
+            self.nodes[s].parent |= CLOSED;
+            self.expanded += 1;
+            let ge = self.nodes[s].g;
+            let ce = nav.cost(e.idx as usize);
+            let k = g.edges(e.idx as usize, &mut buf);
+            for &(q, c) in &buf[..k] {
+                let mult = c / nav.cost(q as usize).max(1);
+                let ng = ge + ce * mult;
                 let qs = self.slot(q);
                 let node = &mut self.nodes[qs];
                 if node.parent & CLOSED != 0 || ng >= node.g {

@@ -16,6 +16,10 @@
 //! (squads Ready while a reachable hostile is within 30 tiles of a citizen, off duty after a
 //! calm day), so soldiers fight and the blow costs show; without it the r5 squads stay off
 //! duty and the siege kills the civilians.
+//!
+//! [siege12] `--seal`: when the siege arrives, pull the levers of all lowered bridges (raise
+//! them) and lock all doors, as a player sealing the fort would; then the invaders can only
+//! climb in. Prints how many invaders can walk to a citizen before and after.
 
 use rf_sim::{Sim, SquadOrder};
 use std::path::PathBuf;
@@ -49,6 +53,7 @@ fn main() {
     let window: u64 = get("--window").and_then(|s| s.parse().ok()).unwrap_or(2000).max(100);
     let par: Option<usize> = get("--par-threshold").and_then(|s| s.parse().ok()); // [perf11]
     let standdown = args.iter().any(|a| a == "--standdown"); // [perf11]
+    let seal = args.iter().any(|a| a == "--seal"); // [siege12]
     let explicit = get("--export").map(PathBuf::from);
     let Some(dir) = rf_import::find_export(explicit.as_deref()) else {
         eprintln!("no export found (use --export <dir> or RUSTFORT_EXPORT)");
@@ -64,6 +69,24 @@ fn main() {
     let arrived = if n == 0 { sim.force_siege() } else { sim.spawn_siege("GOBLIN", n) };
     let citizens0 = sim.world.citizens().count();
     println!("siege: {arrived} goblins arrived, {citizens0} citizens, {} units", sim.world.units.len());
+    if seal {
+        // [siege12] raise the lowered bridges, lock the doors
+        let walkers = |sim: &Sim| {
+            let cits: Vec<rf_core::Pos> = sim.world.citizens().map(|u| u.pos).collect();
+            sim.hostiles().iter().filter(|&&id| sim.world.unit(id).map(|u| cits.iter().any(|&c| sim.reachable(u.pos, c))).unwrap_or(false)).count()
+        };
+        let before = walkers(&sim);
+        let levers: Vec<i32> = sim.world.buildings.iter().filter(|b| b.kind == "Bridge" && b.flags.iter().any(|f| f == "LOWERED")).flat_map(|b| b.links.clone()).collect();
+        for l in &levers {
+            sim.pull_lever_now(*l);
+        }
+        let doors: Vec<i32> = sim.world.buildings.iter().filter(|b| b.kind == "Door").map(|b| b.id).collect();
+        for d in &doors {
+            sim.set_building_flag(*d, "LOCKED", true);
+        }
+        sim.run_ticks(150);
+        println!("sealed: {} levers pulled, {} doors locked; invaders that can walk to a citizen: {before} -> {}", levers.len(), doors.len(), walkers(&sim));
+    }
     let (mut done, mut secs, mut cyc) = (0u64, 0.0f64, 0u64);
     let mut phases: Vec<(&'static str, f64)> = Vec::new();
     let s_start = sim.stats();
@@ -133,6 +156,7 @@ fn main() {
         sim.state_hash()
     );
     println!("  us/tick: {}", line.join("  "));
+    println!("  climbing: {:?}", sim.climb_stats()); // [siege12]
     // [perf11] With `--features prof`: inclusive cycles per function (per call and per tick).
     let prof = rf_sim::prof_report();
     if !prof.is_empty() {

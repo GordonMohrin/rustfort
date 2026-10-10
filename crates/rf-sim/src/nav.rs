@@ -832,6 +832,422 @@ impl Nav {
     pub fn component_count(&self) -> usize {
         (1..self.parent.len()).filter(|&c| self.parent[c] == c as u32).count()
     }
+
+    /// [siege12] A building gives tile `i` a floor (lowered bridge, hatch cover).
+    #[inline]
+    pub fn floor_override(&self, i: usize) -> bool {
+        self.any_override && Self::bit(&self.floor_force, i)
+    }
+}
+
+// ------------------------------------------------------------------ [siege12] climbing
+
+/// [siege12] Tiletype class for climbers: a solid tile that can be climbed (wiki Climbing).
+pub const C_ANCHOR: u8 = 1;
+/// [siege12] Open tile without a floor: a climber can hang in it or fall through it.
+pub const C_AIR: u8 = 2;
+/// [siege12] Tree trunk or cap (climbers do not lose their hold on trees, wiki Climbing).
+pub const C_TREE: u8 = 4;
+/// [siege12] A climbing move costs this many times the entered tile's traffic cost. Estimate:
+/// the vanilla climbing gait is about six times slower than walking.
+pub const CLIMB_COST: u32 = 6;
+/// [siege12] A jump over a one-tile gap (two tiles) costs this many times the landing tile's cost.
+pub const JUMP_COST: u32 = 3;
+/// [siege12] Most moves one tile has in the climbing graph (walking + climbing + jumps).
+pub const CLIMB_MAXN: usize = MAX_NEIGHBORS + 2 + 8 * 4;
+
+/// [siege12] Climbing class of one tiletype (`C_*` bits), wiki Climbing (v50):
+/// - natural rough walls (stone, soil, ore, roots) can be climbed; **smoothed or engraved
+///   natural walls cannot**, smoothed pillars can;
+/// - constructed walls and fortifications can (block walls are harder, raw ones easier);
+/// - ice can, even smoothed or carved into fortifications;
+/// - trees (trunks, caps) can;
+/// - carved natural fortifications (always smoothed first) cannot;
+/// - floors (a protruding floor, a raised drawbridge) are not walls: nobody holds onto their
+///   side, so an overhanging floor stops climbers.
+pub fn climb_class(i: &rf_core::TiletypeInfo) -> u8 {
+    use rf_core::{TtMaterial as M, TtSpecial as S};
+    if !i.shape.is_solid() {
+        return if i.shape.has_floor() { 0 } else { C_AIR };
+    }
+    if !matches!(i.shape, Shape::Wall | Shape::Fortification) {
+        return 0;
+    }
+    match i.material {
+        M::Tree | M::Mushroom => C_ANCHOR | C_TREE,
+        M::Construction | M::FrozenLiquid => C_ANCHOR,
+        M::None | M::Air => 0,
+        _ => {
+            let smooth = matches!(i.special, S::Smooth | S::SmoothDead);
+            if i.shape == Shape::Fortification {
+                0
+            } else if !smooth || i.name.contains("Pillar") {
+                C_ANCHOR
+            } else {
+                0
+            }
+        }
+    }
+}
+
+/// [siege12] `climb_class` per tiletype id.
+pub fn climb_classes(tt: &rf_core::TiletypeTable) -> Vec<u8> {
+    let max = tt.infos.iter().map(|i| i.id as usize).max().unwrap_or(0);
+    let mut v = vec![0u8; max + 1];
+    for i in &tt.infos {
+        v[i.id as usize] = climb_class(i);
+    }
+    v
+}
+
+/// [siege12] The movement graph of a climbing creature: the walking moves of [`Nav`] plus
+///
+/// - **hanging tiles**: an open tile without a floor next to (orthogonally) a climbable wall on
+///   the same level, not walkable, not blocked by a building, no deep water or magma;
+/// - straight up into a hanging tile above, straight down from a hanging tile;
+/// - sideways (8 directions) when one end hangs;
+/// - diagonally up/down one level between a lower tile L and an upper tile U when the tile
+///   above L is open (up, then across), or U hangs and the tile below U is open (across, then
+///   up; this is how a one-tile overhanging *wall* is climbed from below, wiki); walking tile to
+///   walking tile only over a climbable wall top (a one-level wall or cliff);
+/// - jumps across a one-tile gap (not walkable, not solid, not blocked) between two walking
+///   tiles (wiki Jumping: "one-tile moats are unlikely to be a significant obstacle").
+///
+/// Every move is symmetric (the rule is a property of the tile pair), so reverse Dijkstra flows
+/// stay exact. Climbing moves cost `CLIMB_COST` times, jumps `JUMP_COST` times the entered
+/// tile's traffic cost.
+pub struct ClimbGraph<'a> {
+    pub nav: &'a Nav,
+    pub tiles: &'a [Tile],
+    pub cls: &'a [u8],
+}
+
+impl<'a> ClimbGraph<'a> {
+    #[inline]
+    fn cls(&self, i: usize) -> u8 {
+        self.cls.get(self.tiles[i].tt as usize).copied().unwrap_or(0)
+    }
+    #[inline]
+    pub fn anchor(&self, i: usize) -> bool {
+        self.cls(i) & C_ANCHOR != 0
+    }
+    /// Open tile a climber can be in or pass through.
+    #[inline]
+    pub fn air(&self, i: usize) -> bool {
+        if self.cls(i) & C_AIR == 0 || self.nav.is_blocked_tile(i) || self.nav.floor_override(i) {
+            return false;
+        }
+        let l = self.tiles[i].liquid;
+        let d = l & rf_core::liquid::DEPTH_MASK;
+        d < 4 && !(l & rf_core::liquid::MAGMA != 0 && d > 0)
+    }
+    /// Climbable walls orthogonally next to tile `i` (bit 0: any, bit 1: any of them a tree).
+    #[inline]
+    fn anchors_beside(&self, i: usize) -> u8 {
+        let (x, y, _) = self.nav.xyz(i);
+        let dx = self.nav.dx;
+        let mut out = 0u8;
+        let mut look = |j: usize| {
+            let c = self.cls(j);
+            if c & C_ANCHOR != 0 {
+                out |= 1 | if c & C_TREE != 0 { 2 } else { 0 };
+            }
+        };
+        if x > 0 {
+            look(i - 1);
+        }
+        if x + 1 < dx {
+            look(i + 1);
+        }
+        if y > 0 {
+            look(i - dx);
+        }
+        if y + 1 < self.nav.dy {
+            look(i + dx);
+        }
+        out
+    }
+    /// Hanging tile (see the type docs).
+    #[inline]
+    pub fn hold(&self, i: usize) -> bool {
+        self.nav.flags[i] & WALK == 0 && self.air(i) && self.anchors_beside(i) & 1 != 0
+    }
+    /// Hanging tile whose only holds are walls (not trees): unskilled climbers slip there.
+    pub fn hold_wall_only(&self, i: usize) -> bool {
+        self.anchors_beside(i) == 1
+    }
+    /// A tile a climber can be on.
+    #[inline]
+    pub fn node(&self, i: usize) -> bool {
+        self.nav.flags[i] & WALK != 0 || self.hold(i)
+    }
+    /// Diagonal move between lower tile `l` and upper tile `u` (one level up, beside it).
+    #[inline]
+    fn diag_ok(&self, l: usize, u: usize, hold_l: bool, hold_u: bool, walk_u: bool) -> bool {
+        let layer = self.nav.layer;
+        let via = self.air(l + layer) || (hold_u && self.air(u - layer));
+        if !via {
+            return false;
+        }
+        // Walking tile to walking tile: only over the top of a climbable wall (a one-level
+        // wall or cliff); a ramp there is a walking move already.
+        if !hold_l && !hold_u {
+            return walk_u && self.anchor(u - layer) && self.nav.flags[l] & RAMP == 0;
+        }
+        true
+    }
+
+    /// All moves from tile `i` with their costs (walking moves first, in `Nav::neighbors` order).
+    #[inline]
+    pub fn edges(&self, i: usize, out: &mut [(u32, u32); CLIMB_MAXN]) -> usize {
+        self.edges_h(i, out, |q| self.hold(q))
+    }
+
+    /// `edges` with a given hanging-tile test (the net build passes a precomputed bit set).
+    #[inline]
+    pub fn edges_h(&self, i: usize, out: &mut [(u32, u32); CLIMB_MAXN], hold: impl Fn(usize) -> bool) -> usize {
+        let nav = self.nav;
+        let f = nav.flags[i];
+        let walk_i = f & WALK != 0;
+        let mut n = 0usize;
+        if walk_i {
+            let mut buf = [0u32; MAX_NEIGHBORS];
+            let k = nav.neighbors(i, &mut buf);
+            for &q in &buf[..k] {
+                out[n] = (q, nav.cost(q as usize));
+                n += 1;
+            }
+        }
+        let hold_i = !walk_i && hold(i);
+        if !walk_i && !hold_i {
+            return n;
+        }
+        let (x, y, z) = nav.xyz(i);
+        let layer = nav.layer;
+        let (dx, dy, dz) = (nav.dx, nav.dy, nav.dz);
+        let mut push = |q: usize, mult: u32, n: &mut usize| {
+            out[*n] = (q as u32, nav.cost(q) * mult);
+            *n += 1;
+        };
+        if z + 1 < dz && hold(i + layer) {
+            push(i + layer, CLIMB_COST, &mut n);
+        }
+        if hold_i && z > 0 && (nav.flags[i - layer] & WALK != 0 || hold(i - layer)) {
+            push(i - layer, CLIMB_COST, &mut n);
+        }
+        for &(ddx, ddy) in &DIRS8 {
+            let nx = x as isize + ddx;
+            let ny = y as isize + ddy;
+            if nx < 0 || ny < 0 || nx >= dx as isize || ny >= dy as isize {
+                continue;
+            }
+            let h = (i as isize + ddy * dx as isize + ddx) as usize;
+            let walk_h = nav.flags[h] & WALK != 0;
+            let hold_h = !walk_h && hold(h);
+            if (hold_i && (walk_h || hold_h)) || (walk_i && hold_h) {
+                push(h, CLIMB_COST, &mut n);
+            }
+            // One level up, beside.
+            if z + 1 < dz {
+                let q = h + layer;
+                let walk_q = nav.flags[q] & WALK != 0;
+                let hold_q = !walk_q && hold(q);
+                if (walk_q || hold_q) && self.diag_ok(i, q, hold_i, hold_q, walk_q) {
+                    push(q, CLIMB_COST, &mut n);
+                }
+            }
+            // One level down, beside (the same rule seen from the upper tile).
+            if z > 0 {
+                let q = h - layer;
+                let walk_q = nav.flags[q] & WALK != 0;
+                let hold_q = !walk_q && hold(q);
+                if (walk_q || hold_q) && self.diag_ok(q, i, hold_q, hold_i, walk_i) {
+                    push(q, CLIMB_COST, &mut n);
+                }
+            }
+            // Jump across a one-tile gap.
+            if walk_i && nav.flags[h] & (WALK | SOLID) == 0 && !nav.is_blocked_tile(h) {
+                let (jx, jy) = (x as isize + 2 * ddx, y as isize + 2 * ddy);
+                if jx >= 0 && jy >= 0 && jx < dx as isize && jy < dy as isize {
+                    let q = (h as isize + ddy * dx as isize + ddx) as usize;
+                    if nav.flags[q] & WALK != 0 {
+                        push(q, JUMP_COST, &mut n);
+                    }
+                }
+            }
+        }
+        n
+    }
+}
+
+/// [siege12] Reachability for climbers: walk components joined by climbing moves.
+///
+/// Built from the whole map in one pass (`build`): every hanging tile gets a node, joined to
+/// its hanging neighbours and to the walk components it touches; one-level wall tops and
+/// one-tile gaps join walk components directly. The result maps a walk component root to its
+/// climbing group (roots without climbing links are left out). Rebuilt by the combat module
+/// while climbers are about (after a component rebuild at once, after other map changes at
+/// most once per `CLIMB_NET_PERIOD`); saved with the sim so continuation stays exact.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Default, Debug)]
+#[serde(default)]
+pub struct ClimbNet {
+    pub built: bool,
+    pub built_at: u64,
+    /// `Nav::version` and `Nav::rebuilds` at the build.
+    pub version: u64,
+    pub rebuilds: u64,
+    /// (walk component root, group id) sorted by root.
+    pub groups: Vec<(u32, u32)>,
+    /// Hanging tiles found by the last build, builds so far.
+    pub holds: u64,
+    pub builds: u64,
+}
+
+/// [siege12] Group ids are marked with the top bit so they never equal a plain root.
+const GROUP_BIT: u32 = 1 << 31;
+
+impl ClimbNet {
+    /// Climbing group of walk component root `root` (the root itself if it has no links).
+    #[inline]
+    pub fn group(&self, root: u32) -> u32 {
+        if root == 0 {
+            return 0;
+        }
+        match self.groups.binary_search_by_key(&root, |e| e.0) {
+            Ok(k) => self.groups[k].1 | GROUP_BIT,
+            Err(_) => root,
+        }
+    }
+
+    pub fn build(&mut self, g: &ClimbGraph, now: u64) {
+        let nav = g.nav;
+        let n = nav.flags.len();
+        let p = nav.parent.len() as u32;
+        let mut uf: Vec<u32> = (0..p).collect();
+        fn find(uf: &mut [u32], mut a: u32) -> u32 {
+            while uf[a as usize] != a {
+                let pa = uf[uf[a as usize] as usize];
+                uf[a as usize] = pa;
+                a = pa;
+            }
+            a
+        }
+        fn join(uf: &mut [u32], a: u32, b: u32) {
+            let (ra, rb) = (find(uf, a), find(uf, b));
+            if ra != rb {
+                // Smaller id wins: deterministic and keeps roots (< p) as representatives.
+                let (lo, hi) = if ra < rb { (ra, rb) } else { (rb, ra) };
+                uf[hi as usize] = lo;
+            }
+        }
+        // Ring of recent hanging tiles: every neighbour of a tile lies within one layer and one
+        // row of it, so (tile, node) entries older than that are never looked up again.
+        let ring_n = 2 * nav.layer + 2 * nav.dx + 8;
+        let mut ring: Vec<(u32, u32)> = vec![(u32::MAX, 0); ring_n];
+        let mut holds = 0u64;
+        let mut buf = [(0u32, 0u32); CLIMB_MAXN];
+        let layer = nav.layer;
+        // Hanging tiles first, as a bit set (the edge rules look at them many times).
+        let mut hb = vec![0u64; n / 64 + 1];
+        for i in 0..n {
+            if nav.flags[i] & (SOLID | WALK) == 0 && g.hold(i) {
+                hb[i / 64] |= 1 << (i % 64);
+            }
+        }
+        let is_hold = |q: usize| hb[q / 64] & (1 << (q % 64)) != 0;
+        for i in 0..n {
+            let f = nav.flags[i];
+            if f & SOLID != 0 {
+                continue;
+            }
+            if f & WALK != 0 {
+                // Over a one-level wall or cliff: only where open air lies above this tile.
+                let (x, y, z) = nav.xyz(i);
+                if z + 1 >= nav.dz || !g.air(i + layer) {
+                    continue;
+                }
+                let ri = nav.comp_root(i);
+                for &(ddx, ddy) in &DIRS8 {
+                    let nx = x as isize + ddx;
+                    let ny = y as isize + ddy;
+                    if nx < 0 || ny < 0 || nx >= nav.dx as isize || ny >= nav.dy as isize {
+                        continue;
+                    }
+                    let h = (i as isize + ddy * nav.dx as isize + ddx) as usize;
+                    let q = h + layer;
+                    if nav.flags[q] & WALK != 0 && g.diag_ok(i, q, false, false, true) {
+                        let rq = nav.comp_root(q);
+                        if rq != ri && rq != 0 && ri != 0 {
+                            join(&mut uf, ri, rq);
+                        }
+                    }
+                }
+                continue;
+            }
+            // Jump gap: two walking tiles on opposite sides.
+            if !nav.is_blocked_tile(i) {
+                let (x, y, _) = nav.xyz(i);
+                for &(ddx, ddy) in &DIRS8[..4] {
+                    let (ax, ay, bx, by) = (x as isize - ddx, y as isize - ddy, x as isize + ddx, y as isize + ddy);
+                    if ax < 0 || ay < 0 || bx < 0 || by < 0 || ax >= nav.dx as isize || bx >= nav.dx as isize || ay >= nav.dy as isize || by >= nav.dy as isize {
+                        continue;
+                    }
+                    let off = ddy * nav.dx as isize + ddx;
+                    let (a, b) = ((i as isize - off) as usize, (i as isize + off) as usize);
+                    if nav.flags[a] & WALK != 0 && nav.flags[b] & WALK != 0 {
+                        let (ra, rb) = (nav.comp_root(a), nav.comp_root(b));
+                        if ra != rb && ra != 0 && rb != 0 {
+                            join(&mut uf, ra, rb);
+                        }
+                    }
+                }
+            }
+            if !is_hold(i) {
+                continue;
+            }
+            holds += 1;
+            let id = uf.len() as u32;
+            uf.push(id);
+            ring[i % ring_n] = (i as u32, id);
+            let k = g.edges_h(i, &mut buf, is_hold);
+            for &(q, _) in &buf[..k] {
+                let q = q as usize;
+                if nav.flags[q] & WALK != 0 {
+                    let rq = nav.comp_root(q);
+                    if rq != 0 {
+                        join(&mut uf, id, rq);
+                    }
+                } else if q < i {
+                    let e = ring[q % ring_n];
+                    if e.0 == q as u32 {
+                        join(&mut uf, id, e.1);
+                    }
+                }
+            }
+        }
+        // Groups of walk roots: only those with at least two roots matter.
+        let mut members: Vec<(u32, u32)> = Vec::new();
+        for r in 1..p {
+            if nav.parent[r as usize] != r {
+                continue;
+            }
+            let g = find(&mut uf, r);
+            members.push((r, g));
+        }
+        // Count roots per group; a group of one root is no link.
+        let mut cnt: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+        for &(_, g) in &members {
+            *cnt.entry(g).or_insert(0) += 1;
+        }
+        self.groups = members.into_iter().filter(|(_, g)| cnt.get(g).copied().unwrap_or(0) > 1).collect();
+        self.groups.sort_unstable();
+        self.built = true;
+        self.built_at = now;
+        self.version = nav.version;
+        self.rebuilds = nav.rebuilds;
+        self.holds = holds;
+        self.builds += 1;
+    }
 }
 
 #[cfg(test)]

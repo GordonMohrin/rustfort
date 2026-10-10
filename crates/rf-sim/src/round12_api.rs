@@ -82,5 +82,7 @@ impl Sim {
     }
 
     /// Order a built siege engine to fire at a target tile (or `None` = fire at will).
-    pub fn aim_siege_engine(&mut self, _building: i32, _target: Option<Pos>) {}
+    pub fn aim_siege_engine(&mut self, building: i32, target: Option<Pos>) {
+        self.engines_aim(building, target); // [siege12] see `siegeengines`
+    }
 }

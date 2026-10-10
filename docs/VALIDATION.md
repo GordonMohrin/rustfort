@@ -977,3 +977,33 @@ Run: `--seeds 1,2,3,4,5,6 --standing-orders --restore-schedules`, gamelog lines 
 | simmade.RING | - | - | 42 | 49 | 60 | - | - |
 | simmade.SCEPTER | - | - | 51 | 60 | 66 | - | - |
 | perf.ticks_per_s | - | - | 20867 | 27000 | 28075 | - | - |
+
+## Round 12: climbing invaders ([siege12])
+
+Same tool, r5 -> r6 (1.14 years), `--standing-orders`, seeds 1-6, 3 in parallel; before =
+master 5192ea9, after = the [siege12] branch. New rows `ev.climb_moves`, `ev.climb_falls`,
+`ev.climb_net_builds` (`Sim::climb_stats`).
+
+| metric | DF | before (min / median / max) | after |
+|---|---|---|---|
+| citizens lost | 73 | 2 / 31 / 49 | 2 / 31 / 49 |
+| hostiles on the map at the end | 147 | 26 / 73 / 126 | 26 / 73 / 126 |
+| invaders | | 41 / 170 / 181 | 41 / 170 / 181 |
+| climbing steps / falls / climbing-net builds | | - | 0 / 0 / 0 |
+| metrics in range or close | | 63 / 192 | 63 / 192 |
+
+Per seed the citizens and deaths are identical before and after: in all six runs every
+invader always had a **walking** route to a target (the open approach through the trap snail),
+so no climber ever needed the climbing net. DF uses climbing when a creature is stuck (wiki on
+dwarves: they climb when stuck or chased), and so does the sim; the r5 -> r6 losses therefore do
+not move toward DF's 73 through climbing. `siegeperf --seal` (raise the lowered bridges, lock all
+132 doors when a 133-goblin siege arrives) shows the same: 134 -> 133 invaders can still walk to
+a citizen, so the fort cannot be sealed by its doors and bridges alone. Where walls do seal a
+place, the unit tests show climbers getting over rough and constructed walls and being stopped
+by smoothed walls and overhanging floors (`climbing::tests`).
+
+Speed: `siegeperf --standdown --par-threshold 100000` (133 goblins, 20 000 ticks) 125.8 Mcyc/1k
+before, 131.1 after (the same path searches and A* nodes; +4 % from 4 climbing-net builds of
+about 47 ms each, made after the citizens died while the siege looked for prey, with doubling
+waits). 2 years `rustfort bench --standdown` on r5: 87 -> 47 citizens, 226 deaths as before,
+about 104k ticks/s, the same state hash with 1 and N threads.
