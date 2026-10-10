@@ -1438,6 +1438,7 @@ impl Sim {
                         };
                         let deity = self.world.units[uidx].needs.iter().find(|n| n.id == "PrayOrMeditate").map(|n| n.deity_id).unwrap_or(-1);
                         self.feel(s, "Prayer", class, strength, deity, 0, now);
+                        self.locations_prayed(s, pos, deity, now); // [society2] dedicated temples
                     }
                 } else {
                     self.socialize(s, ri, kind, now, &mut r);
@@ -1621,6 +1622,7 @@ impl Sim {
                     self.remove_building(bid);
                     self.announce(now, format!("{name} has toppled a {kind}."), Some(pos), AnnouncementKind::Warning);
                     self.feel(s, "ToppledStuff", Class::PosMild, 60, -1, 0, now);
+                    self.justice_tantrum(s, -1, now); // [society2] crime: BuildingDestruction
                 }
             }
             1 => {
@@ -1637,6 +1639,8 @@ impl Sim {
                     self.feel(s, "FistFight", Class::PosMild, 60, -1, 0, now);
                     let me = self.ai[s].id;
                     self.feel(t, "Attacked", Class::Neg, 120, me, 0, now);
+                    let vid = self.ai[t].id;
+                    self.justice_tantrum(s, vid, now); // [society2] crime: DisorderlyBehavior
                 }
             }
             2 => self.feel(s, "ThrownStuff", Class::PosMild, 50, -1, 0, now),

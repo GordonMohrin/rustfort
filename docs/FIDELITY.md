@@ -57,8 +57,10 @@ reported as a floor (`min_tier`). Once the exporter writes the engravings into
 | Meal name | material of the last ingredient + biscuits/stew/roast | same (w:Kitchen) | OK |
 | Meal quality from cook skill | meals are made at quality 0 | each ingredient gets a quality from the cook's skill (w:Kitchen) | MISSING |
 | [validation] Craft quality from crafter skill | crafts are made at quality 0 | quality from the crafter's skill (w:Item quality); Gordon's DF crafts made in the r3-r6 windows average 2.4-2.9 with 25-46 masterworks (docs/VALIDATION.md) | MISSING (r8 validation) |
+| Meal quality from cook skill | quality rolled from the cook's focus-adjusted Cooking skill (same roll as engravings), value x DF quality multiplier 1/2/3/4/5/12 (`lifestyle`) | each ingredient gets a quality from the cook's skill (w:Kitchen) | FIXED r8 (roll ESTIMATE; one roll per meal, not per ingredient) |
 | Cooking plants keeps no seeds | yes | yes (w:Kitchen) | OK |
 | Brewables are not cooked | default off, switchable | DF cooks them unless the kitchen settings forbid it; Gordon's rule | ESTIMATE (player setting) |
+| Kitchen settings | `World::kitchen` / `Sim::set_kitchen`: excluded materials are never cooked (`no_cook`) or brewed (`no_brew`), matched by item type (PLANT, PLANT_GROWTH, other; empty = any) and material | DF kitchen screen (w:Kitchen) | FIXED r8 |
 | Seasonal crops | grow only in their raw seasons; destroyed when a season starts in which they cannot grow | same (w:Farming) | OK |
 | Growth time | plant `GROWDUR` x 100 ticks | same (raws, w:Farming) | OK |
 | Harvest yield | 1 + 50 % on skill-in-5/10/15/20/75 checks, planter skill at planting | same (w:Farming) | OK |
@@ -109,7 +111,7 @@ reported as a floor (`min_tier`). Once the exporter writes the engravings into
 | Eggs | never rot (were perishable) | "Eggs do not appear to go rotten" (w:Nest box) | FIXED r8 |
 | Plants wither, no miasma | plants wither | same (w:Rot) | OK |
 | Rot timer | 28 days, rotted away after 28 more | not given on the wiki | ESTIMATE |
-| Miasma | not simulated | rotting corpses and food make miasma, which spreads orthogonally (w:Rot) | MISSING |
+| Miasma | rotten corpses, body parts and food lying loose indoors (not under the sky) give off miasma that spreads orthogonally over open floor, 2 tiles; dwarves in it think "Miasma" (at most every 2 days); new corpses rot after 14 days and are skeletal 56 days later (`lifestyle`) | w:Rot, w:Miasma | FIXED r8 (range, timers ESTIMATE; real fort: about 40 Miasma thoughts a month, DF export 30-60) |
 | Wheelbarrows | not simulated (Gordon's piles use 0) | (w:Wheelbarrow) | MISSING |
 | Trade depot protects food | not checked | yes (w:Rot) | MISSING |
 
@@ -133,6 +135,8 @@ reported as a floor (`min_tier`). Once the exporter writes the engravings into
 | Dining | chair next to a table in a dining zone -> DiningQuality; else LackTables / NoDining | w:Dining room | OK |
 | Bedroom thoughts | own bedroom -> BedroomQuality; bed outside a room -> LackBedroom; floor -> SleptFloor... | w:Bedroom | OK |
 | Temples, taverns, libraries | meeting zones recognized by name | DF locations | ESTIMATE (r8: DF's locations, occupations, holders and values are now exported to `World::locations`) |
+| Temples, taverns, libraries | `World::locations` (DF v50 locations); exports without them get locations from the named meeting halls (temple with the deity named in the zone, tavern, library, guildhall, hospital) and occupations from the citizens' professions (TAVERN_KEEPER, POET/BARD/DANCER, SCHOLAR...) (`locations`) | DF locations | FIXED r8 (name-based derivation is an ESTIMATE until the round-6 export brings DF's locations) |
+| Dedicated temples | praying in a temple of the own deity (or an all-deities temple) adds "PrayedDedicatedTemple" | w:Temple | FIXED r8 |
 
 ## population.rs
 
@@ -262,6 +266,35 @@ reported as a floor (`min_tier`). Once the exporter writes the engravings into
 | Prepare raw fish | Fishery, labor Fish cleaning, auto job when raw fish exists | same (w:Fishery, auto fishery standing order) | OK |
 | Cats and vermin | `HUNTS_VERMIN` cats kill a vermin 1/14 per day (rat remains, refuse) | vermin are real creatures in DF | ESTIMATE |
 | Off-map animals in the export | not simulated (80 tame animals at pos -30000 in round 5) | | ESTIMATE |
+## locations.rs, justice.rs, lifestyle.rs (round 8, [society2])
+
+Calibrated against the 17 281 thoughts of the 87 citizens in Gordon's round-5 export
+(year 278-279): WatchPerform 908, Perform 95, Miasma 89, WearItem 73, IgnoredGuildhallPetition 44,
+IgnoredTemplePetition 16, PrayedDedicatedTemple 5, PunishmentDelayed 7, and no Rain,
+OldClothing or TatteredClothing thoughts.
+
+| rule | Rustfort | DF (source) | class |
+|---|---|---|---|
+| Tavern keeper | the TAVERN_KEEPER occupation serves drinks to idle patrons in the tavern (one per 100 ticks); occupation holders work at their location instead of their labors | w:Tavern | FIXED r8 (rate ESTIMATE) |
+| Performances | performers (occupation or visiting) in a tavern or temple perform daily ("Perform", BeCreative); idle citizens there watch ("WatchPerform"; MakeMerry for music/dance, HearEloquence for poetry/story) | w:Performance | FIXED r8 (once a day ESTIMATE) |
+| Libraries and scholars | idle citizens with unmet LearnSomething/ThinkAbstractly read written works kept in the library ("ReadBook", weekly); scholars ponder ("PonderTopic") and write on blank quires/scrolls ("WriteBook", 1 in 14 a day) | w:Library, w:Scholar | FIXED r8 (rates ESTIMATE) |
+| Guildhalls | locations with a profession; guilds of 10+ members without a guildhall petition for one | w:Guildhall, w:Petition | FIXED r8 (guild grouping and 10 members ESTIMATE) |
+| Temple petitions | religions with 10+ worshippers in the fort and no dedicated temple petition for one | w:Petition, w:Temple | FIXED r8 (10 ESTIMATE) |
+| Ignored location petitions | unanswered after 28 days: members think "IgnoredTemplePetition" / "IgnoredGuildhallPetition"; accepted: "Accepted...Petition"; a new petition a year later | w:Petition; export shows both thoughts | FIXED r8 (timeout ESTIMATE) |
+| Visitors | only with a tavern, library or temple and under VISITOR_CAP; performers and mercenaries/monster slayers to taverns, scholars to libraries, pilgrims to temples; walk in from the edge, stay 1-3 months (pilgrims 3-14 days), leave | w:Visitor | FIXED r8 (rates and stays ESTIMATE) |
+| Residency / citizenship petitions | performers and scholars ask for residency, mercenaries and monster slayers for citizenship; `Sim::answer_petition`; unanswered = denied ("DenyResident"/"DenyCitizen") and the visitor leaves; residents keep performing / studying; new citizens join as workers | w:Petition | FIXED r8 |
+| Crimes | tantrum toppling furniture = BuildingDestruction, tantrum fist fight = DisorderlyBehavior, visiting thieves (1 in 10 visitors) = Theft, unmet mandate = ProductionOrderViolation, broken export ban = ExportViolation (the noble names a random citizen); witnesses = citizens within 6 tiles | w:Justice, w:Crime | FIXED r8 (thief share, witness range ESTIMATE) |
+| Investigation | only with a sheriff or captain of the guard: a witnessed crime is solved at the first witness interview (next day), unwitnessed ones by interrogation (1 in 56 a day); otherwise unsolved | w:Justice, w:Sheriff | FIXED r8 (rates ESTIMATE) |
+| Conviction | the player convicts (`Sim::convict`); `Sim::set_auto_convict` lets the sheriff convict the accused (headless); convicting someone else is wrongful (no justice for the victim) | w:Justice | OK |
+| Jail | Dungeon zone with a chain or built cage: the prisoner is restrained there, cannot work, is brought food and water, "Jailed" daily, "JailReleased" at the end | w:Jail | FIXED r8 (food/water brought instantly ESTIMATE) |
+| Beatings | by the law enforcer when no restraint is free ("GotBeaten"/"GaveBeating", a bruise) | w:Justice | FIXED r8 |
+| Hammerstrikes | with a hammerer and a hammer for crimes with strikes; each strike bruises, 1 in 15 breaks a bone; "GotHammered"/"GaveHammering"; no hammer = "NoHammer" and a beating | w:Hammerer | FIXED r8 (strike damage ESTIMATE) |
+| Sentences | DisorderlyBehavior 7 days, BuildingDestruction 14, ProductionOrderViolation 14 or 5 strikes, Theft 28, AttemptedMurder 112 / 10 strikes, Murder 336 / 20 strikes | not given | ESTIMATE |
+| Clothing wear | worn non-metal clothing gains a wear level every 336 days; past tattered it falls apart ("RottedClothing"); threadbare "OldClothing", tattered "TatteredClothing" (at most once a year) | w:Wear | FIXED r8 (timing ESTIMATE, fitted to the export's 91/7/1/1 % wear mix) |
+| Clothing replacement | a dwarf (not soldiers) with worn (x) clothing fetches an unworn piece of the same subtype from a stockpile, puts it on ("WearItem" for quality items) and drops the old one | w:Clothing | FIXED r8 (threshold ESTIMATE) |
+| Rain | weather on: rain on 1 day in 5 outside winter; "Rain" thoughts only with `Sim::set_rain_thoughts` (the export has none) | w:Weather | ESTIMATE |
+| Fertilizer (potash) | not simulated | w:Farming | MISSING |
+| Locations in the export | derived from zone names | the round-6 exporter writes DF's locations, occupations and crimes | MISSING (exporter) |
 
 ## Known gaps worth doing next (economy & society)
 

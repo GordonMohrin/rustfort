@@ -83,6 +83,11 @@ pub struct Crime {
     /// [app8] Names of the criminal and the victim as exported (the units may be dead or gone).
     pub criminal_name: String,
     pub victim_name: String,
+    /// [society2] Case state: `Unsolved`, `Accused` (culprit identified), `Convicted`,
+    /// `Serving` (jail time), `Punished`, `Closed` (culprit gone or dead). Empty = `Unsolved`.
+    pub status: String,
+    /// [society2] Remaining jail days (or hammerstrikes / beatings still owed) of the sentence.
+    pub sentence_days: i32,
 }
 
 /// A hauling route (minecarts / wheelbarrows) with stops.
