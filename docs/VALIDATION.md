@@ -122,9 +122,10 @@ and a time-stretching tool (consistent with DFHack's `timestream`) makes the cal
 roughly **100-160 ticks/s**. A later read while the game was paused moved 6 ticks/s with frames
 equal to ticks.
 
-Rustfort on the same fort: about 56k ticks/s per sim with 3 sims in parallel on an idle machine
-(r4 -> r5, first run), 59-61k ticks/s for one sim (`rustfort bench`, see the report of this
-round). That is **about 500x DF's calendar speed and about 2 000x DF's real frame rate**.
+Rustfort on the same fort: about 54-56k ticks/s per sim with 3 sims running side by side on a
+quiet machine (first r4 -> r5 run, r3 -> r4 run), about 61k for one sim in round 7
+(PROGRESS.md). That is **about 500x DF's calendar speed and about 2 000x DF's real frame
+rate**.
 
 ## Results r4 -> r5 (2.18 years, 6 seeds, standing orders, restored squad routines)
 
@@ -293,3 +294,230 @@ which fits tier 5 (Metropolis, 120 regulars + 40 monsters on the wiki) reached b
   that were made and then eaten, traded or destroyed; compare durable goods only.
 - The r3 export lacks settings, squads' routines and engravings; r4 lacks engravings.
 - XP is compared for dwarves present at both ends; DF's dead or arriving dwarves are not in it.
+
+## Appendix: full table r4 -> r5 (as printed by the tool)
+
+Run: `--seeds 1,2,3,4,5,6 --standing-orders --restore-schedules`, gamelog lines 11 816 811 to
+12 027 766. `start.*` rows describe the start export; `ev.*` real values come from the gamelog;
+`simjob.*` / `simmade.*` are the sim's own job and product counters (no DF equivalent);
+`xpskill.*` is XP per persisting dwarf and year; `newkind.*` counts new items by DF item kind.
+
+| metric | DF start | DF end / change | sim min | sim median | sim max | verdict | sim/DF |
+|---|---|---|---|---|---|---|---|
+| start.active_work_orders | 14 | 14 | - | - | - | - | - |
+| start.dig_designations | 24 | 24 | - | - | - | - | - |
+| start.queued_workshop_jobs | 20 | 20 | - | - | - | - | - |
+| pop.animals | 177 | 189 | 196 | 205 | 211 | close | 1.08 |
+| pop.births_alive | 0 | 2 | 2 | 6 | 7 | in range | 3.00 |
+| pop.children | 10 | 8 | 8 | 12 | 13 | in range | 1.50 |
+| pop.citizens | 88 | 87 | 89 | 95 | 96 | close | 1.09 |
+| pop.citizens_lost | 0 | 14 | 1 | 2 | 4 | LOW | 0.14 |
+| pop.hostiles_on_map | 6 | 16 | 11 | 23 | 25 | in range | 1.44 |
+| pop.migrants_arrived | 0 | 11 | 1 | 3 | 4 | LOW | 0.27 |
+| ev.ambushes | - | 6 | 0 | 0 | 0 | LOW | 0.00 |
+| ev.animal_births | - | 12 | 0 | 0 | 0 | LOW | 0.00 |
+| ev.artifacts | - | 5 | 2 | 4 | 5 | in range | 0.80 |
+| ev.beasts | - | 0 | 1 | 3 | 5 | HIGH | - |
+| ev.caravans | - | 4 | 4 | 4 | 4 | in range | 1.00 |
+| ev.citizen_deaths | - | 15 | 1 | 3 | 4 | LOW | 0.20 |
+| ev.death_announcements | - | - | 4 | 19 | 31 | - | - |
+| ev.depressions | - | - | 3 | 4 | 6 | - | - |
+| ev.dwarf_births | - | 2 | 2 | 6 | 7 | in range | 3.00 |
+| ev.insane | - | 0 | 0 | 0 | 0 | in range | - |
+| ev.invaders | - | - | 0 | 30 | 40 | - | - |
+| ev.masterpieces | - | 85 | 0 | 0 | 0 | LOW | 0.00 |
+| ev.migrant_waves | - | 5 | 1 | 2 | 2 | LOW | 0.40 |
+| ev.migrants | - | - | 2 | 3 | 4 | - | - |
+| ev.moods | - | 5 | 5 | 5 | 6 | in range | 1.00 |
+| ev.sieges | - | 2 | 0 | 3 | 4 | in range | 1.50 |
+| ev.tantrums | - | 1 | 0 | 2 | 3 | in range | 2.00 |
+| ev.trades | - | - | 0 | 0 | 0 | - | - |
+| stress.breaking | 2 | 5 | 0 | 0 | 1 | LOW | 0.00 |
+| stress.content | 26 | 13 | 31 | 36 | 39 | HIGH | 2.77 |
+| stress.ecstatic | 30 | 19 | 25 | 29 | 33 | HIGH | 1.53 |
+| stress.fine | 5 | 14 | 0 | 1 | 2 | LOW | 0.07 |
+| stress.happy | 21 | 24 | 21 | 30 | 33 | in range | 1.25 |
+| stress.mean | -42328 | -25720 | -43065 | -38342 | -37676 | LOW | 1.49 |
+| stress.stressed | 3 | 10 | 0 | 0 | 0 | LOW | 0.00 |
+| stress.stressed_or_worse | 6 | 17 | 0 | 0 | 1 | LOW | 0.00 |
+| stress.very_stressed | 1 | 2 | 0 | 0 | 1 | close | 0.00 |
+| xp.military_levels_gained | 0 | 1018 | 557 | 576 | 592 | LOW | 0.57 |
+| xp.military_per_dwarf_year | 0 | 14545 | 6757 | 6924 | 7186 | LOW | 0.48 |
+| xp.persisting_dwarves | 88 | 74 | 84 | 86 | 87 | close | 1.16 |
+| xp.skills_above_20 | 137 | 96 | 129 | 133 | 137 | HIGH | 1.39 |
+| xp.social_levels_gained | 0 | 293 | 0 | 0 | 0 | LOW | 0.00 |
+| xp.social_per_dwarf_year | 0 | 1977 | 0 | 0 | 0 | LOW | 0.00 |
+| xp.work_levels_gained | 0 | 264 | 61 | 102 | 124 | LOW | 0.39 |
+| xp.work_per_dwarf_year | 0 | 1892 | 494 | 916 | 1041 | LOW | 0.48 |
+| stock.ammo | 1697 | 2360 | 1664 | 1928 | 2026 | close | 0.82 |
+| stock.armor_metal | 688 | 1006 | 688 | 722 | 740 | LOW | 0.72 |
+| stock.bar | 185 | 176 | 162 | 169 | 171 | close | 0.96 |
+| stock.block | 183 | 181 | 182 | 183 | 183 | close | 1.01 |
+| stock.boulder | 882 | 878 | 442 | 447 | 468 | LOW | 0.51 |
+| stock.cloth_leather | 5364 | 3647 | 5277 | 5285 | 5289 | HIGH | 1.45 |
+| stock.clothing | 1310 | 2772 | 1310 | 1310 | 1311 | LOW | 0.47 |
+| stock.container | 481 | 600 | 560 | 560 | 560 | close | 0.93 |
+| stock.craft | 1089 | 1218 | 1434 | 1459 | 1462 | close | 1.20 |
+| stock.drink | 1286 | 1600 | 892 | 915 | 952 | LOW | 0.57 |
+| stock.furniture | 1633 | 1749 | 1699 | 1700 | 1701 | close | 0.97 |
+| stock.gem | 432 | 441 | 438 | 442 | 443 | in range | 1.00 |
+| stock.items_total | 16218 | 17390 | 16603 | 16863 | 16952 | close | 0.97 |
+| stock.log | 155 | 77 | 149 | 150 | 151 | HIGH | 1.95 |
+| stock.meal | 774 | 645 | 201 | 353 | 365 | LOW | 0.55 |
+| stock.mechanism | 306 | 296 | 306 | 306 | 306 | close | 1.03 |
+| stock.medical | 22 | 42 | 21 | 22 | 22 | LOW | 0.52 |
+| stock.other | 4 | 4 | 4 | 4 | 4 | in range | 1.00 |
+| stock.other_food | 1416 | 1562 | 1499 | 1499 | 1500 | close | 0.96 |
+| stock.plant | 1052 | 1312 | 1753 | 1926 | 1985 | HIGH | 1.47 |
+| stock.refuse | 674 | 933 | 747 | 790 | 816 | close | 0.85 |
+| stock.seed | 430 | 397 | 406 | 490 | 511 | close | 1.23 |
+| stock.tool | 172 | 190 | 172 | 172 | 172 | close | 0.91 |
+| stock.weapon | 451 | 684 | 453 | 477 | 493 | LOW | 0.70 |
+| new.ammo | - | 907 | 217 | 625 | 828 | LOW | 0.69 |
+| new.armor_metal | - | 318 | 0 | 34 | 52 | LOW | 0.11 |
+| new.bar | - | 5 | 0 | 0 | 0 | LOW | 0.00 |
+| new.block | - | 16 | 0 | 0 | 0 | LOW | 0.00 |
+| new.boulder | - | 92 | 0 | 0 | 0 | LOW | 0.00 |
+| new.cloth_leather | - | 506 | 2 | 2 | 2 | LOW | 0.00 |
+| new.clothing | - | 1543 | 0 | 0 | 1 | LOW | 0.00 |
+| new.container | - | 119 | 79 | 79 | 79 | LOW | 0.66 |
+| new.craft | - | 290 | 345 | 370 | 373 | HIGH | 1.28 |
+| new.drink | - | 1096 | 805 | 846 | 952 | close | 0.77 |
+| new.furniture | - | 119 | 66 | 67 | 68 | LOW | 0.56 |
+| new.gem | - | 12 | 11 | 12 | 12 | in range | 1.00 |
+| new.log | - | 56 | 0 | 0 | 0 | LOW | 0.00 |
+| new.meal | - | 263 | 42 | 223 | 244 | close | 0.85 |
+| new.medical | - | 20 | 0 | 0 | 0 | LOW | 0.00 |
+| new.other_food | - | 165 | 95 | 95 | 96 | LOW | 0.58 |
+| new.plant | - | 584 | 1054 | 1225 | 1322 | HIGH | 2.10 |
+| new.refuse | - | 545 | 89 | 132 | 158 | LOW | 0.24 |
+| new.seed | - | 61 | 80 | 163 | 185 | HIGH | 2.67 |
+| new.tool | - | 18 | 0 | 0 | 0 | LOW | 0.00 |
+| new.weapon | - | 235 | 2 | 26 | 42 | LOW | 0.11 |
+| quality.craft_new_masterwork | - | 25 | 0 | 0 | 0 | LOW | 0.00 |
+| quality.craft_new_mean | - | 2.6 | 0 | 0.0 | 0.0 | LOW | 0.01 |
+| quality.new_durable_items | - | 3277 | 739 | 916 | 1113 | LOW | 0.28 |
+| quality.new_exceptional_or_better | - | 359 | 200 | 256 | 422 | in range | 0.71 |
+| quality.new_masterwork | - | 76 | 74 | 90 | 134 | in range | 1.18 |
+| quality.new_mean | - | 1.3 | 1.3 | 1.4 | 1.8 | close | 1.11 |
+| wealth.items | 3028k | 3215k | 3281k | 3334k | 3474k | close | 1.04 |
+| wealth.new_items | 0 | 238k | 275k | 323k | 475k | HIGH | 1.35 |
+| wealth.new_items_without_stored_value | 0 | 545 | 1369 | 1551 | 1630 | HIGH | 2.85 |
+| bld.furniture | 1237 | 1350 | 1235 | 1237 | 1237 | close | 0.92 |
+| bld.other | 65 | 71 | 65 | 65 | 65 | close | 0.92 |
+| bld.stockpiles | 41 | 42 | 41 | 41 | 41 | close | 0.98 |
+| bld.total | 1669 | 1822 | 1667 | 1669 | 1669 | close | 0.92 |
+| bld.traps | 81 | 80 | 81 | 81 | 81 | close | 1.01 |
+| bld.workshops | 32 | 31 | 32 | 32 | 32 | close | 1.03 |
+| bld.zones | 213 | 248 | 213 | 213 | 213 | close | 0.86 |
+| tile.constructed | 0 | 0 | 0 | 0 | 0 | in range | - |
+| tile.deconstructed | 0 | 23 | 0 | 0 | 0 | LOW | 0.00 |
+| tile.dug | 0 | 782 | 0 | 0 | 0 | LOW | 0.00 |
+| tile.engravings_added | 0 | - | 0 | 0 | 0 | - | - |
+| tile.smoothed | 0 | 896 | 0 | 0 | 0 | LOW | 0.00 |
+| tile.trees_lost | 0 | -65 | 0 | 0 | 0 | HIGH | -0.00 |
+| pile.fill_pct | 39.2 | 37.4 | 24.2 | 24.6 | 25.4 | LOW | 0.66 |
+| pile.loose_items_outside | 6673 | 6773 | 6877 | 7033 | 7237 | close | 1.04 |
+| pile.tiles | 2993 | 3002 | 2993 | 2993 | 2993 | close | 1.00 |
+| newkind.AMMO | - | 907 | 217 | 625 | 828 | LOW | 0.69 |
+| newkind.AMULET | - | 24 | 44 | 51 | 62 | HIGH | 2.12 |
+| newkind.ARMOR | - | 280 | 0 | 8 | 26 | LOW | 0.03 |
+| newkind.BAG | - | 5 | 74 | 75 | 75 | HIGH | 15.00 |
+| newkind.BARREL | - | 105 | 4 | 4 | 5 | LOW | 0.04 |
+| newkind.BED | - | 60 | 0 | 0 | 0 | LOW | 0.00 |
+| newkind.BOULDER | - | 92 | 0 | 0 | 0 | LOW | 0.00 |
+| newkind.BRACELET | - | 38 | 36 | 54 | 60 | in range | 1.42 |
+| newkind.CABINET | - | 0 | 20 | 20 | 21 | HIGH | - |
+| newkind.CHAIR | - | 9 | 23 | 23 | 24 | HIGH | 2.56 |
+| newkind.CLOTH | - | 162 | 1 | 1 | 1 | LOW | 0.01 |
+| newkind.COFFIN | - | 25 | 0 | 0 | 1 | LOW | 0.00 |
+| newkind.CORPSE | - | 171 | 4 | 19 | 31 | LOW | 0.11 |
+| newkind.CORPSEPIECE | - | 298 | 85 | 113 | 127 | LOW | 0.38 |
+| newkind.CROWN | - | 34 | 45 | 58 | 61 | HIGH | 1.71 |
+| newkind.DRINK | - | 1096 | 805 | 846 | 952 | close | 0.77 |
+| newkind.EARRING | - | 39 | 40 | 55 | 58 | HIGH | 1.41 |
+| newkind.FIGURINE | - | 35 | 46 | 50 | 58 | HIGH | 1.43 |
+| newkind.FOOD | - | 263 | 42 | 223 | 244 | close | 0.85 |
+| newkind.GLOB | - | 153 | 4 | 4 | 4 | LOW | 0.03 |
+| newkind.GLOVES | - | 452 | 0 | 0 | 0 | LOW | 0.00 |
+| newkind.GOBLET | - | 45 | 0 | 0 | 0 | LOW | 0.00 |
+| newkind.HELM | - | 107 | 0 | 12 | 17 | LOW | 0.11 |
+| newkind.PANTS | - | 283 | 0 | 10 | 11 | LOW | 0.04 |
+| newkind.PLANT | - | 535 | 1054 | 1225 | 1322 | HIGH | 2.29 |
+| newkind.PLANT_GROWTH | - | 49 | 0 | 0 | 0 | LOW | 0.00 |
+| newkind.POWDER_MISC | - | 3 | 91 | 91 | 92 | HIGH | 30.33 |
+| newkind.QUIVER | - | 31 | 0 | 4 | 7 | LOW | 0.13 |
+| newkind.REMAINS | - | 76 | 0 | 0 | 0 | LOW | 0.00 |
+| newkind.RING | - | 44 | 42 | 49 | 60 | in range | 1.11 |
+| newkind.SCEPTER | - | 29 | 51 | 60 | 66 | HIGH | 2.07 |
+| newkind.SEEDS | - | 61 | 80 | 163 | 185 | HIGH | 2.67 |
+| newkind.SHIELD | - | 43 | 0 | 0 | 1 | LOW | 0.00 |
+| newkind.SHOES | - | 739 | 0 | 0 | 0 | LOW | 0.00 |
+| newkind.SKIN_TANNED | - | 20 | 0 | 0 | 0 | LOW | 0.00 |
+| newkind.THREAD | - | 324 | 1 | 1 | 1 | LOW | 0.00 |
+| newkind.WEAPON | - | 161 | 1 | 22 | 35 | LOW | 0.14 |
+| newkind.WOOD | - | 56 | 0 | 0 | 0 | LOW | 0.00 |
+| xpskill.APPRAISAL | 0 | 33.2 | 0 | 0 | 0 | LOW | 0.00 |
+| xpskill.ARMOR | 0 | 399 | 999 | 1019 | 1049 | HIGH | 2.55 |
+| xpskill.AXE | 0 | 1816 | 2952 | 2992 | 3070 | HIGH | 1.65 |
+| xpskill.BITE | 0 | 121 | 1.0 | 1.3 | 3.4 | LOW | 0.01 |
+| xpskill.BONECARVE | 0 | 27.0 | 0.2 | 0.2 | 0.2 | LOW | 0.01 |
+| xpskill.BREWING | 0 | 91.7 | 39.5 | 45.6 | 48.7 | LOW | 0.50 |
+| xpskill.CARPENTRY | 0 | 69.4 | 0.7 | 0.8 | 0.9 | LOW | 0.01 |
+| xpskill.COMEDY | 0 | 41.5 | 0 | 0 | 0 | LOW | 0.00 |
+| xpskill.CONCENTRATION | 0 | 417 | 0 | 0 | 0 | LOW | 0.00 |
+| xpskill.CONSOLE | 0 | 47.5 | 0 | 0 | 0 | LOW | 0.00 |
+| xpskill.CONVERSATION | 0 | 27.6 | 0 | 0 | 0 | LOW | 0.00 |
+| xpskill.COOK | 0 | 93.3 | 9.1 | 14.7 | 15.5 | LOW | 0.16 |
+| xpskill.CROSSBOW | 0 | 71.6 | 11.4 | 26.2 | 55.3 | LOW | 0.37 |
+| xpskill.CRUTCH_WALK | 0 | 70.5 | 0 | 0 | 0 | LOW | 0.00 |
+| xpskill.CUT_STONE | 0 | 41.3 | 0 | 0 | 106 | in range | 0.00 |
+| xpskill.DISCIPLINE | 0 | 1711 | 0 | 0 | 0 | LOW | 0.00 |
+| xpskill.DODGING | 0 | 336 | 1000 | 1021 | 1049 | HIGH | 3.04 |
+| xpskill.ENGRAVE_STONE | 0 | 16.3 | 0 | 106 | 108 | in range | 6.49 |
+| xpskill.FORGE_ARMOR | 0 | 0 | 0 | 0 | 107 | in range | - |
+| xpskill.FORGE_FURNITURE | 0 | 0 | 0 | 0 | 106 | in range | - |
+| xpskill.FORGE_WEAPON | 0 | 0 | 0 | 106 | 108 | in range | - |
+| xpskill.GRASP_STRIKE | 0 | 331 | 6.3 | 12.1 | 27.3 | LOW | 0.04 |
+| xpskill.HERBALISM | 0 | 46.1 | 0 | 0 | 0 | LOW | 0.00 |
+| xpskill.INTIMIDATION | 0 | 33.6 | 0 | 0 | 0 | LOW | 0.00 |
+| xpskill.JUDGING_INTENT | 0 | 37.2 | 0 | 0 | 0 | LOW | 0.00 |
+| xpskill.KNOWLEDGE_ACQUISITION | 0 | 417 | 0 | 0 | 0 | LOW | 0.00 |
+| xpskill.MASONRY | 0 | 391 | 10.0 | 117 | 224 | LOW | 0.30 |
+| xpskill.MELEE_COMBAT | 0 | 2648 | 1007 | 1031 | 1073 | LOW | 0.39 |
+| xpskill.METALCRAFT | 0 | 0 | 0 | 0.2 | 106 | in range | - |
+| xpskill.MINING | 0 | 50.1 | 13.0 | 21.1 | 141 | in range | 0.42 |
+| xpskill.NEGOTIATION | 0 | 43.3 | 0 | 0 | 0 | LOW | 0.00 |
+| xpskill.ORGANIZATION | 0 | 306 | 0 | 0 | 0 | LOW | 0.00 |
+| xpskill.PACIFY | 0 | 50.4 | 0 | 0 | 0 | LOW | 0.00 |
+| xpskill.PERSUASION | 0 | 76.0 | 0 | 0 | 0 | LOW | 0.00 |
+| xpskill.PLANT | 0 | 644 | 299 | 324 | 349 | LOW | 0.50 |
+| xpskill.RANGED_COMBAT | 0 | 65.3 | 5.4 | 12.8 | 27.2 | LOW | 0.20 |
+| xpskill.SHIELD | 0 | 190 | 721 | 730 | 747 | HIGH | 3.84 |
+| xpskill.SITUATIONAL_AWARENESS | 0 | 6116 | 0 | 0 | 0 | LOW | 0.00 |
+| xpskill.SPEAKING | 0 | 69.3 | 0 | 0 | 0 | LOW | 0.00 |
+| xpskill.STANCE_STRIKE | 0 | 135 | 4.4 | 6.3 | 13.7 | LOW | 0.05 |
+| xpskill.STONECRAFT | 0 | 186 | 50.7 | 56.5 | 163 | LOW | 0.30 |
+| xpskill.TEACHING | 0 | 366 | 0 | 0 | 0 | LOW | 0.00 |
+| xpskill.WEAVING | 0 | 78.6 | 0.3 | 0.3 | 0.3 | LOW | 0.00 |
+| xpskill.WRESTLING | 0 | 606 | 45.3 | 64.2 | 85.3 | LOW | 0.11 |
+| simjob.Brew drink from plant | - | - | 271 | 306 | 318 | - | - |
+| simjob.Construct rock cabinet | - | - | 20 | 20 | 20 | - | - |
+| simjob.Construct rock throne | - | - | 22 | 23 | 23 | - | - |
+| simjob.Harvest plants | - | - | 1469 | 1526 | 1626 | - | - |
+| simjob.Make leather bag | - | - | 74 | 75 | 75 | - | - |
+| simjob.Make rock crafts | - | - | 342 | 367 | 369 | - | - |
+| simjob.Mill plants | - | - | 91 | 91 | 92 | - | - |
+| simjob.Plant seeds | - | - | 1481 | 1541 | 1656 | - | - |
+| simjob.Prepare easy meal | - | - | 61 | 96 | 99 | - | - |
+| simmade.AMULET | - | - | 44 | 50 | 62 | - | - |
+| simmade.BAG | - | - | 74 | 75 | 75 | - | - |
+| simmade.BRACELET | - | - | 35 | 54 | 60 | - | - |
+| simmade.CORPSEPIECE | - | - | 85 | 85 | 85 | - | - |
+| simmade.CROWN | - | - | 45 | 58 | 61 | - | - |
+| simmade.EARRING | - | - | 40 | 55 | 57 | - | - |
+| simmade.FIGURINE | - | - | 46 | 50 | 58 | - | - |
+| simmade.POWDER_MISC | - | - | 91 | 91 | 92 | - | - |
+| simmade.RING | - | - | 42 | 49 | 60 | - | - |
+| simmade.SCEPTER | - | - | 51 | 60 | 66 | - | - |
+| perf.ticks_per_s | - | - | 20867 | 27000 | 28075 | - | - |
