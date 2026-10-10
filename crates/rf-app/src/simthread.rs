@@ -14,6 +14,11 @@
 //!
 //! `RUSTFORT_SIM_THREAD=0` (or `--sim-inline`) keeps the old behavior: ticks run inside the
 //! frame with a time budget.
+//!
+//! [app10] A panic inside `run_ticks` no longer kills the game: the worker catches it, hands
+//! the (possibly inconsistent) sim back with the panic message and stops simulating. The UI
+//! then shows the crash dialog (`ui::round10`), which can save the last good in-memory
+//! snapshot. `run_guarded` does the same for ticks run on the UI thread.
 
 use rf_sim::Sim;
 use std::ops::{Deref, DerefMut};
@@ -31,9 +36,15 @@ enum Msg {
     Quit,
 }
 
+/// [app10] What the worker hands back: the sim, plus the panic message if a tick panicked.
+struct Back {
+    sim: Box<Sim>,
+    panic: Option<String>,
+}
+
 struct Worker {
     tx: Sender<Msg>,
-    rx: Receiver<Box<Sim>>,
+    rx: Receiver<Back>,
     give_back: Arc<AtomicBool>,
     busy_ns: Arc<AtomicU64>,
     thread: Option<JoinHandle<()>>,
@@ -44,6 +55,8 @@ struct Worker {
 pub struct SimHandle {
     sim: Option<Box<Sim>>,
     worker: Option<Worker>,
+    /// [app10] A tick panicked (message); no more ticks run until `clear_crash`.
+    crashed: Option<String>,
 }
 
 const _: () = {
@@ -55,7 +68,7 @@ const _: () = {
 impl SimHandle {
     pub fn new(sim: Sim, threaded: bool) -> SimHandle {
         let worker = if threaded { spawn_worker() } else { None };
-        SimHandle { sim: Some(Box::new(sim)), worker }
+        SimHandle { sim: Some(Box::new(sim)), worker, crashed: None }
     }
 
     /// Ticks run on a worker thread.
@@ -76,17 +89,50 @@ impl SimHandle {
         }
         let w = self.worker.as_ref().expect("sim handle without sim or worker");
         w.give_back.store(true, Ordering::Release);
-        let sim = w.rx.recv().unwrap_or_else(|_| panic!("the simulation thread stopped (panicked?)"));
+        let back = w.rx.recv().unwrap_or_else(|_| panic!("the simulation thread stopped (panicked?)"));
         w.give_back.store(false, Ordering::Release);
-        self.sim = Some(sim);
+        self.take_back(back);
+    }
+
+    fn take_back(&mut self, back: Back) {
+        if back.panic.is_some() && self.crashed.is_none() {
+            self.crashed = back.panic; // [app10]
+        }
+        self.sim = Some(back.sim);
+    }
+
+    /// [app10] The panic message of a crashed tick, if any (kept until `clear_crash`).
+    pub fn crash(&self) -> Option<&str> {
+        self.crashed.as_deref()
+    }
+
+    /// [app10] Forget the crash (after the sim was replaced, e.g. by a snapshot).
+    pub fn clear_crash(&mut self) {
+        self.crashed = None;
+    }
+
+    /// [app10] Run ticks on this thread, catching a panic (inline mode, single steps).
+    /// Returns false (and records the crash) if a tick panicked or the sim crashed before.
+    pub fn run_guarded(&mut self, n: u32) -> bool {
+        if self.crashed.is_some() {
+            return false;
+        }
+        let sim = self.sim.as_deref_mut().expect("the sim is on the worker thread (acquire it first)");
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| sim.run_ticks(n))) {
+            Ok(()) => true,
+            Err(e) => {
+                self.crashed = Some(panic_text(e.as_ref()));
+                false
+            }
+        }
     }
 
     /// Let the worker run up to `allow` ticks until the next `acquire`. Without a worker, or
     /// with nothing to run, the UI keeps the sim.
     pub fn release(&mut self, allow: u64) {
         let Some(w) = self.worker.as_ref() else { return };
-        if allow == 0 {
-            return;
+        if allow == 0 || self.crashed.is_some() {
+            return; // [app10] a crashed sim does not tick any more
         }
         if let Some(sim) = self.sim.take() {
             if let Err(e) = w.tx.send(Msg::Run { sim, allow }) {
@@ -104,7 +150,8 @@ impl SimHandle {
     pub fn finish(&mut self) {
         if self.sim.is_none() {
             let w = self.worker.as_ref().expect("sim handle without sim or worker");
-            self.sim = Some(w.rx.recv().expect("the simulation thread stopped"));
+            let back = w.rx.recv().expect("the simulation thread stopped");
+            self.take_back(back);
         }
     }
 
@@ -143,7 +190,7 @@ impl Drop for SimHandle {
 
 fn spawn_worker() -> Option<Worker> {
     let (tx, wrx) = channel::<Msg>();
-    let (wtx, rx) = channel::<Box<Sim>>();
+    let (wtx, rx) = channel::<Back>();
     let give_back = Arc::new(AtomicBool::new(false));
     let busy_ns = Arc::new(AtomicU64::new(0));
     let (gb, busy) = (give_back.clone(), busy_ns.clone());
@@ -157,23 +204,39 @@ fn spawn_worker() -> Option<Worker> {
                     Msg::Run { sim, allow } => (sim, allow),
                 };
                 let mut left = allow;
+                let mut panic = None;
                 while left > 0 && !gb.load(Ordering::Acquire) {
                     let n = chunk.min(left).min(u32::MAX as u64);
                     let t = Instant::now();
-                    sim.run_ticks(n as u32);
+                    // [app10] A panicking tick hands the sim back with the message.
+                    if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| sim.run_ticks(n as u32))) {
+                        panic = Some(panic_text(e.as_ref()));
+                        break;
+                    }
                     let dt = t.elapsed();
                     busy.fetch_add(dt.as_nanos() as u64, Ordering::Relaxed);
                     left -= n;
                     let per = dt.as_secs_f64() / n as f64;
                     chunk = if per > 0.0 { ((CHUNK_S / per) as u64).clamp(1, 5000) } else { 5000 };
                 }
-                if wtx.send(sim).is_err() {
+                if wtx.send(Back { sim, panic }).is_err() {
                     break;
                 }
             }
         })
         .ok()?;
     Some(Worker { tx, rx, give_back, busy_ns, thread: Some(thread) })
+}
+
+/// [app10] The text of a panic payload (`panic!("...")` gives a `&str` or a `String`).
+pub fn panic_text(e: &(dyn std::any::Any + Send)) -> String {
+    if let Some(s) = e.downcast_ref::<&str>() {
+        s.to_string()
+    } else if let Some(s) = e.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "unknown panic".to_string()
+    }
 }
 
 #[cfg(test)]
@@ -214,5 +277,37 @@ mod tests {
         assert_eq!(thr.ticks(), 300);
         let pos = |s: &Sim| s.world.units.iter().map(|u| (u.id, u.pos)).collect::<Vec<_>>();
         assert_eq!(pos(&inline), pos(&thr));
+    }
+
+    /// [app10] A panicking tick (here: a unit index the sim does not know any more, forced by
+    /// emptying the unit list behind its back) comes back as a crash instead of killing the
+    /// worker; the handle keeps the sim and refuses to tick it again.
+    #[test]
+    fn a_panicking_tick_is_caught_on_both_paths() {
+        let broken = || {
+            let mut s = Sim::new(rf_core::World::synthetic(24, 24, 12), 3);
+            s.run_ticks(5);
+            s.world.units.clear();
+            s
+        };
+        let mut thr = SimHandle::new(broken(), true);
+        thr.release(200);
+        thr.finish();
+        let mut inline = SimHandle::new(broken(), false);
+        let ok = inline.run_guarded(200);
+        // The synthetic world must actually panic for this test to mean anything.
+        if thr.crash().is_some() {
+            assert!(!ok, "inline path did not see the same panic");
+            assert!(thr.held());
+            let t = thr.ticks();
+            thr.release(50);
+            assert!(thr.held(), "a crashed sim must not go back to the worker");
+            assert_eq!(thr.ticks(), t);
+            assert!(!inline.run_guarded(1));
+            thr.clear_crash();
+            assert!(thr.crash().is_none());
+        }
+        assert_eq!(panic_text(&"boom"), "boom");
+        assert_eq!(panic_text(&String::from("bang")), "bang");
     }
 }

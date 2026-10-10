@@ -184,7 +184,7 @@ pub enum Src {
 }
 
 /// The DF announcement files in priority order: player prefs, install prefs, install defaults.
-fn df_files(df: &std::path::Path) -> Vec<(std::path::PathBuf, Src)> {
+pub fn df_files(df: &std::path::Path) -> Vec<(std::path::PathBuf, Src)> {
     let mut v = Vec::new();
     if let Some(app) = std::env::var_os("APPDATA") {
         v.push((std::path::PathBuf::from(app).join("Bay 12 Games").join("Dwarf Fortress").join("prefs").join("announcements.txt"), Src::DfPrefs));

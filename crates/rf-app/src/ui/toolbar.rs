@@ -58,7 +58,7 @@ const fn tb(action: Action, label: &'static str, icon: &'static str, fallback: I
 
 pub const LEFT: &[ToolButton] = &[
     tb(Action::Citizens, "Citizens", "BUTTON_INFO_CREATURES", Ico::Smiley, "D_UNITLIST", true),
-    tb(Action::Tasks, "Tasks (not yet)", "BUTTON_INFO_TASKS", Ico::Glyph(19, [200, 200, 200]), "D_JOBLIST", false),
+    tb(Action::Tasks, "Tasks: all current jobs", "BUTTON_INFO_TASKS", Ico::Glyph(19, [200, 200, 200]), "D_JOBLIST", true), // [app10]
     tb(Action::Places, "Places: locations, zones, stockpiles, workshops", "BUTTON_INFO_PLACES", Ico::Glyph(127, [200, 200, 200]), "D_LOCATIONS", true), // [app8]
     tb(Action::Labor, "Labor: work details, kitchen", "BUTTON_INFO_LABOR", Ico::Hammer, "D_LABOR", true),
     tb(Action::WorkOrders, "Work orders", "BUTTON_INFO_WORK_ORDERS", Ico::Glyph(240, [220, 200, 150]), "D_ORDERS", true),
@@ -79,7 +79,7 @@ pub const CENTER: &[ToolButton] = &[
     tb(Action::Stockpile, "Stockpiles", "BUTTON_STOCKPILE", Ico::Crate, "D_STOCKPILES", true),
     tb(Action::Zone, "Zones", "BUTTON_ZONE", Ico::Zone, "D_CIVZONE", true),
     tb(Action::Burrow, "Burrows", "BUTTON_BURROW", Ico::Glyph(176, [200, 160, 120]), "D_BURROWS", true),
-    tb(Action::Hauling, "Hauling routes (not yet)", "BUTTON_HAULING", Ico::Glyph(26, [200, 200, 200]), "D_HAULING", false),
+    tb(Action::Hauling, "Hauling routes", "BUTTON_HAULING", Ico::Glyph(26, [200, 200, 200]), "D_HAULING", true), // [app10]
 ];
 
 pub const RIGHT: &[ToolButton] = &[
@@ -142,7 +142,8 @@ fn is_active(g: &Game, a: Action) -> bool {
         Action::Objects => g.screen == Screen::Objects,
         Action::Justice => g.screen == Screen::Justice,
         Action::World => g.screen == Screen::World,
-        _ => false,
+        Action::Tasks => g.screen == Screen::Tasks,     // [app10]
+        Action::Hauling => g.screen == Screen::Hauling, // [app10]
     }
 }
 
@@ -180,7 +181,12 @@ fn press(g: &mut Game, a: Action) {
         Action::Objects => g.toggle_screen(Screen::Objects),
         Action::Justice => g.toggle_screen(Screen::Justice),
         Action::World => g.toggle_screen(Screen::World),
-        _ => {}
+        // [app10]
+        Action::Tasks => {
+            g.toggle_screen(Screen::Tasks);
+            g.r10.tasks_dirty = true;
+        }
+        Action::Hauling => g.toggle_screen(Screen::Hauling),
     }
 }
 

@@ -133,6 +133,10 @@ pub enum Screen {
     World,
     /// [app9] Visitor petitions (DF v50 petitions window).
     Petitions,
+    /// [app10] All current jobs (DF `D_JOBLIST`, Steam "Tasks").
+    Tasks,
+    /// [app10] Hauling routes (DF `D_HAULING`).
+    Hauling,
 }
 
 /// Sort order of the citizens list.
@@ -454,6 +458,8 @@ pub struct Game {
     pub r8: crate::ui::round8::R8Ui,
     /// [app9] Announcement settings and boxes, petitions, squad equipment, combat reports.
     pub r9: crate::ui::round9::R9Ui,
+    /// [app10] Tasks and hauling screens, build hotkey chains, map context menu, crash guard.
+    pub r10: crate::ui::round10::R10Ui,
 }
 
 /// [round 6] How the game loop ended.
@@ -641,6 +647,7 @@ impl Game {
             exit: None,
             r8: Default::default(),
             r9: Default::default(),
+            r10: Default::default(),
         };
         // [round 6] Defaults from the settings for a fresh start (imports, synthetic forts).
         if loaded.new_game {
@@ -934,6 +941,7 @@ impl Game {
                 // [app8] work details, kitchen, stockpile settings, animals, places, ...
                 _ if crate::ui::round8::ui_arg(self, k, v) => {}
                 _ if crate::ui::round9::ui_arg(self, k, v) => {} // [app9]
+                _ if crate::ui::round10::ui_arg(self, k, v) => {} // [app10]
                 _ => eprintln!("unknown --ui state {u}"),
             }
         }
@@ -1000,6 +1008,7 @@ impl Game {
     /// Ticks run this frame (the game is not paused by the player, a menu or a pop-up).
     pub fn sim_running(&self) -> bool {
         !self.paused && !self.menu_open && self.alert.is_none() && self.r4.popup.is_none() && self.r9.popups.is_empty() // [app9]
+            && self.r10.crash.is_none() // [app10]
     }
 
     /// [round 4] Called right after the sim came back from the worker: book the ticks it ran.
@@ -1048,7 +1057,9 @@ impl Game {
                     while todo > 0 && t0.elapsed().as_secs_f64() < self.sim_budget {
                         let n = todo.min(self.chunk.max(1));
                         let c0 = Instant::now();
-                        self.sim.run_ticks(n);
+                        if !self.sim.run_guarded(n) {
+                            break; // [app10] crashed: the crash dialog takes over
+                        }
                         self.adapt_chunk(n, c0.elapsed().as_secs_f64());
                         todo -= n;
                         self.tick_accum -= n as f64;
@@ -1059,7 +1070,9 @@ impl Game {
                     while t0.elapsed().as_secs_f64() < self.sim_budget {
                         let n = self.chunk.max(1);
                         let c0 = Instant::now();
-                        self.sim.run_ticks(n);
+                        if !self.sim.run_guarded(n) {
+                            break; // [app10]
+                        }
                         self.adapt_chunk(n, c0.elapsed().as_secs_f64());
                     }
                 }
@@ -1086,6 +1099,7 @@ impl Game {
             self.stocks = crate::ui::topbar::count_stocks(&self.sim.world, now);
         }
         self.check_autosave(); // [round 6]
+        crate::ui::round10::update(self); // [app10] crash check, in-memory snapshot, tasks list
         self.poll_save();
         let date = date_string(&self.sim.world.calendar);
         let fresh = self.sim.drain_announcements();
@@ -1155,7 +1169,7 @@ impl Game {
             self.paused = !self.paused;
         }
         if self.paused && inp.hit(b, "D_ONESTEP") {
-            self.sim.run_ticks(1);
+            self.sim.run_guarded(1); // [app10]
         }
         for (i, sp) in Speed::ALL.iter().enumerate() {
             if inp.hit(b, &format!("RF_SPEED_{}", i + 1)) {
@@ -1175,6 +1189,9 @@ impl Game {
         // [round 5] Inside the smooth/traffic/item menus their DESIGNATE_* keys pick the tool.
         if crate::ui::round5::submenu_keys(self) {
             return;
+        }
+        if crate::ui::round10::keys(self) {
+            return; // [app10] build menu hotkey chains, Tasks (D_JOBLIST), Hauling (D_HAULING)
         }
         let b = &self.binds;
         let inp = &self.input;
@@ -1380,6 +1397,8 @@ impl Game {
                 self.burrow_ui = BurrowUi::default();
                 self.help_open = false;
                 self.autosave_next = next_autosave_day(game_day(&self.sim.world.calendar), self.autosave_days); // [round 6]
+                self.r10 = Default::default(); // [app10] a new world: new snapshot, no crash
+                self.sim.clear_crash();
                 let text = format!(
                     "Loaded {} ({}): {} in {:.2}s + sim {:.2}s",
                     info.header.fort,
@@ -1430,6 +1449,8 @@ impl Game {
             self.r4.popup = None;
         } else if crate::ui::round9::escape(self) {
             // [app9] boxes, patrol tool, announcement settings
+        } else if crate::ui::round10::escape(self) {
+            // [app10] map context menu, build menu category
         } else if self.screen == Screen::Trade && self.r4.depot_open {
             self.r4.depot_open = false;
             self.r4.depot_typing = false;
@@ -1594,6 +1615,8 @@ impl Game {
             } else if self.tool != Tool::None || self.submenu != Submenu::None {
                 self.tool = Tool::None;
                 self.submenu = Submenu::None;
+            } else if crate::ui::round10::context_click(self) {
+                // [app10] context menu for the tile under the mouse
             } else {
                 self.selected = Selected::None;
             }
@@ -1868,20 +1891,33 @@ pub async fn run(args: Args, loaded: Loaded, settings: crate::settings::Settings
         if g.ui.over_ui {
             g.input.wheel_used = true;
         }
-        g.global_keys();
-        if args.screenshot.is_some() {
-            // Screenshot runs are reproducible: saves finish within the frame.
-            g.finish_save();
-        }
-        g.update_sim(dt);
-        g.update_camera(dt);
+        // [app10] The frame's input, sim bookkeeping and drawing run under a panic guard: a bug
+        // in the interface (or a sim panic on this thread) opens the crash dialog instead of
+        // closing the window. While the dialog is up, only the dialog runs.
+        if g.r10.crash.is_none() {
+            let shot = args.screenshot.is_some();
+            let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                g.global_keys();
+                if shot {
+                    // Screenshot runs are reproducible: saves finish within the frame.
+                    g.finish_save();
+                }
+                g.update_sim(dt);
+                g.update_camera(dt);
 
-        clear_background(Color::from_rgba(0, 0, 0, 255));
-        crate::render::draw_map(&mut g);
-        let scale = g.ui_scale;
-        g.ui.begin(&g.input, scale);
-        crate::ui::overlay::draw_ui(&mut g);
-        g.map_input();
+                clear_background(Color::from_rgba(0, 0, 0, 255));
+                crate::render::draw_map(&mut g);
+                let scale = g.ui_scale;
+                g.ui.begin(&g.input, scale);
+                crate::ui::overlay::draw_ui(&mut g);
+                g.map_input();
+            }));
+            if let Err(e) = res {
+                crate::ui::round10::on_ui_panic(&mut g, crate::simthread::panic_text(e.as_ref()));
+            }
+        } else {
+            crate::ui::round10::crash_frame(&mut g);
+        }
         g.frame_ms = f0.elapsed().as_secs_f64() * 1000.0;
 
         frame += 1;

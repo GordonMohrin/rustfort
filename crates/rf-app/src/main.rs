@@ -13,6 +13,7 @@
 //! `--synthetic`/`--size` and `--screenshot` start the game directly, unless `--menu` is given.
 
 mod bench;
+mod crash; // [app10]
 mod font;
 mod game;
 mod importer;
@@ -177,6 +178,8 @@ fn main() {
             save::bench(loaded.world, args.seed);
         }
         "play" => {
+            // [app10] Every panic goes to saves/crash.log; the game catches them (crash dialog).
+            crash::install_hook();
             // [round 6] Settings file next to the saves (UI scale, frame cap, vsync, DF folder).
             let settings = settings::Settings::load();
             if std::env::var_os("RUSTFORT_DF_DIR").is_none() {

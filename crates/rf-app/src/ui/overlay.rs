@@ -17,7 +17,7 @@ pub fn draw_ui(g: &mut Game) {
     super::topbar::draw_zbar(g, tb_y - 8.0 * s);
     let top = super::topbar::TOPBAR_H * s + 6.0 * s;
     let right = screen_width() - super::topbar::ZBAR_W * s - 14.0 * s;
-    if !super::round8::hides_sheet(g) {
+    if !super::round8::hides_sheet(g) && !super::round10::hides_sheet(g) {
         super::panels::draw_sheet(g, top, toolbar_top.min(tb_y) - 6.0 * s, right); // [app8] not under the round-8 screens
     }
     super::minimap::draw(g, top, right); // [app8]
@@ -35,6 +35,7 @@ pub fn draw_ui(g: &mut Game) {
     super::round8::draw_screens(g); // [app8]
     super::round9::draw_petitions(g); // [app9]
     super::round9::draw_badges(g, top); // [app9] petitions alert
+    super::round10::draw_screens(g); // [app10] tasks, hauling, map context menu
     draw_status(g, toolbar_top.min(tb_y));
     if g.menu_open {
         draw_menu(g);
@@ -48,7 +49,7 @@ pub fn draw_ui(g: &mut Game) {
     if let Some((t, p)) = g.ui.tooltip.take() {
         let lines: Vec<(String, Color)> = t.split('\n').map(|l| (l.to_string(), col::TEXT)).collect();
         tooltip_box(g, &lines, p, true);
-    } else if !g.ui.over_ui && !g.menu_open && !g.help_open && g.alert.is_none() && g.r4.popup.is_none() && g.r9.popups.is_empty() && g.screen == Screen::None && !matches!(g.tool, Tool::Build(_) | Tool::Construct(_)) {
+    } else if !g.ui.over_ui && !g.menu_open && !g.help_open && g.alert.is_none() && g.r4.popup.is_none() && g.r9.popups.is_empty() && g.screen == Screen::None && !matches!(g.tool, Tool::Build(_) | Tool::Construct(_)) && g.r10.ctx.is_none() {
         map_tooltip(g);
     }
 }
@@ -99,16 +100,16 @@ fn map_tooltip(g: &mut Game) {
         };
         lines.push((n, col::TEXT_GOOD));
     }
-    let items: Vec<&rf_core::Item> = w.items.iter().filter(|it| it.pos == p && it.flags.on_ground).collect();
-    for it in items.iter().take(4) {
-        let d = if !it.desc.is_empty() { it.desc.clone() } else { super::pretty(&it.kind).to_lowercase() };
-        // [round 5] forbidden / dump / hidden
-        let d = format!("{}{}", super::clip(&d, 48), super::round5::item_tags(it));
-        lines.push((d, if it.flags.forbid { Color::from_rgba(230, 120, 110, 255) } else { col::TEXT }));
+    // [app10] Items grouped like DF's look list ("5 granite blocks"); forbidden first-class.
+    let groups = super::round10::item_groups(g, p);
+    for (text, _ids, forbid) in groups.iter().take(4) {
+        lines.push((super::clip(text, 52), if *forbid { Color::from_rgba(230, 120, 110, 255) } else { col::TEXT }));
     }
-    if items.len() > 4 {
-        lines.push((format!("... and {} more items", items.len() - 4), col::TEXT_DIM));
+    if groups.len() > 4 {
+        let more: usize = groups.iter().skip(4).map(|(_, ids, _)| ids.len()).sum();
+        lines.push((format!("... and {more} more items"), col::TEXT_DIM));
     }
+    let w = &g.sim.world;
     let mut desc = super::pretty(&tile_desc(w, p));
     if let Some(t) = w.tile(p) {
         if t.desig != 0 {
@@ -128,6 +129,11 @@ fn map_tooltip(g: &mut Game) {
         }
     }
     lines.push((desc, col::TEXT_DIM));
+    // [app10] Engraving quality, like DF's look mode.
+    if let Some(e) = super::round10::engraving_line(g, p) {
+        lines.push((e, Color::from_rgba(225, 205, 140, 255)));
+    }
+    let w = &g.sim.world;
     // [round 4] Liquid depth like DF's look mode: "Water 4/7".
     if let Some(t) = w.tile(p).filter(|t| t.liquid_depth() > 0 && !t.hidden()) {
         let what = if t.is_magma() { "Magma" } else { "Water" };
