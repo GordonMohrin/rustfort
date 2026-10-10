@@ -225,7 +225,34 @@ fn work_order_condition_gates_brewing() {
     assert_eq!(done(&sim, "Brew drink from plant"), 2);
     assert!(sim.world.work_orders.is_empty(), "one-time order done and removed");
     let in_barrels: Vec<i32> = sim.world.items.iter().filter(|i| i.kind == "DRINK" && i.container >= 0).map(|i| i.stack).collect();
-    assert!(!in_barrels.is_empty() && in_barrels.len() <= 2 && in_barrels.iter().all(|&n| (1..=5).contains(&n)), "5 drinks per brew, in barrels: {in_barrels:?}");
+    // The synthetic plump helmets lie in stacks of 5: DF brews the whole stack, 5 drinks per
+    // plant ("Plump helmet [5]" -> "Dwarven wine [25]").
+    assert!(!in_barrels.is_empty() && in_barrels.len() <= 2 && in_barrels.iter().all(|&n| (1..=25).contains(&n)), "5 drinks per plant, in barrels: {in_barrels:?}");
+}
+
+#[test]
+fn brewing_uses_the_whole_plant_stack_and_returns_its_seeds() {
+    let mut w = production_world();
+    let (cx, cy, hz) = hall();
+    // Only one brewable stack (7 plump helmets): the synthetic stacks are removed.
+    w.items.retain(|i| i.kind != "PLANT");
+    w.items.push(item(9100, "PLANT", 6, Pos::new(cx + 3, cy + 1, hz), 7));
+    let seeds_before: i32 = w.items.iter().filter(|i| i.kind == "SEEDS").map(|i| i.stack).sum();
+    w.work_orders.push(brew_order(8, 1, "OneTime", vec![]));
+    let mut sim = Sim::new(w, 4);
+    sim.set_standing_orders(false);
+    sim.run_ticks(6_000);
+    assert_eq!(done(&sim, "Brew drink from plant"), 1);
+    let brewed: Vec<i32> = sim.world.items.iter().filter(|i| i.kind == "DRINK" && i.container >= 0 && i.mat == 5 && i.id >= 9101).map(|i| i.stack).collect();
+    // Hungry dwarves may have reserved a few helmets to eat raw; the rest of the stack is
+    // brewed in one job (before: 1 plant -> 5 drinks per job).
+    assert_eq!(brewed.len(), 1, "one barrel: {brewed:?}");
+    let units = brewed[0] / 5;
+    assert!(brewed[0] % 5 == 0 && units >= 3, "5 drinks per plant of the stack: {brewed:?}");
+    assert!(sim.world.items.iter().filter(|i| i.kind == "PLANT").all(|i| i.id != 9100), "the stack is used up");
+    let new_seeds: i32 = sim.world.items.iter().filter(|i| i.kind == "SEEDS" && i.id > 9100).map(|i| i.stack).sum();
+    let planted = done(&sim, "Plant seeds") as i32;
+    assert!(new_seeds + planted >= units, "1 seed per brewed plant: {new_seeds} new + {planted} planted vs {units} (before {seeds_before})");
 }
 
 #[test]

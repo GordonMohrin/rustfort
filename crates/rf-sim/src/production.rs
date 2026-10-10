@@ -1,10 +1,12 @@
 //! Production: workshop jobs, farming, wells, manager work orders and building construction.
 //!
 //! # DF rules implemented (wiki: Brewing, Kitchen, Farming, Seed, Well, Manager)
-//! - **Brew drink from plant** (still, labor Brewing): 1 unrotten brewable plant + 1 empty
-//!   barrel or large pot -> 5 drinks of the plant's DRINK material inside the container plus 1
-//!   seed (reaction raw `BREW_DRINK_FROM_PLANT`). Without an empty container nothing is brewed.
-//!   "Brew drink from fruit" does the same with a brewable fruit growth (no seed).
+//! - **Brew drink from plant** (still, labor Brewing): 1 unrotten brewable plant stack + 1 empty
+//!   barrel or large pot -> 5 drinks per plant unit of the plant's DRINK material inside the
+//!   container plus 1 seed per plant unit (reaction raw `BREW_DRINK_FROM_PLANT`; the plant
+//!   reagent determines the product amount, so "Plump helmet [5]" -> "Dwarven wine [25]").
+//!   Without an empty container nothing is brewed. "Brew drink from fruit" does the same with a
+//!   brewable fruit growth (its raw also has the SEEDS product).
 //! - **Prepare meal** (kitchen, labor Cooking): easy 2 / fine 3 / lavish 4 ingredient stacks;
 //!   the meal stack is the sum of the ingredient stacks; the meal takes the material of the last
 //!   ingredient. Cooking destroys seeds. Brewable plants are only cooked when
@@ -1733,7 +1735,11 @@ impl Sim {
                 self.find_items(site, c, now, 1, &mut found, |sim, i| sim.imeta[i].pc == want_pc && sim.brewable_idx(i));
                 if let Some(&p) = found.first() {
                     wj.items[0] = p;
-                    wj.need[0] = 1;
+                    // DF reaction BREW_DRINK_FROM_PLANT(_GROWTH): the plant reagent determines the
+                    // product amount (the container has DOES_NOT_DETERMINE_PRODUCT_AMOUNT), so the
+                    // whole stack is brewed: "Plump helmet [5]" -> "Dwarven wine [25]" (wiki).
+                    let idx = self.item_idx[&p] as usize;
+                    wj.need[0] = (self.world.items[idx].stack - self.imeta[idx].reserved).max(1);
                     self.find_items(site, c, now, 1, &mut found, |sim, i| {
                         sim.imeta[i].pc == pc::CONTAINER && sim.world.items[i].container < 0 && sim.container_empty(sim.world.items[i].id)
                     });
@@ -2050,19 +2056,32 @@ impl Sim {
 
     /// Create a seed of plant `p` at `tile` (if the species is below the seed cap).
     pub(crate) fn make_seed(&mut self, p: u16, tile: usize) {
+        self.make_seeds(p, tile, 1);
+    }
+
+    /// Create one stack of up to `want` seeds of plant `p` at `tile`, stopping at the
+    /// 200-per-species seed cap.
+    pub(crate) fn make_seeds(&mut self, p: u16, tile: usize, want: i32) {
         let Some(pl) = self.plant(p) else { return };
-        if !pl.has_seed || pl.mat_seed == NO_MAT {
+        if !pl.has_seed || pl.mat_seed == NO_MAT || want <= 0 {
             return;
         }
         let (mat, name) = (pl.mat_seed, format!("{} seed", pl.name));
         let n = &mut self.prod.census.seeds_total;
+        let mut k = want;
         if (p as usize) < n.len() {
-            if n[p as usize] >= SEED_CAP {
+            k = k.min(SEED_CAP - n[p as usize]);
+            if k <= 0 {
                 return;
             }
-            n[p as usize] += 1;
+            n[p as usize] += k;
         }
-        self.create_item("SEEDS", mat, tile, name);
+        let id = self.create_item("SEEDS", mat, tile, name);
+        if k > 1 {
+            if let Some(&i) = self.item_idx.get(&id) {
+                self.world.items[i as usize].stack = k;
+            }
+        }
     }
 
     pub(crate) fn prod_complete(&mut self, s: usize, now: u64) {
@@ -2073,7 +2092,8 @@ impl Sim {
             WK::Shop { bid, recipe, order_id } => {
                 let rec = &RECIPES[recipe as usize];
                 match rec.input {
-                    Input::BrewPlant | Input::BrewFruit => self.finish_brew(&wj, rec.count as i32, rec.input == Input::BrewPlant),
+                    // Both brew reactions have a SEEDS product (raws: SEED_MAT of the plant).
+                    Input::BrewPlant | Input::BrewFruit => self.finish_brew(&wj, rec.count as i32, true),
                     Input::Meal(_) => self.finish_meal(&wj, rec.noun),
                     Input::Ind(_) => self.ind_finish(s, &wj, recipe, now), // [industry]
                     Input::Log | Input::Boulder => {
@@ -2175,6 +2195,10 @@ impl Sim {
         let plant = self.imeta[pi as usize].plant;
         let Some(pl) = self.plant(plant) else { return };
         let (drink_mat, plant_name) = (pl.mat_drink, pl.name.clone());
+        // 5 drinks and 1 seed per unit of the brewed plant stack (raw product amounts scale with
+        // the plant reagent's stack).
+        let units = self.world.items[pi as usize].stack.max(1);
+        let count = count * units;
         self.destroy_item(plant_id);
         let Some(&bi) = self.item_idx.get(&barrel) else { return };
         let bi = bi as usize;
@@ -2207,7 +2231,7 @@ impl Sim {
             self.haul_add(barrel);
         }
         if seed {
-            self.make_seed(plant, tile);
+            self.make_seeds(plant, tile, units);
         }
     }
 
