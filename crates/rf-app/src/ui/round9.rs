@@ -1936,6 +1936,17 @@ pub fn ui_arg(g: &mut Game, k: &str, v: &str) -> bool {
             let pos = Some(Pos::new(c.x as i16, c.y as i16, c.z as i16));
             g.r9.fake.push(Announcement { tick: g.sim.ticks(), text: text.into(), pos, kind });
         }
+        "force-raid" => {
+            // A real raid through the sim (the boxes then come from its announcements).
+            let kind = match v {
+                "thief" => rf_sim::RaidKind::Thief,
+                "snatcher" => rf_sim::RaidKind::Snatcher,
+                "ambush" => rf_sim::RaidKind::Ambush,
+                _ => rf_sim::RaidKind::Siege,
+            };
+            let n = g.sim.force_raid(kind, 0, 0);
+            eprintln!("force-raid: {n} raiders arrived");
+        }
         "announcements" => {
             g.menu_open = true;
             g.menu.page = MenuPage::Announcements;
