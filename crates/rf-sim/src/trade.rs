@@ -1064,3 +1064,153 @@ impl Sim {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rf_core::{Building, World};
+
+    const SZ: i16 = 13; // synthetic surface z for dz = 20
+
+    fn world_with_depot() -> World {
+        let mut w = World::synthetic(48, 48, 20);
+        let c = Pos::new(32, 32, SZ);
+        w.buildings.push(Building { id: 900, kind: "TradeDepot".into(), x1: 30, y1: 30, x2: 34, y2: 34, z: SZ, center: c, built: true, owner: -1, ..Default::default() });
+        w.units[0].skills.push(rf_core::Skill { id: "APPRAISAL".into(), rating: 5, xp: 0 });
+        for it in &mut w.items {
+            if it.kind == "WOOD" {
+                it.value = 500;
+            }
+        }
+        w
+    }
+
+    fn run_until(sim: &mut Sim, max: u32, f: impl Fn(&Sim) -> bool) -> bool {
+        for _ in 0..max / 10 {
+            sim.run_ticks(10);
+            if f(sim) {
+                return true;
+            }
+        }
+        false
+    }
+
+    #[test]
+    fn caravan_arrives_unloads_trades_and_leaves() {
+        let mut sim = Sim::new(world_with_depot(), 31);
+        assert!(sim.wagon_access(900));
+        assert!(sim.force_caravan("DWARF"));
+        assert!(sim.announcements.iter().any(|a| a.text.starts_with("A caravan from ")));
+        assert!(run_until(&mut sim, 6000, |s| s.trade_status().is_some()), "merchants reach the depot");
+        let st = sim.trade_status().unwrap();
+        assert_eq!(st.depot, 900);
+        assert!(!st.goods.is_empty());
+        assert!(st.leaves_in > 10 * DAY);
+        let log = sim.trade_report().caravans[0].clone();
+        assert!(log.wagons >= 1 && log.merchants >= 2);
+        // Bring a log to the depot.
+        let wood = sim.world.items.iter().find(|i| i.kind == "WOOD").unwrap().id;
+        sim.move_to_depot(&[wood]);
+        assert!(run_until(&mut sim, 6000, |s| s.trade_status().unwrap().fort_goods.contains(&wood)), "log hauled to the depot");
+        // No broker yet: he is called.
+        let drink = *st.goods.iter().find(|&&id| sim.world.item(id).map(|i| i.kind == "DRINK").unwrap_or(false)).expect("dwarves bring drink");
+        let o = sim.trade(&[wood], &[drink], false);
+        if !sim.broker_present() {
+            assert!(!o.accepted);
+            assert!(o.reply.contains("broker"));
+            assert!(run_until(&mut sim, 6000, |s| s.broker_present()), "broker walks to the depot");
+        }
+        let mock = sim.trade(&[], &st.goods, false);
+        assert!(!mock.accepted);
+        let o = sim.trade(&[wood], &[drink], true);
+        assert!(o.accepted, "{o:?}");
+        assert!(o.offer_value > 0 && o.request_value > 0);
+        let d = sim.world.item(drink).unwrap();
+        assert!(!d.flags.forbid && d.building < 0, "bought drink belongs to the fort");
+        assert!(sim.item_idx.get(&wood).map(|&i| sim.imeta[i as usize].dead).unwrap_or(true), "log went to the merchants");
+        assert_eq!(sim.trade_report().trades.len(), 1);
+        // They leave after their stay.
+        sim.run_ticks(30 * DAY as u32);
+        let log = sim.trade_report().caravans[0].clone();
+        assert!(log.left.is_some(), "{log:?}");
+        assert!(sim.trade_status().is_none());
+        assert!(sim.world.units.iter().filter(|u| u.flags.merchant).all(|u| u.flags.inactive));
+        assert!(sim.announcements.iter().any(|a| a.text.contains("embarked on their journey")));
+    }
+
+    #[test]
+    fn elves_refuse_wood() {
+        let mut sim = Sim::new(world_with_depot(), 32);
+        assert!(sim.force_caravan("ELF"));
+        assert_eq!(sim.trade_report().caravans[0].wagons, 0, "elves never bring wagons");
+        assert!(run_until(&mut sim, 6000, |s| s.trade_status().is_some()));
+        let wood = sim.world.items.iter().find(|i| i.kind == "WOOD").unwrap().id;
+        sim.move_to_depot(&[wood]);
+        sim.request_broker(true);
+        assert!(run_until(&mut sim, 8000, |s| s.broker_present() && s.trade_status().unwrap().fort_goods.contains(&wood)));
+        let goods = sim.trade_status().unwrap().goods;
+        let o = sim.trade(&[wood], &goods[..1], true);
+        assert!(!o.accepted);
+        assert!(o.reply.contains("trees"));
+    }
+
+    #[test]
+    fn narrow_path_means_no_wagons() {
+        let mut w = world_with_depot();
+        let wall = w.tiletypes.by_name("StoneWall").unwrap();
+        for k in 27..=37 {
+            for (x, y) in [(k, 27), (k, 37), (27, k), (37, k)] {
+                if (x, y) == (32, 27) {
+                    continue; // one-tile gap
+                }
+                let t = w.tile_mut(Pos::new(x, y, SZ)).unwrap();
+                t.tt = wall;
+                t.mat = 0;
+            }
+        }
+        // Walls above so nobody climbs over (the level above is open air).
+        let mut sim = Sim::new(w, 33);
+        assert!(!sim.wagon_access(900));
+        assert!(sim.force_caravan("DWARF"));
+        let log = sim.trade_report().caravans[0].clone();
+        assert_eq!(log.wagons, 0);
+        assert!(log.animals >= 3, "pack animals instead: {log:?}");
+        assert!(run_until(&mut sim, 8000, |s| s.trade_status().is_some()), "merchants still walk in");
+    }
+
+    #[test]
+    fn seasonal_caravans_by_race() {
+        let mut sim = Sim::new(world_with_depot(), 34);
+        // Without exported entities only the fort's own dwarven civilization trades (autumn).
+        sim.world.calendar.year_tick = 6 * TICKS_PER_MONTH;
+        sim.trade_season(100);
+        assert_eq!(sim.trade.due.as_ref().map(|d| d.1.race.clone()), Some("DWARF".into()));
+        sim.trade.due = None;
+        sim.world.calendar.year_tick = 0;
+        sim.trade_season(200);
+        assert!(sim.trade.due.is_none(), "no elven civ known");
+        sim.world.entities.push(EntityInfo { id: 77, name: "the Forest of Leaves".into(), race: "ELF".into(), kind: "Civilization".into(), relation: "Peace".into(), trades: true });
+        sim.world.entities.push(EntityInfo { id: 78, name: "the Hated Ones".into(), race: "HUMAN".into(), kind: "Civilization".into(), relation: "War".into(), trades: true });
+        sim.trade_season(300);
+        assert_eq!(sim.trade.due.as_ref().map(|d| d.1.name.clone()), Some("the Forest of Leaves".into()));
+        sim.trade.due = None;
+        sim.world.calendar.year_tick = 3 * TICKS_PER_MONTH;
+        sim.trade_season(400);
+        assert!(sim.trade.due.is_none(), "humans at war send no caravan");
+        assert!(sim.population_info().caravan_expected.is_some());
+    }
+
+    #[test]
+    fn item_value_formula() {
+        let mut sim = Sim::new(world_with_depot(), 35);
+        let t = sim.world.idx(sim.world.units[0].pos).unwrap();
+        let id = sim.create_item("BAR", 0, t, "granite bar".into());
+        let i = sim.item_idx[&id] as usize;
+        sim.world.materials[0].value = 3;
+        sim.world.items[i].quality = 5;
+        assert_eq!(sim.item_trade_value(id), base_value("BAR") * 3 * 12);
+        sim.world.items[i].value = 77;
+        assert_eq!(sim.item_trade_value(id), 77, "exported DF value wins");
+        assert_eq!(quality_mult(6), 120);
+    }
+}
