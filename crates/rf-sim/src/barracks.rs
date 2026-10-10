@@ -18,8 +18,9 @@
 //! # Estimates
 //! - Training spots: the barracks' walkable tiles in row order, position p at tile `(p/2)*3`,
 //!   the odd partner next to it. Sparring doubles the weapon experience (6 instead of 3 per
-//!   100 ticks) and gives 2 DODGING; an injury (a bruise) in 1 of 400 bouts. Demonstration:
-//!   a squadmate within 3 tiles with a weapon skill 2+ levels higher gives 2 extra experience.
+//!   100 ticks) and gives 2 DODGING; an injury (a bruise) in 1 of 2000 bouts. Demonstration:
+//!   a squadmate within 3 tiles with a weapon skill 2+ levels higher gives 2 extra experience,
+//!   1 in 10 training rounds.
 //! - Soldiers on duty sleep in barracks beds whenever their squad has a barracks with a free bed
 //!   (DF's per-routine sleep setting is not exported). Patrol waypoints: wait 50 ticks at each.
 //! - Ammo amount: each soldier keeps up to `amount / members` rounds (at most a quiver of 50).
@@ -265,16 +266,16 @@ impl Sim {
                 teacher = true;
             }
         }
+        let mut r = Rng::for_unit(self.seed, s, now, 0x5BA2);
         if partner {
             self.combat.stats.sparring += 1;
             self.add_xp(s, &skill, 3);
             self.add_xp(s, "DODGING", 1);
-            let mut r = Rng::for_unit(self.seed, s, now, 0x5BA2);
-            if r.chance(1, 400) {
+            if r.chance(1, 2000) {
                 self.sparring_bruise(s, &mut r);
             }
         }
-        if teacher {
+        if teacher && r.chance(1, 10) {
             self.combat.stats.demonstrations += 1;
             self.add_xp(s, &skill, 2);
         }

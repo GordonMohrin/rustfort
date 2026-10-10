@@ -38,8 +38,16 @@ fn main() {
         let name = if q.alias.is_empty() { q.name.clone() } else { q.alias.clone() };
         println!("  squad {name:<10} {:>2} members, schedule {:?}, orders {:?}, barracks {:?}", q.members.iter().filter(|&&m| m >= 0).count(), q.schedule, q.orders, q.barracks);
     }
+    let mut world = world;
+    // --break-leg N: N citizens (not soldiers) get a broken lower leg (Recover wounded check).
+    let legs: usize = get("--break-leg").and_then(|s| s.parse().ok()).unwrap_or(0);
+    let mut broken = Vec::new();
+    for u in world.units.iter_mut().filter(|u| u.is_worker() && u.squad_id < 0 && u.race == "DWARF").take(legs) {
+        u.wounds.push(rf_core::Wound { body_part: "LLL".into(), layer: "BONE".into(), flags: vec!["BROKEN".into()], severity: 6000, pain: 30, bleeding: 0, age: 0 });
+        broken.push((u.id, u.name.clone(), u.pos));
+    }
     let mut sim = Sim::new(world, seed);
-    sim.set_invasions(false); // only the forced raid
+    sim.set_invasions(has("--invasions")); // default: only the forced raid
     sim.run_ticks(10);
     let citizens0 = sim.world.citizens().count();
     let t0 = Instant::now();
@@ -117,6 +125,14 @@ fn main() {
         st.rescues,
         st.crawlers
     );
+    println!(
+        "raids: {} sieges ({} camped), {} ambushes, {} thieves, {} snatchers, {} spotted | sparring bouts {}, injuries {}, demonstrations {}, barracks nights {}, patrol points {}",
+        st.sieges, st.siege_camps, st.ambushes, st.thieves, st.snatchers, st.raids_spotted, st.sparring, st.sparring_injuries, st.demonstrations, st.barracks_sleeps, st.patrol_points
+    );
+    for (id, name, p0) in &broken {
+        let u = sim.world.unit(*id).unwrap();
+        println!("  broken leg: {name} from {p0:?} -> {:?}, {}", u.pos, sim.unit_status(*id).activity);
+    }
     let log = sim.combat_log();
     println!("--- combat log (last {nlog}) ---");
     for l in log.iter().rev().take(nlog).collect::<Vec<_>>().into_iter().rev() {
