@@ -3,7 +3,7 @@
 | script | purpose |
 |---|---|
 | `rustfort-export.lua` | Exports the loaded fort into `export/<fort>/` (format: `docs/EXPORT_FORMAT.md`). Read-only. |
-| `rustfort-verify.lua` | Spot-checks an export against the live game: sampled tiles, 3 citizens, counts, work orders, workshop job counts, farm crops, mods; since round 4 also door/bridge/lever/trap states and links, noble positions, entity relations, settings. Read-only. |
+| `rustfort-verify.lua` | Spot-checks an export against the live game: sampled tiles, 3 citizens, counts, work orders, workshop job counts, farm crops, mods; since round 4 also door/bridge/lever/trap states and links, noble positions, entity relations, settings; since round 8 work details, kitchen, locations, crimes, animals, pregnancies, pile links and sampled filter leaves. Read-only. |
 | `rustfort-probe.lua` | (round 6) Prints one JSON line about the loaded game (map loaded, fortress mode, fort and world names, year, citizens, paused, DFHack version) for Rustfort's "Import from Dwarf Fortress" dialog. Read-only, takes about 0.1 s. |
 
 The scripts are for DF 53.16 with DFHack 53.16-r2. Rustfort's title screen runs the probe and the exporter itself ("Import from Dwarf Fortress", see `crates/rf-app/README.md`); the commands below are for running them by hand.
@@ -172,6 +172,41 @@ Measured on Trussroads (10.10.2026, year 277, game running; one of the two runs 
 
 Verification right after the export (`spotcheck`, the verify script reads other paths where DF has one: the raw `door_flags.whole` / `gate_flags.whole` bits, the lever's `linked_mechanisms` → `getHolderBuilding`, `dfhack.units.getNoblePositions` per citizen): **tiles 375/375, doors 128/130** (2 doors had opened/closed by then), **bridges 2/2, levers with links 2/2, traps loaded 79/79, noble positions 16/16, entity relations 32/32**, settings 1/1, caravan and mandate counts 1/1 each, plus all round-2/3 checks (orders 43/43, farm crops 56/56, squads 9/9, burrows, creature bodies, mechanics).
 
+## Round 8 (rev 2026-10-10e): work details, stockpile filters, kitchen, locations, justice, animals
+
+The exporter now also writes (format: `docs/EXPORT_FORMAT.md`, "Additions for round 8"):
+
+- `units.jsonl`: `pet_owner`, `training`, `pasture`, `slaughter`, `pregnancy`, `work_details`.
+- `buildings.jsonl`: per stockpile the full DF settings as `filters` leaf strings (`category/group/token`, `*` for complete groups, `!token` exclusions), `use_links_only`, `give_to`, `take_from`; per civzone DF's room evaluation (`room_value`, `room_name`, the owner's latest room quality thought).
+- `work_details.json`, `kitchen.json`, `locations.json` (with occupations), `crimes.json`, `punishments.json`, `haul_routes.json`.
+- `creature_raws.json`: milk, grazing, shearing and egg facts per caste; pseudo-flag `SHEARABLE`.
+
+Where the data comes from in DF 53.16 / DFHack 53.16-r2:
+
+| data | source |
+|---|---|
+| work details | `plotinfo.labor_info.work_details`: `name`, `flags.mode` (`df.work_detail_mode`), `assigned_units`, `allowed_labors[df.unit_labor]`, `icon` |
+| stockpile filters | `building_stockpilest.settings` (`stockpile_settings`: per category vectors of `char` indexed by raw/organic-table index, 7-entry quality arrays, option booleans, `misc.allow_organic/inorganic`); organic tokens via `world.raws.mat_table.organic_types/organic_indexes[df.organic_mat_category]` |
+| pile links | `building_stockpilest.links` (`give_to_pile`, `take_from_pile`, `give_to_workshop`, `take_from_workshop`), `stockpile_flag.use_links_only` |
+| kitchen | `plotinfo.kitchen` (`item_types`, `item_subtypes`, `mat_types`, `mat_indices`, `exc_types` with bits `Cook`, `Brew`) |
+| locations | `plotinfo.main.fortress_site.buildings` (`abstract_building`: type, name, flags, `deity_type`/`deity_data`, `contents.profession/location_value/location_tier/building_ids/desired_*/count_*`, `occupations`); civzone `location_id` |
+| crimes | `world.crimes.all` with `site` = the fort (`mode` = `df.crime_type`, `criminal`, `accused`, `victim`, `flags.sentenced`, `punishment.hammerstrikes/prison_time/flags`, `witnesses[i].witness_id`); running punishments `plotinfo.punishments` |
+| animals | `unit.relationship_ids.PetOwner`, `unit.training_level` (`df.animal_training_level`), Pen civzones' `assigned_units`, `unit.flags2.slaughter`, `unit.pregnancy_timer` |
+| animal products | `caste.extracts.milkable_mat/matidx`, `caste.misc.milkable/grazer/clutch_size_*/litter_size_*/egg_size/petvalue`, `caste.shearable_tissue_layer`, `caste.extracts.egg_material_*` |
+| hauling routes | `plotinfo.hauling.routes` (stops with `conditions`, `stockpiles` links, `vehicle_ids`) |
+| room evaluation | `dfhack.buildings.getRoomDescription(zone, owner)` (returns `""` for v50 zones in DFHack 53.16-r2), location values, owners' `BedroomQuality`/`DiningQuality`/`OfficeQuality`/`TombQuality` emotions |
+
+Measured on Trussroads (10.10.2026, year 280, during a large siege: 153 hostiles on the map, 66 citizens killed this year, 15 citizens left at export time):
+
+| | value |
+|---|---|
+| total export time | **14.0 s** wall, 13.1 s Lua inside DF, 421 frames (`--skip-map`: 4.5-4.9 s) |
+| longest slice | **32 ms** (budget 25 ms) in every phase, including the new `pile_filters` (43 piles) and `locations` |
+| exported (round 8) | 12 work details, 43 stockpiles with 481 filter strings (11 linked), 269 kitchen exclusions (all "no cook"), 23 locations with 15 occupations, 328 crimes (60 sentenced), 1 punishment running, 0 hauling routes, 25 animals marked for slaughter, 4 pregnancies, 34 castes with milk/grazing/shearing/egg data |
+| import (`rf-import`, release) | 0.22-0.38 s warm (first load from a cold disk cache 1.7 s), no count mismatches |
+
+Verification right after a `--skip-map` export (spot check against the live game, see below): **work details 12/12** (mode, members, labor count), **kitchen 1/1** (entries, no cook, no brew), **locations 23/23** (zones via the civzones' `location_id`, filled occupations via `world.occupations.all`), **crimes 1/1** (count at the site, sentenced), **stockpile links 43/43**, **sampled filter leaves 110/110** (the verify script resolves the first set, the first unset and the middle entry of 10 groups per pile itself and `compare` asks `StockpileSettings::filter_allows`), **tame animals 2/2**, **pregnant units 4/4**; against the full export also **tiles 375/375** and **aquifer flags 20/20**, plus all older checks (orders 54/54, doors 136/136, traps 79/79, squads 9/9, ...).
+
 ## Spot check against the live game
 
 ```bash
@@ -200,7 +235,8 @@ The verify script uses plain field access, `getTileType`, `getPlantAtTile` and `
 - Round 4: `leaves_in` = `time_remaining` × 10 ticks (DFHack's `caravan` script: 120 per day); `trades` = the entity sent a caravan to this site or has one now (DF has no "trade partner" flag); `invasions` from the difficulty setting `Enemies` (Off/Normal/Hard/Custom + `sieges` flag); `LOCKED` = `door_flags.forbidden`.
 - Round 3 estimates: relationship kinds from `love`/`meet_count` (wiki thresholds; `Grudge` = love < 0 is a guess, Trussroads has none), wound `severity` = `surface_perc` × 100. Emotions with emotion `ANYTHING` and thought `None` (about 40 %) are exported as DF stores them.
 - Not exported yet:
-  - jobs outside workshop/furnace queues (hauling, digging, planting), zones' detailed settings, stockpile item filters below category level, squad ammunition and supplies, patrol routes
+  - jobs outside workshop/furnace queues (hauling, digging, planting), zones' detailed settings (pen/pond/archery/tomb options), squad ammunition and supplies, patrol routes (stockpile item filters are exported since round 8)
+  - DF's value of personal rooms (DF 53.16 keeps none; see "Room evaluation" in docs/EXPORT_FORMAT.md)
   - historical figures beyond the relationship list, syndromes, preferences (likes/dislikes), dreams, mannerisms
   - flows (miasma, smoke), block hashes
 - The tiletype special `SHODDY` (DF 53) has no `rf_core::TtSpecial` variant and is imported as `NONE`.

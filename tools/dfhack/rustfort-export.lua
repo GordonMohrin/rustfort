@@ -24,6 +24,7 @@
 --        + (round 3) creature_raws.json weapon_raws.json armor_raws.json
 --        + (round 4) entities.json nobles.json settings.json hist_figs.json caravans.json diplomats.json
 --        + (round 5) engravings.json
+--        + (round 8) work_details.json kitchen.json locations.json crimes.json punishments.json haul_routes.json
 
 local VERSION = 1
 -- round 2 (2026-10-10a): work orders, workshop jobs, crops, plant raws, mods, gaits
@@ -33,7 +34,10 @@ local VERSION = 1
 -- round 4 (2026-10-10c): building flags/links/direction + trap contents, entities, nobles + mandates, settings,
 --                        hist fig names, caravans, diplomats
 -- round 5 (2026-10-10d): engravings.json (world.event.engravings)
-local SCRIPT_REV = '2026-10-10d'
+-- round 8 (2026-10-10e): work details, kitchen, locations + occupations, crimes, haul routes, stockpile filters and
+--                        links, animal fields (owner/training/pasture/slaughter/pregnancy), caste animal products,
+--                        DF's room evaluation of civzones
+local SCRIPT_REV = '2026-10-10e'
 
 -- ------------------------------------------------------------------------------------------- args
 local args = { ... }
@@ -941,6 +945,64 @@ local function wounds_json(u)
   end
   return out
 end
+-- ---- round 8 (rev 2026-10-10e): fortress management. All state and helpers live in this one table
+-- (the main chunk is close to Lua's 200-locals limit); the functions are defined further down.
+local r8 = { pets = 0, pastured = 0, slaughter = 0, pregnant = 0, trained = 0, wd_members = 0, pile_leaves = 0,
+             piles = 0, wd_of = {}, pasture_of = {}, pile = {}, loc = {}, zone_loc = {} }
+-- per-unit lookups, built once at the start of the units phase (no yields inside)
+function r8.prepare_units()
+  pcall(function()
+    for _, d in ipairs(df.global.plotinfo.labor_info.work_details) do
+      local nm = d.name
+      for _, uid in ipairs(d.assigned_units) do
+        local l = r8.wd_of[uid]
+        if not l then l = {}; r8.wd_of[uid] = l end
+        l[#l + 1] = nm
+      end
+    end
+  end)
+  -- pastures/pens: civzone assigned_units (DF v50: Pen/pasture zones list their animals there)
+  pcall(function()
+    local PEN = df.civzone_type.Pen
+    for _, b in ipairs(df.global.world.buildings.all) do
+      if b:getType() == df.building_type.Civzone and b.type == PEN then
+        for _, uid in ipairs(b.assigned_units) do r8.pasture_of[uid] = b.id end
+      end
+    end
+  end)
+end
+-- rf_core::Unit round-8 fields: pet_owner, training, pasture, slaughter, pregnancy, work_details (+ extras)
+function r8.unit_kv(u, is_animal)
+  local owner = try(function() return u.relationship_ids.PetOwner end) or -1
+  local training = ''
+  if is_animal then training = try(function() return df.animal_training_level[u.training_level] end) or '' end
+  local pasture = r8.pasture_of[u.id] or -1
+  if pasture == -1 then
+    pcall(function()
+      for _, r in ipairs(u.general_refs) do
+        if r:getType() == df.general_ref_type.BUILDING_CIVZONE_ASSIGNED then pasture = r.building_id break end
+      end
+    end)
+  end
+  local slaughter = try(function() return u.flags2.slaughter end) or false
+  local preg = try(function() return u.pregnancy_timer end) or 0
+  if owner >= 0 then r8.pets = r8.pets + 1 end
+  if pasture >= 0 then r8.pastured = r8.pastured + 1 end
+  if slaughter then r8.slaughter = r8.slaughter + 1 end
+  if preg > 0 then r8.pregnant = r8.pregnant + 1 end
+  if training ~= '' and training ~= 'WildUntamed' and training ~= 'Domesticated' then r8.trained = r8.trained + 1 end
+  local wds = {}
+  for _, nm in ipairs(r8.wd_of[u.id] or {}) do wds[#wds + 1] = js(nm) end
+  r8.wd_members = r8.wd_members + #wds
+  return { 'pet_owner', ji(owner), 'training', ja(training), 'pasture', ji(pasture), 'slaughter', jb(slaughter),
+           'pregnancy', ji(preg), 'work_details', jarr(wds),
+           -- extras
+           'gelded', jb(try(function() return u.flags3.gelded end) or false),
+           'only_do_assigned_jobs', jb(try(function() return u.flags4.only_do_assigned_jobs end) or false),
+           'pregnancy_caste', ji(try(function() return u.pregnancy_caste end) or -1),
+           'pregnancy_spouse', ji(try(function() return u.pregnancy_spouse end) or -1) }
+end
+
 local function unit_json(u)
   local U = dfhack.units
   local cr = raws.creatures.all[u.race]
@@ -1027,12 +1089,17 @@ local function unit_json(u)
     'body_size', ji(size_raw * 10), 'walk_speed', ji(walk_speed(u, caste)),
     'profession_name', js(try(U.getProfessionName, u) or ''), 'readable_name', js(try(U.getReadableName, u) or '') }
   for i = 1, #r3kv do kv[#kv + 1] = r3kv[i] end
+  -- round 8: animals (owner, training, pasture, slaughter), pregnancy, work details
+  local okr8, r8kv = pcall(r8.unit_kv, u, q(U.isAnimal, u))
+  if okr8 then for i = 1, #r8kv do kv[#kv + 1] = r8kv[i] end else warn('unit_r8', r8kv) end
   return jobj(kv)
 end
 
 local function export_units()
   phase = 'units'
   local f = assert(io.open(OUT .. '/units.jsonl', 'wb'))
+  r8.prepare_units()   -- round 8: work detail membership and pastures (one cheap pass, no yield)
+  checkpoint()
   local ids = id_snapshot(df.global.world.units.all)
   local n, cit, dead, gone, vanished = 0, 0, 0, 0, 0
   local U = dfhack.units
@@ -1412,8 +1479,28 @@ local function building_json(bld)
     local function mx(name)
       return try(function() return bld[name] end) or try(function() return bld.storage[name] end) or 0
     end
+    -- round 8: detailed filters (scanned in the pile_filters phase before this one), links, take-from-links-only
+    local p8 = r8.pile[bld.id] or {}
+    local function link_ids(v) local o = {} pcall(function() for _, b in ipairs(v) do o[#o + 1] = ji(b.id) end end) return o end
+    local give, take, give_ws, take_ws = {}, {}, {}, {}
+    pcall(function()
+      give, take = link_ids(bld.links.give_to_pile), link_ids(bld.links.take_from_pile)
+      give_ws, take_ws = link_ids(bld.links.give_to_workshop), link_ids(bld.links.take_from_workshop)
+    end)
+    local give_all, take_all = {}, {}
+    for _, x in ipairs(give) do give_all[#give_all + 1] = x end
+    for _, x in ipairs(give_ws) do give_all[#give_all + 1] = x end
+    for _, x in ipairs(take) do take_all[#take_all + 1] = x end
+    for _, x in ipairs(take_ws) do take_all[#take_all + 1] = x end
     stockpile = jobj({ 'categories', jarr(cats), 'max_barrels', ji(mx('max_barrels')), 'max_bins', ji(mx('max_bins')),
-                       'max_wheelbarrows', ji(mx('max_wheelbarrows')) })
+                       'max_wheelbarrows', ji(mx('max_wheelbarrows')),
+                       'filters', jarr(p8.filters or {}),
+                       'use_links_only', jb(try(function() return bld.stockpile_flag.use_links_only end) or false),
+                       'give_to', jarr(give_all), 'take_from', jarr(take_all),
+                       -- extras (ignored by serde): links split by target kind, DF's pile number
+                       'give_to_pile', jarr(give), 'take_from_pile', jarr(take), 'give_to_workshop', jarr(give_ws),
+                       'take_from_workshop', jarr(take_ws), 'stockpile_number', ji(try(function() return bld.stockpile_number end) or -1),
+                       'filters_complete', jb(p8.filters ~= nil) })
   end
   local ext = {}
   pcall(function()
@@ -1445,6 +1532,11 @@ local function building_json(bld)
     end
     counts.farm_plots = (counts.farm_plots or 0) + 1
   end
+  -- round 8: DF's room evaluation of civzones (extras room_value, room_name, ...)
+  if t == BT.Civzone then
+    local okr, rkv = pcall(r8.room_kv, bld, owner)
+    if okr then for i = 1, #rkv do state[#state + 1] = rkv[i] end else warn('room_eval', rkv) end
+  end
   return jobj({ 'id', ji(bld.id), 'kind', ja(BT[t] or tostring(t)), 'subtype', ja(subtype_name(bld, t) or ''),
                 'x1', ji(bld.x1), 'y1', ji(bld.y1), 'x2', ji(bld.x2), 'y2', ji(bld.y2), 'z', ji(bld.z),
                 'center', jpos(bld.centerx, bld.centery, bld.z), 'mat', ji(palidx(bld.mat_type, bld.mat_index)),
@@ -1468,6 +1560,483 @@ local function export_buildings()
   end
   f:close()
   counts.buildings = n
+end
+
+-- ------------------------------------------------------------------------------------------- round 8
+-- Stockpile filters (StockpileSettings.filters), DF's room evaluation of civzones, work_details.json,
+-- kitchen.json, locations.json, crimes.json, haul_routes.json, punishments.json. Helpers stay in this
+-- block or in the r8 table (200-locals limit of the main chunk).
+do
+  local MT = raws.mat_table
+  local OC = df.organic_mat_category
+  -- "other material" lists of the stockpile settings, in DF's order (names as DFHack's stockpiles plugin
+  -- uses them; a list whose length differs from DF's vector falls back to '#<index>' tokens)
+  local OTHER = {
+    furniture = { 'WOOD', 'PLANT_CLOTH', 'BONE', 'TOOTH', 'HORN', 'PEARL', 'SHELL', 'LEATHER', 'SILK', 'AMBER', 'CORAL',
+                  'GREEN_GLASS', 'CLEAR_GLASS', 'CRYSTAL_GLASS', 'YARN' },
+    finished = { 'WOOD', 'PLANT_CLOTH', 'BONE', 'TOOTH', 'HORN', 'PEARL', 'SHELL', 'LEATHER', 'SILK', 'AMBER', 'CORAL',
+                 'GREEN_GLASS', 'CLEAR_GLASS', 'CRYSTAL_GLASS', 'YARN', 'WAX' },
+    weapons = { 'WOOD', 'PLANT_CLOTH', 'BONE', 'SHELL', 'LEATHER', 'SILK', 'GREEN_GLASS', 'CLEAR_GLASS', 'CRYSTAL_GLASS', 'YARN' },
+    ammo = { 'WOOD', 'BONE' },
+    bars = { 'COAL', 'POTASH', 'ASH', 'PEARLASH', 'SOAP' },
+    blocks = { 'GREEN_GLASS', 'CLEAR_GLASS', 'CRYSTAL_GLASS', 'WOOD' },
+  }
+  -- token kinds: how the index of a settings vector becomes a leaf token
+  local tok_cache = {}
+  local function leaf_token(kind, arg, i)
+    local ck = kind .. ':' .. tostring(arg) .. ':' .. i
+    local v = tok_cache[ck]
+    if v then return v end
+    v = try(function()
+      if kind == 'creature' then return raws.creatures.all[i].creature_id
+      elseif kind == 'organic' then return mat_token(MT.organic_types[arg][i], MT.organic_indexes[arg][i])
+      elseif kind == 'inorganic' then return 'INORGANIC:' .. raws.inorganics.all[i].id
+      elseif kind == 'plant' then return 'PLANT:' .. raws.plants.all[i].id .. ':WOOD'
+      elseif kind == 'item_type' then return df.item_type[i]
+      elseif kind == 'furniture_type' then return df.furniture_type[i]
+      elseif kind == 'itemdef' then return raws.itemdefs[arg][i].id
+      elseif kind == 'builtin' then return mat_token(i, -1)
+      elseif kind == 'color' then return raws.descriptors.colors[i].id
+      elseif kind == 'quality' then return df.item_quality[i]
+      elseif kind == 'list' then return arg[i + 1]
+      end
+    end)
+    if v == nil or v == '' then v = '#' .. i end
+    tok_cache[ck] = v
+    return v
+  end
+  -- category -> list of { DF field (in settings[category] or settings[struct]), group name, token kind, arg, struct }
+  local G = {
+    animals = { { 'enabled', 'enabled', 'creature' }, opts = { 'empty_cages', 'empty_traps' } },
+    food = { { 'meat', 'meat', 'organic', OC.Meat }, { 'fish', 'fish', 'organic', OC.Fish },
+             { 'unprepared_fish', 'unprepared_fish', 'organic', OC.UnpreparedFish }, { 'egg', 'egg', 'organic', OC.Eggs },
+             { 'plants', 'plants', 'organic', OC.Plants }, { 'drink_plant', 'drink_plant', 'organic', OC.PlantDrink },
+             { 'drink_animal', 'drink_animal', 'organic', OC.CreatureDrink }, { 'cheese_plant', 'cheese_plant', 'organic', OC.PlantCheese },
+             { 'cheese_animal', 'cheese_animal', 'organic', OC.CreatureCheese }, { 'seeds', 'seeds', 'organic', OC.Seed },
+             { 'leaves', 'leaves', 'organic', OC.PlantGrowth }, { 'powder_plant', 'powder_plant', 'organic', OC.PlantPowder },
+             { 'powder_creature', 'powder_creature', 'organic', OC.CreaturePowder }, { 'glob', 'glob', 'organic', OC.Glob },
+             { 'glob_paste', 'glob_paste', 'organic', OC.Paste }, { 'glob_pressed', 'glob_pressed', 'organic', OC.Pressed },
+             { 'liquid_plant', 'liquid_plant', 'organic', OC.PlantLiquid }, { 'liquid_animal', 'liquid_animal', 'organic', OC.CreatureLiquid },
+             { 'liquid_misc', 'liquid_misc', 'organic', OC.MiscLiquid }, opts = { 'prepared_meals' } },
+    furniture = { { 'type', 'type', 'furniture_type' }, { 'other_mats', 'other_mats', 'list', OTHER.furniture },
+                  { 'mats', 'mats', 'inorganic' }, { 'quality_core', 'quality_core', 'quality' }, { 'quality_total', 'quality_total', 'quality' } },
+    corpses = { { 'corpses', 'corpses', 'creature' } },
+    refuse = { { 'type', 'type', 'item_type' }, { 'corpses', 'corpses', 'creature' }, { 'body_parts', 'body_parts', 'creature' },
+               { 'skulls', 'skulls', 'creature' }, { 'bones', 'bones', 'creature' }, { 'hair', 'hair', 'creature' },
+               { 'shells', 'shells', 'creature' }, { 'teeth', 'teeth', 'creature' }, { 'horns', 'horns', 'creature' },
+               opts = { 'fresh_raw_hide', 'rotten_raw_hide' } },
+    stone = { { 'mats', 'mats', 'inorganic' }, { 'mats', 'ore', 'inorganic', nil, 'ore' } },
+    ammo = { { 'type', 'type', 'itemdef', 'ammo' }, { 'other_mats', 'other_mats', 'list', OTHER.ammo }, { 'mats', 'mats', 'inorganic' },
+             { 'quality_core', 'quality_core', 'quality' }, { 'quality_total', 'quality_total', 'quality' } },
+    coins = { { 'mats', 'mats', 'inorganic' } },
+    bars_blocks = { { 'bars_other_mats', 'bars_other_mats', 'list', OTHER.bars }, { 'blocks_other_mats', 'blocks_other_mats', 'list', OTHER.blocks },
+                    { 'bars_mats', 'bars_mats', 'inorganic' }, { 'blocks_mats', 'blocks_mats', 'inorganic' } },
+    gems = { { 'rough_other_mats', 'rough_other_mats', 'builtin' }, { 'cut_other_mats', 'cut_other_mats', 'builtin' },
+             { 'rough_mats', 'rough_mats', 'inorganic' }, { 'cut_mats', 'cut_mats', 'inorganic' } },
+    finished_goods = { { 'type', 'type', 'item_type' }, { 'other_mats', 'other_mats', 'list', OTHER.finished }, { 'mats', 'mats', 'inorganic' },
+                       { 'color', 'color', 'color' }, { 'quality_core', 'quality_core', 'quality' }, { 'quality_total', 'quality_total', 'quality' },
+                       opts = { 'dyed', 'undyed' } },
+    leather = { { 'mats', 'mats', 'organic', OC.Leather }, { 'color', 'color', 'color' }, opts = { 'dyed', 'undyed' } },
+    cloth = { { 'thread_silk', 'thread_silk', 'organic', OC.Silk }, { 'thread_plant', 'thread_plant', 'organic', OC.PlantFiber },
+              { 'thread_yarn', 'thread_yarn', 'organic', OC.Yarn }, { 'thread_metal', 'thread_metal', 'organic', OC.MetalThread },
+              { 'cloth_silk', 'cloth_silk', 'organic', OC.Silk }, { 'cloth_plant', 'cloth_plant', 'organic', OC.PlantFiber },
+              { 'cloth_yarn', 'cloth_yarn', 'organic', OC.Yarn }, { 'cloth_metal', 'cloth_metal', 'organic', OC.MetalThread },
+              { 'color', 'color', 'color' }, opts = { 'dyed', 'undyed' } },
+    wood = { { 'mats', 'mats', 'plant' } },
+    weapons = { { 'weapon_type', 'weapon_type', 'itemdef', 'weapons' }, { 'trapcomp_type', 'trapcomp_type', 'itemdef', 'trapcomps' },
+                { 'other_mats', 'other_mats', 'list', OTHER.weapons }, { 'mats', 'mats', 'inorganic' },
+                { 'quality_core', 'quality_core', 'quality' }, { 'quality_total', 'quality_total', 'quality' }, opts = { 'usable', 'unusable' } },
+    armor = { { 'body', 'body', 'itemdef', 'armor' }, { 'head', 'head', 'itemdef', 'helms' }, { 'feet', 'feet', 'itemdef', 'shoes' },
+              { 'hands', 'hands', 'itemdef', 'gloves' }, { 'legs', 'legs', 'itemdef', 'pants' }, { 'shield', 'shield', 'itemdef', 'shields' },
+              { 'other_mats', 'other_mats', 'list', OTHER.weapons }, { 'mats', 'mats', 'inorganic' }, { 'color', 'color', 'color' },
+              { 'quality_core', 'quality_core', 'quality' }, { 'quality_total', 'quality_total', 'quality' },
+              opts = { 'usable', 'unusable', 'dyed', 'undyed' } },
+    sheet = { { 'paper', 'paper', 'organic', OC.Paper }, { 'parchment', 'parchment', 'organic', OC.Parchment } },
+  }
+  local CAT_ORDER = { 'animals', 'food', 'furniture', 'corpses', 'refuse', 'stone', 'ammo', 'coins', 'bars_blocks', 'gems',
+                      'finished_goods', 'leather', 'cloth', 'wood', 'weapons', 'armor', 'sheet' }
+  r8.other_lists = OTHER
+  r8.list_mismatch = {}
+
+  -- read one settings vector of pile `bid`: returns the set indices and the length (re-finds the pile after a
+  -- yield: DF may resize or free the vector between frames; a changed length aborts this group)
+  local function scan(bid, cat, gr)
+    local function vec()
+      local b = df.building.find(bid)
+      if not b then return nil end
+      local s = b.settings
+      local st = s[gr[5] or cat]
+      return st and st[gr[1]]
+    end
+    local v = vec()
+    if v == nil then return nil end
+    local n
+    if gr[3] == 'quality' then n = 7 else n = #v end
+    local on = {}
+    local i = 0
+    while i < n do
+      local x = v[i]
+      if x == true or (type(x) == 'number' and x ~= 0) then on[#on + 1] = i end
+      i = i + 1
+      if i % 1024 == 0 and checkpoint() then
+        v = vec()
+        if v == nil or (gr[3] ~= 'quality' and #v ~= n) then return nil end
+      end
+    end
+    return on, n
+  end
+
+  -- pile_filters phase: rf_core::StockpileSettings::filters per stockpile, before the buildings phase
+  function r8.export_pile_filters()
+    phase = 'pile_filters'
+    local ids = {}
+    for _, b in ipairs(df.global.world.buildings.all) do
+      if b:getType() == df.building_type.Stockpile then ids[#ids + 1] = b.id end
+    end
+    for pi = 1, #ids do
+      local bid = ids[pi]
+      local ok, err = pcall(function()
+        local b = df.building.find(bid)
+        if not b then return end
+        local s = b.settings
+        local enabled, opts = {}, {}
+        for _, c in ipairs(CAT_ORDER) do
+          if flag(s.flags, c) then
+            enabled[#enabled + 1] = c
+            local ol = {}
+            for _, o in ipairs(G[c].opts or {}) do if try(function() return s[c][o] end) then ol[#ol + 1] = o end end
+            opts[c] = ol
+          end
+        end
+        local misc = {}
+        if try(function() return s.misc.allow_organic end) then misc[#misc + 1] = 'allow_organic' end
+        if try(function() return s.misc.allow_inorganic end) then misc[#misc + 1] = 'allow_inorganic' end
+        local out = {}
+        local function add(str) out[#out + 1] = js(str) end
+        for _, c in ipairs(enabled) do
+          local before = #out
+          for _, o in ipairs(opts[c]) do add(c .. '/options/' .. o) end
+          for _, gr in ipairs(G[c]) do
+            local on, n = scan(bid, c, gr)
+            if on and n > 0 then
+              if gr[3] == 'list' and #gr[4] ~= n then r8.list_mismatch[c .. '/' .. gr[2]] = n end
+              local arg = gr[4]
+              if gr[3] == 'list' and #gr[4] ~= n then arg = {} end
+              local prefix = c .. '/' .. gr[2] .. '/'
+              if #on == n then
+                add(prefix .. '*')
+              elseif #on * 2 > n then
+                add(prefix .. '*')
+                local k = 1
+                for i = 0, n - 1 do
+                  if on[k] == i then k = k + 1 else add(prefix .. '!' .. leaf_token(gr[3], arg, i)) end
+                end
+              else
+                for _, i in ipairs(on) do add(prefix .. leaf_token(gr[3], arg, i)) end
+              end
+            end
+            checkpoint()
+          end
+          if #out == before then add(c .. '/none/-') end
+        end
+        for _, m in ipairs(misc) do add('misc/options/' .. m) end
+        if #misc == 0 then add('misc/none/-') end   -- neither organic nor inorganic allowed
+        r8.pile[bid] = { filters = out }
+        r8.piles = r8.piles + 1
+        r8.pile_leaves = r8.pile_leaves + #out
+      end)
+      if not ok then warn('pile_filters', err) end
+      phase_detail = pi .. '/' .. #ids
+      checkpoint()
+    end
+  end
+
+  -- locations (abstract buildings of the fort's site) and which civzones belong to them
+  local LOC_KIND = { TEMPLE = 'Temple', INN_TAVERN = 'Tavern', LIBRARY = 'Library', GUILDHALL = 'Guildhall', HOSPITAL = 'Hospital' }
+  local function loc_tier_name(kind, value)
+    local d = df.global.plotinfo.main.custom_difficulty
+    -- DF's thresholds from the difficulty settings (same rule as DFHack's caravan/pedestal.lua)
+    if kind == 'Temple' then
+      local tc, tv = try(function() return d.temple_complex_value end), try(function() return d.temple_value end)
+      if tc and value >= tc then return 'Temple Complex' end
+      if tv and value >= tv then return 'Temple' end
+      return 'Meeting Hall'
+    elseif kind == 'Guildhall' then
+      local gg, gv = try(function() return d.grand_guildhall_value end), try(function() return d.guildhall_value end)
+      if gg and value >= gg then return 'Grand Guildhall' end
+      if gv and value >= gv then return 'Guildhall' end
+      return 'Meeting Hall'
+    end
+    return kind
+  end
+  function r8.prepare_locations()
+    pcall(function()
+      local site = df.global.plotinfo.main.fortress_site
+      for _, ab in ipairs(site.buildings) do
+        local ty = df.abstract_building_type[ab:getType()] or tostring(ab:getType())
+        local kind = LOC_KIND[ty] or (ty:lower():gsub('_(%l)', string.upper):gsub('^%l', string.upper))
+        local value = try(function() return ab.contents.location_value end) or 0
+        local L = { id = ab.id, kind = kind, type = ty, value = value, tier = try(function() return ab.contents.location_tier end) or -1,
+                    tier_name = loc_tier_name(kind, value), zones = {} }
+        r8.loc[ab.id] = L
+        pcall(function() for _, z in ipairs(ab.contents.building_ids) do r8.zone_loc[z] = L; L.zones[#L.zones + 1] = z end end)
+      end
+    end)
+    pcall(function()
+      for _, b in ipairs(df.global.world.buildings.all) do
+        if b:getType() == df.building_type.Civzone and b.location_id >= 0 then
+          local L = r8.loc[b.location_id]
+          if L and r8.zone_loc[b.id] ~= L then r8.zone_loc[b.id] = L; L.zones[#L.zones + 1] = b.id end
+        end
+      end
+    end)
+  end
+
+  -- DF's own evaluation of a civzone room: location value/tier for location zones; for personal rooms DF 53.16
+  -- keeps no value (DFHack's getRoomDescription returns '' for v50 zones), so the owner's latest quality
+  -- thought is written next to it.
+  local ROOM_THOUGHT = { Bedroom = 'BedroomQuality', DiningHall = 'DiningQuality', Office = 'OfficeQuality', Tomb = 'TombQuality' }
+  local PERSONAL = { Bedroom = true, DiningHall = true, Office = true, Tomb = true, Dormitory = true, Barracks = true }
+  function r8.room_kv(bld, owner)
+    local L = r8.zone_loc[bld.id]
+    local ou = owner >= 0 and df.unit.find(owner) or nil
+    local desc = try(dfhack.buildings.getRoomDescription, bld, ou) or ''
+    local value, name = -1, desc
+    local zt = df.civzone_type[bld.type] or ''
+    -- the location value belongs to its meeting-area zone, not to rented tavern bedrooms or other personal rooms
+    if L and not PERSONAL[zt] then value = L.value; if name == '' then name = L.tier_name end end
+    local th, sev, year, tick = ROOM_THOUGHT[zt] or '', -1, -1, -1
+    if th ~= '' and ou then
+      pcall(function()
+        local T = df.unit_thought_type[th]
+        for _, e in ipairs(ou.status.current_soul.personality.emotions) do
+          if e.thought == T and (e.year > year or (e.year == year and e.year_tick >= tick)) then
+            sev, year, tick = e.severity, e.year, e.year_tick
+          end
+        end
+      end)
+    end
+    if sev < 0 then th = '' end
+    return { 'room_value', ji(value), 'room_name', js(name), 'room_description', js(desc),
+             'location_id', ji(L and L.id or (try(function() return bld.location_id end) or -1)),
+             'location_kind', ja(L and L.kind or ''), 'location_tier', ji(L and L.tier or -1),
+             'room_thought', ja(th), 'room_thought_severity', ji(sev), 'room_thought_year', ji(year),
+             'room_thought_tick', ji(tick), 'room_collision', jb(try(function() return bld.flags.room_collision end) or false) }
+  end
+
+  -- work_details.json, kitchen.json, locations.json, crimes.json, haul_routes.json, punishments.json
+  local function export_work_details()
+    phase = 'work_details'
+    local out = {}
+    pcall(function()
+      for i, d in ipairs(df.global.plotinfo.labor_info.work_details) do
+        local labors, units = {}, {}
+        for l = LABOR_FIRST, LABOR_LAST do
+          if l >= 0 and try(function() return d.allowed_labors[l] end) then labors[#labors + 1] = ja(df.unit_labor[l]) end
+        end
+        for _, uid in ipairs(d.assigned_units) do units[#units + 1] = ji(uid) end
+        local mode = try(function() return df.work_detail_mode[d.flags.mode] end) or ''
+        out[#out + 1] = jobj({ 'name', js(d.name), 'labors', jarr(labors), 'assigned', jarr(units), 'mode', ja(mode),
+                               'icon', ja(tostring(d.icon)), 'no_other_work', 'false',
+                               -- extras
+                               'index', ji(i), 'no_modify', jb(d.flags.no_modify), 'cannot_be_everybody', jb(d.flags.cannot_be_everybody) })
+      end
+    end)
+    write_file(OUT .. '/work_details.json', '[\n' .. table.concat(out, ',\n') .. '\n]\n')
+    counts.work_details = #out
+    checkpoint()
+  end
+
+  local function export_kitchen()
+    phase = 'kitchen'
+    local out = {}
+    pcall(function()
+      local k = df.global.plotinfo.kitchen
+      for i = 0, #k.item_types - 1 do
+        local it, st, mt, mi = k.item_types[i], k.item_subtypes[i], k.mat_types[i], k.mat_indices[i]
+        local ex = k.exc_types[i]
+        out[#out + 1] = jobj({ 'item_type', ja(item_type_name(it)), 'item_subtype', js(subtype_token(it, st)),
+                               'mat', js(mat_token(mt, mi)), 'no_cook', jb(ex.Cook), 'no_brew', jb(ex.Brew),
+                               -- extras
+                               'mat_type', ji(mt), 'mat_index', ji(mi), 'item_subtype_index', ji(st) })
+      end
+    end)
+    write_file(OUT .. '/kitchen.json', '[\n' .. table.concat(out, ',\n') .. '\n]\n')
+    counts.kitchen = #out
+  end
+
+  local function export_locations()
+    phase = 'locations'
+    local out, occs = {}, 0
+    pcall(function()
+      local site = df.global.plotinfo.main.fortress_site
+      for _, ab in ipairs(site.buildings) do
+        local ok, s = pcall(function()
+          local L = r8.loc[ab.id] or { kind = '', type = '', value = 0, tier = -1, tier_name = '', zones = {} }
+          local deity, religion, dtype = -1, -1, -1
+          pcall(function()
+            dtype = ab.deity_type
+            if dtype == 0 then deity = ab.deity_data.Deity elseif dtype == 1 then religion = ab.deity_data.Religion end
+          end)
+          hf_ref(deity)
+          local prof = try(function() local p = ab.contents.profession return p >= 0 and df.profession[p] or '' end) or ''
+          local o, od = {}, {}
+          for _, oc in ipairs(ab.occupations) do
+            local kind = df.occupation_type[oc.type] or tostring(oc.type)
+            o[#o + 1] = jobj({ 'kind', ja(kind), 'unit', ji(oc.unit_id) })
+            od[#od + 1] = jobj({ 'id', ji(oc.id), 'kind', ja(kind), 'unit', ji(oc.unit_id), 'histfig', ji(oc.histfig_id) })
+            hf_ref(oc.histfig_id)
+          end
+          occs = occs + #o
+          local fl = {}
+          for k = 0, 31 do
+            if try(function() return ab.flags[k] end) then fl[#fl + 1] = ja(df.abstract_building_flags[k] or ('BIT' .. k)) end
+          end
+          local function fset(n) return try(function() return ab.flags[df.abstract_building_flags[n]] end) or false end
+          local zones = {}
+          for _, z in ipairs(L.zones) do zones[#zones + 1] = ji(z) end
+          local c = ab.contents
+          local need = {}
+          for _, nm in ipairs({ 'goblets', 'instruments', 'paper', 'splints', 'thread', 'cloth', 'crutches', 'powder', 'buckets', 'soap', 'copies' }) do
+            local want = try(function() return c['desired_' .. nm] end) or 0
+            local have = try(function() return c['count_' .. nm] end)
+            if want > 0 or (have and have > 0) then need[#need + 1] = jobj({ 'item', ja(nm), 'desired', ji(want), 'count', ji(have or 0) }) end
+          end
+          return jobj({ 'id', ji(ab.id), 'kind', ja(L.kind), 'name', js(try(dfhack.translation.translateName, ab.name, true) or ''),
+                        'deity', ji(deity), 'profession', ja(prof), 'zones', jarr(zones), 'occupations', jarr(o),
+                        'allow_visitors', jb(fset('VISITORS_ALLOWED')),
+                        -- extras
+                        'type', ja(L.type), 'name_native', js(try(dfhack.translation.translateName, ab.name, false) or ''),
+                        'religion', ji(religion), 'deity_type', ji(dtype), 'flags', jarr(fl),
+                        'non_citizens_allowed', jb(fset('NON_CITIZENS_ALLOWED')), 'members_only', jb(fset('MEMBERS_ONLY')),
+                        'exists', jb(not fset('DOES_NOT_EXIST')), 'location_value', ji(L.value), 'location_tier', ji(L.tier),
+                        'tier_name', ja(L.tier_name), 'supplies', jarr(need), 'occupations_detail', jarr(od) })
+        end)
+        if ok then out[#out + 1] = s else warn('location', s) end
+      end
+    end)
+    write_file(OUT .. '/locations.json', '[\n' .. table.concat(out, ',\n') .. '\n]\n')
+    counts.locations, counts.occupations = #out, occs
+    checkpoint()
+  end
+
+  local function hf_name(id)
+    if not id or id < 0 then return '' end
+    return try(function() return dfhack.translation.translateName(df.historical_figure.find(id).name, true) end) or ''
+  end
+  local function export_crimes()
+    phase = 'crimes'
+    local ids = {}
+    for _, c in ipairs(df.global.world.crimes.all) do if c.site == SITE_ID then ids[#ids + 1] = c.id end end
+    local out = {}
+    for i = 1, #ids do
+      local ok, s = pcall(function()
+        local c = df.crime.find(ids[i])
+        if not c then return nil end
+        local sentenced = c.flags.sentenced
+        local pun = {}
+        if sentenced then
+          if c.punishment.hammerstrikes > 0 then pun[#pun + 1] = 'Hammerstrikes ' .. c.punishment.hammerstrikes end
+          if c.punishment.prison_time > 0 then pun[#pun + 1] = 'Jail ' .. c.punishment.prison_time end
+          if c.punishment.flags.beating then pun[#pun + 1] = 'Beating' end
+          if c.punishment.flags.exiled then pun[#pun + 1] = 'Exile' end
+          if c.punishment.flags.death_sentence then pun[#pun + 1] = 'Death' end
+        end
+        local wit, seen = {}, {}
+        for _, w in ipairs(c.witnesses) do
+          if w.witness_id >= 0 and not seen[w.witness_id] then seen[w.witness_id] = true; wit[#wit + 1] = ji(w.witness_id) end
+        end
+        local chf = try(function() return c.criminal_hf.hfid end) or -1
+        local vhf = try(function() return c.victim_hf.hfid end) or -1
+        return jobj({ 'id', ji(c.id), 'kind', ja(df.crime_type[c.mode] or tostring(c.mode)), 'criminal', ji(c.criminal),
+                      'victim', ji(c.victim), 'site_tick', ji(c.event_time), 'year', ji(c.event_year),
+                      'convicted', ji(sentenced and c.accused or -1), 'punishment', ja(table.concat(pun, ', ')),
+                      'witnesses', jarr(wit),
+                      -- extras
+                      'accused', ji(c.accused), 'criminal_hf', ji(chf), 'victim_hf', ji(vhf),
+                      'criminal_name', js(hf_name(chf)), 'victim_name', js(hf_name(vhf)),
+                      'flags', jarr(set_flags(c.flags, false)), 'hammerstrikes', ji(c.punishment.hammerstrikes),
+                      'prison_time', ji(c.punishment.prison_time), 'punishment_flags', jarr(set_flags(c.punishment.flags, false)),
+                      'discovered_year', ji(c.discovered_year), 'discovered_tick', ji(c.discovered_time),
+                      'entity', ji(c.entity), 'item_id', ji(c.item_id), 'incident_id', ji(c.incident_id) })
+      end)
+      if ok and s then out[#out + 1] = s elseif not ok then warn('crime', s) end
+      if i % 16 == 0 then phase_detail = i .. '/' .. #ids; checkpoint() end
+    end
+    write_file(OUT .. '/crimes.json', '[\n' .. table.concat(out, ',\n') .. '\n]\n')
+    counts.crimes = #out
+    -- punishments being carried out now (plotinfo.punishments): rf_import::PunishmentInfo via load_extras
+    local pun = {}
+    pcall(function()
+      for _, p in ipairs(df.global.plotinfo.punishments) do
+        local vic = {}
+        for _, v in ipairs(p.victims) do vic[#vic + 1] = ji(v) end
+        pun[#pun + 1] = jobj({ 'criminal', ji(p.criminal), 'officer', ji(p.officer), 'beating', ji(p.beating),
+                               'hammerstrikes', ji(p.hammer_strikes), 'prison_counter', ji(p.prison_counter),
+                               'time_to_assign', ji(p.time_to_assign), 'chain', ji(p.chain), 'victims', jarr(vic) })
+      end
+    end)
+    write_file(OUT .. '/punishments.json', '[\n' .. table.concat(pun, ',\n') .. '\n]\n')
+    counts.punishments = #pun
+  end
+
+  local function export_haul_routes()
+    phase = 'haul_routes'
+    local out = {}
+    pcall(function()
+      for _, r in ipairs(df.global.plotinfo.hauling.routes) do
+        local ok, s = pcall(function()
+          local stops = {}
+          for _, st in ipairs(r.stops) do
+            local take, give, links = {}, {}, {}
+            for _, l in ipairs(st.stockpiles) do
+              if l.mode.take then take[#take + 1] = ji(l.building_id) end
+              if l.mode.give then give[#give + 1] = ji(l.building_id) end
+              links[#links + 1] = jobj({ 'building_id', ji(l.building_id), 'mode', jarr(set_flags(l.mode, false)) })
+            end
+            local conds = {}
+            for _, c in ipairs(st.conditions) do
+              local dir = try(function() return df.stop_depart_condition.T_direction[c.direction] end) or tostring(c.direction)
+              local mode = try(function() return df.stop_depart_condition.T_mode[c.mode] end) or tostring(c.mode)
+              local txt = mode .. ' ' .. dir
+              if c.timeout > 0 then txt = txt .. ' after ' .. c.timeout .. ' ticks' end
+              local cf = {}
+              for _, f in ipairs(set_flags(c.flags, false)) do cf[#cf + 1] = f:gsub('"', '') end
+              if c.load_percent > 0 then
+                local cmp = '>='
+                for _, f in ipairs(cf) do if f == 'at_most' then cmp = '<=' end end
+                txt = txt .. ' when ' .. cmp .. ' ' .. c.load_percent .. '% full'
+              end
+              if #cf > 0 then txt = txt .. ' [' .. table.concat(cf, ',') .. ']' end
+              conds[#conds + 1] = ja(txt)
+            end
+            stops[#stops + 1] = jobj({ 'name', js(st.name), 'pos', jpos(st.pos.x, st.pos.y, st.pos.z), 'take_from', jarr(take),
+                                       'give_to', jarr(give), 'conditions', jarr(conds),
+                                       -- extras
+                                       'id', ji(st.id), 'cart_id', ji(st.cart_id), 'time_waiting', ji(st.time_waiting),
+                                       'links', jarr(links) })
+          end
+          local veh = {}
+          for _, v in ipairs(r.vehicle_ids) do veh[#veh + 1] = ji(v) end
+          local vst = {}
+          pcall(function() for _, v in ipairs(r.vehicle_stops) do vst[#vst + 1] = ji(v) end end)
+          return jobj({ 'id', ji(r.id), 'name', js(r.name), 'stops', jarr(stops), 'vehicles', jarr(veh), 'vehicle_stops', jarr(vst) })
+        end)
+        if ok then out[#out + 1] = s else warn('haul_route', s) end
+      end
+    end)
+    write_file(OUT .. '/haul_routes.json', '[\n' .. table.concat(out, ',\n') .. '\n]\n')
+    counts.haul_routes = #out
+    checkpoint()
+  end
+
+  function r8.export_files()
+    export_work_details()
+    export_kitchen()
+    export_locations()
+    export_crimes()
+    export_haul_routes()
+  end
 end
 
 -- ------------------------------------------------------------------------------------------- engravings
@@ -1966,9 +2535,41 @@ local function creature_raw_json(ri, source)
         adult = c.body_size[k] * 10
       end
     end)
+    -- round 8: animal products. SHEARABLE is a Rustfort pseudo-flag (DF: [SHEARABLE_TISSUE_LAYER] entries)
+    local cflags = set_flags(c.flags, false)
+    local shear = {}
+    pcall(function()
+      for _, sh in ipairs(c.shearable_tissue_layer) do
+        local parts = {}
+        for k = 0, #sh.part_idx - 1 do
+          parts[#parts + 1] = ja(try(function() return bi.body_parts[sh.part_idx[k]].token end) or tostring(sh.part_idx[k]))
+        end
+        shear[#shear + 1] = jobj({ 'length', ji(sh.length), 'parts', jarr(parts) })
+      end
+    end)
+    if #shear > 0 then cflags[#cflags + 1] = ja('SHEARABLE') end
+    local milk = try(function()
+      if c.extracts.milkable_mat < 0 then return nil end
+      return jobj({ 'mat', js(mat_token(c.extracts.milkable_mat, c.extracts.milkable_matidx)), 'frequency', ji(c.misc.milkable) })
+    end) or 'null'
+    local eggs = {}
+    pcall(function()
+      for k = 0, #c.extracts.egg_material_mattype - 1 do
+        eggs[#eggs + 1] = js(mat_token(c.extracts.egg_material_mattype[k], c.extracts.egg_material_matindex[k]))
+      end
+    end)
     castes[#castes + 1] = jobj({ 'token', ja(c.caste_id), 'name', js(c.caste_name[0]), 'body_size', ji(adult),
                                  'walk_speed', ji(caste_walk_speed(ri, ci, c) or 900), 'attacks', jarr(attacks),
-                                 'body_parts', jarr(pj), 'flags', jarr(set_flags(c.flags, false)),
+                                 'body_parts', jarr(pj), 'flags', jarr(cflags),
+                                 -- round-8 extras: animal products and husbandry numbers from the caste raws
+                                 'milkable', milk, 'grazer', ji(flag(c.flags, 'GRAZER') and (try(function() return c.misc.grazer end) or 0) or -1),
+                                 'shearable', jarr(shear), 'egg_materials', jarr(eggs),
+                                 'clutch_size', jarr({ ji(try(function() return c.misc.clutch_size_min end) or 0),
+                                                       ji(try(function() return c.misc.clutch_size_max end) or 0) }),
+                                 'egg_size', ji(try(function() return c.misc.egg_size end) or 0),
+                                 'litter_size', jarr({ ji(try(function() return c.misc.litter_size_min end) or 0),
+                                                       ji(try(function() return c.misc.litter_size_max end) or 0) }),
+                                 'pet_value', ji(try(function() return c.misc.petvalue end) or 0),
                                  -- extras: [age in days, cm³] per BODY_SIZE entry; total relsize; blood
                                  'body_size_by_age', jarr(sizes), 'total_relsize', ji(bi.total_relsize),
                                  'baby_age', ji(c.misc.baby_age), 'child_age', ji(c.misc.child_age),
@@ -2526,6 +3127,8 @@ local function main()
   if not opt.skip_map then export_map() else note('map skipped (--skip-map)') end
   export_units()
   export_items()
+  r8.prepare_locations()   -- round 8: locations and their civzones (for the room evaluation of civzones)
+  r8.export_pile_filters() -- round 8: detailed stockpile filters, before the buildings phase writes them
   export_buildings()
   export_engravings()      -- round 5: after the map, before the materials (adds tile materials to the palette)
   export_work_orders()
@@ -2533,6 +3136,7 @@ local function main()
   export_burrows_squads()
   export_creature_raws()   -- after units/items (races seen), before the materials: adds the tissue materials
   export_item_raws()
+  r8.export_files()        -- round 8: work details, kitchen, locations, crimes, haul routes (before hist figs: deity refs)
   export_society()         -- round 4: entities, nobles, settings, caravans, diplomats, hist figs (last: collects refs)
   phase = 'materials'
   local mats = {}
@@ -2563,6 +3167,10 @@ local function main()
        :format(r4.doors, r4.locked_doors, r4.bridges, r4.raised_bridges, r4.traps, r4.levers, r4.loaded_traps, r4.links, r4.caged_units))
   note(('round 4 society: %d entities, %d noble assignments, %d mandates, %d hist figs, %d caravans, %d diplomats, %d merchant events at this site')
        :format(soc.entities, soc.nobles, soc.mandates, soc.hist_figs, soc.caravans, soc.diplomats, soc.merchant_events))
+  note(('round 8: %d stockpiles with %d filter strings, %d work detail memberships, %d pets with owner, %d pastured, %d marked for slaughter, %d pregnant, %d trained animals')
+       :format(r8.piles, r8.pile_leaves, r8.wd_members, r8.pets, r8.pastured, r8.slaughter, r8.pregnant, r8.trained))
+  for k, v in pairs(r8.list_mismatch) do note(('stockpile filters: %s has %d entries in DF, not the expected list length; tokens are #<index>'):format(k, v)) end
+  note('room evaluation: DF 53.16 keeps no value for personal rooms (getRoomDescription is empty for v50 zones); room_value = location_value for location zones, else -1; room_thought = owner latest quality thought')
   note('caravans: leaves_in = time_remaining x 10 ticks (DFHack caravan.lua: 120 per day); trades = sent a caravan here (history MERCHANT events) or has one now')
 end
 
@@ -2577,12 +3185,15 @@ local function finish()
   counts.entities, counts.nobles, counts.mandates, counts.hist_figs = soc.entities, soc.nobles, soc.mandates, soc.hist_figs
   counts.caravans, counts.diplomats, counts.building_links = soc.caravans, soc.diplomats, r4.links
   counts.levers, counts.locked_doors, counts.traps = r4.levers, r4.locked_doors, r4.traps
+  counts.stockpile_filters, counts.pets, counts.pastured = r8.pile_leaves, r8.pets, r8.pastured
+  counts.slaughter, counts.pregnant = r8.slaughter, r8.pregnant
   for _, k in ipairs({ 'units', 'citizens', 'items', 'buildings', 'plants', 'materials', 'tiletypes', 'tiles', 'z_exported',
                        'work_orders', 'plant_raws', 'building_jobs', 'farm_plots', 'burrows', 'squads',
                        'burrow_tiles', 'creature_raws', 'weapon_raws', 'armor_raws', 'unit_needs', 'unit_emotions',
                        'unit_values', 'unit_relationships', 'unit_wounds', 'entities', 'nobles', 'mandates', 'hist_figs',
                        'caravans', 'diplomats', 'building_links', 'levers', 'locked_doors', 'traps', 'trade_depots',
-                       'engravings' }) do
+                       'engravings', 'work_details', 'kitchen', 'locations', 'occupations', 'crimes', 'punishments',
+                       'haul_routes', 'stockpile_filters', 'pets', 'pastured', 'slaughter', 'pregnant' }) do
     cnt[#cnt + 1] = k
     cnt[#cnt + 1] = ji(counts[k] or 0)
   end

@@ -484,6 +484,118 @@ fn compare(dir: &str, result: &str) {
                     println!("{k}: import {got} | DF {}", f[1]);
                 }
             }
+            // ---- round 8
+            Some("wd") if f.len() >= 6 => {
+                let e = r2.entry("work details (mode, members, labors)").or_default();
+                let name = f[5..].join(" ");
+                match w.work_details.iter().find(|d| d.name == name) {
+                    // the importer drops members that are not exported units (dead), so DF may list more
+                    Some(d) if d.mode == f[2] && d.labors.len().to_string() == f[4] && d.assigned.len() <= f[3].parse().unwrap_or(0) => e.0 += 1,
+                    Some(d) => {
+                        e.1 += 1;
+                        println!("work detail {name}: import {} {} members {} labors | DF {} {} {}", d.mode, d.assigned.len(), d.labors.len(), f[2], f[3], f[4]);
+                    }
+                    None => e.2 += 1,
+                }
+            }
+            Some("kitchen") if f.len() >= 4 => {
+                let e = r2.entry("kitchen (entries, no cook, no brew)").or_default();
+                let got = format!("{} {} {}", w.kitchen.len(), w.kitchen.iter().filter(|k| k.no_cook).count(), w.kitchen.iter().filter(|k| k.no_brew).count());
+                if got == f[1..4].join(" ") {
+                    e.0 += 1;
+                } else {
+                    e.1 += 1;
+                    println!("kitchen: import {got} | DF {}", f[1..4].join(" "));
+                }
+            }
+            Some("loc") if f.len() >= 6 => {
+                let e = r2.entry("locations (zones, filled occupations)").or_default();
+                let id: i32 = f[1].parse().unwrap_or(-1);
+                match w.locations.iter().find(|l| l.id == id) {
+                    Some(l) => {
+                        let holders = l.occupations.iter().filter(|o| o.unit >= 0).count();
+                        if l.zones.len() >= f[3].parse().unwrap_or(0) && holders.to_string() == f[4] {
+                            e.0 += 1;
+                        } else {
+                            e.1 += 1;
+                            println!("location {id} {}: import {} zones {holders} holders | DF {} {}", f[2], l.zones.len(), f[3], f[4]);
+                        }
+                    }
+                    None => e.2 += 1,
+                }
+            }
+            Some("crimes") if f.len() >= 3 => {
+                let e = r2.entry("crimes (at the site, sentenced)").or_default();
+                let got = format!("{} {}", w.crimes.len(), w.crimes.iter().filter(|c| c.convicted >= 0).count());
+                if got == f[1..3].join(" ") {
+                    e.0 += 1;
+                } else {
+                    e.1 += 1;
+                    println!("crimes: import {got} | DF {}", f[1..3].join(" "));
+                }
+            }
+            Some("animal") if f.len() >= 6 => {
+                let e = r2.entry("tame animals (owner, training, slaughter, pregnancy)").or_default();
+                let id: i32 = f[1].parse().unwrap_or(-1);
+                match w.units.iter().find(|u| u.id == id) {
+                    Some(u) => {
+                        let owner_ok = u.pet_owner.to_string() == f[2] || (u.pet_owner == -1 && !w.units.iter().any(|x| x.id.to_string() == f[2]));
+                        let preg_ok = (u.pregnancy > 0) == (f[5] != "0");
+                        if owner_ok && u.training == f[3] && (u.slaughter as u8).to_string() == f[4] && preg_ok {
+                            e.0 += 1;
+                        } else {
+                            e.1 += 1;
+                            println!("animal {id}: import {} {} {} {} | DF {}", u.pet_owner, u.training, u.slaughter, u.pregnancy, f[2..6].join(" "));
+                        }
+                    }
+                    None => e.2 += 1,
+                }
+            }
+            Some("preg") if f.len() >= 3 => {
+                let e = r2.entry("pregnant units").or_default();
+                let id: i32 = f[1].parse().unwrap_or(-1);
+                match w.units.iter().find(|u| u.id == id) {
+                    Some(u) if u.pregnancy > 0 => e.0 += 1,
+                    Some(u) => {
+                        e.1 += 1;
+                        println!("unit {id}: import pregnancy {} | DF {}", u.pregnancy, f[2]);
+                    }
+                    None => e.2 += 1,
+                }
+            }
+            Some("pile") if f.len() >= 5 => {
+                let e = r2.entry("stockpile links (links only, give, take)").or_default();
+                let id: i32 = f[1].parse().unwrap_or(-1);
+                match w.building(id).and_then(|b| b.stockpile.as_ref()) {
+                    Some(s) => {
+                        let got = format!("{} {} {}", s.use_links_only as u8, s.give_to.len(), s.take_from.len());
+                        if got == f[2..5].join(" ") {
+                            e.0 += 1;
+                        } else {
+                            e.1 += 1;
+                            println!("pile {id}: import {got} | DF {}", f[2..5].join(" "));
+                        }
+                    }
+                    None => e.2 += 1,
+                }
+            }
+            Some("pleaf") if f.len() >= 6 => {
+                let e = r2.entry("stockpile filter leaves (sampled)").or_default();
+                let id: i32 = f[1].parse().unwrap_or(-1);
+                match w.building(id).and_then(|b| b.stockpile.as_ref()) {
+                    Some(s) => {
+                        let token = f[5..].join(" ");
+                        let got = s.filter_allows(f[2], f[3], &token);
+                        if got == (f[4] == "1") {
+                            e.0 += 1;
+                        } else {
+                            e.1 += 1;
+                            println!("pile {id} {}/{}/{token}: import {got} | DF {}", f[2], f[3], f[4]);
+                        }
+                    }
+                    None => e.2 += 1,
+                }
+            }
             _ => {}
         }
     }

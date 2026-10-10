@@ -13,7 +13,10 @@
 //! loads as well) and round 4 (`entities.json`, `nobles.json`, `settings.json`, `hist_figs.json`,
 //! `caravans.json` into `World::entities` / `nobles` / `settings` / `hist_figs` / `caravans`;
 //! building flags, mechanism links and directions come with `buildings.jsonl`) and round 5
-//! (`engravings.json` into `World::engravings`).
+//! (`engravings.json` into `World::engravings`) and round 8 (`work_details.json`, `kitchen.json`,
+//! `locations.json`, `crimes.json`, `haul_routes.json` into `World::work_details` / `kitchen` /
+//! `locations` / `crimes` / `haul_routes`; stockpile filters and links, animal fields and work
+//! detail names come with `buildings.jsonl` / `units.jsonl`; see [`round8`]).
 
 use rf_core::{
     tile_flags, ArmorRaw, Building, Burrow, Calendar, Caravan, CreatureRaw, Dims, Engraving, EntityInfo, GameSettings, HistFigName, Item,
@@ -25,6 +28,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
+
+pub mod round8;
+pub use round8::{AnimalProducts, MilkInfo, PunishmentInfo, RoomEval, ShearInfo};
 
 /// Default export folder of Gordon's fort (gitignored, outside of git).
 pub const DEFAULT_EXPORT: &str = "export/tileshtulon";
@@ -81,6 +87,15 @@ pub struct ImportReport {
     pub building_links: usize,
     /// Round-5 data: DF's existing engravings (`engravings.json`; 0 when the export predates it).
     pub engravings: usize,
+    /// Round-8 data (0 / false when the export predates it): work details, kitchen exclusions,
+    /// locations, crimes at the site, hauling routes, stockpile filter strings.
+    pub round8: bool,
+    pub work_details: usize,
+    pub kitchen: usize,
+    pub locations: usize,
+    pub crimes: usize,
+    pub haul_routes: usize,
+    pub stockpile_filters: usize,
     pub warnings: Vec<String>,
     pub seconds: f64,
 }
@@ -175,6 +190,10 @@ pub struct Extras {
     /// Round 4: diplomats / liaisons and the mandates with their numbers.
     pub diplomats: Vec<DiplomatInfo>,
     pub mandates: Vec<MandateInfo>,
+    /// Round 8: DF's room evaluation per civzone, running punishments, caste animal products.
+    pub rooms: Vec<RoomEval>,
+    pub punishments: Vec<PunishmentInfo>,
+    pub animal_products: Vec<AnimalProducts>,
 }
 
 /// A nobles.json entry: rf_core::NoblePosition plus the mandate details.
@@ -232,6 +251,9 @@ pub fn load_extras(dir: &Path) -> Extras {
                 n.mandates_detail.into_iter().map(move |m| MandateInfo { noble: holder, position: token.clone(), ..m })
             })
             .collect(),
+        rooms: round8::load_room_evals(dir),
+        punishments: round8::load_punishments(dir),
+        animal_products: round8::load_animal_products(dir),
     }
 }
 
@@ -722,6 +744,9 @@ pub fn load_export(dir: &Path) -> Result<(World, ImportReport), ImportError> {
     let caravans: Vec<Caravan> = optional(dir, "caravans.json", "caravans", &mut w);
     // Round-5 file (optional): DF's existing engravings.
     let engravings: Vec<Engraving> = optional(dir, "engravings.json", "engravings", &mut w);
+    // Round-8 files (optional): work details, kitchen, locations, crimes, hauling routes.
+    let r8 = round8::load_files(dir, &mut w);
+    let r8_present = r8.present;
 
     let mut world = World {
         meta: Meta {
@@ -766,10 +791,17 @@ pub fn load_export(dir: &Path) -> Result<(World, ImportReport), ImportError> {
         hist_figs,
         caravans,
         engravings,
+        work_details: r8.work_details,
+        kitchen: r8.kitchen,
+        locations: r8.locations,
+        crimes: r8.crimes,
+        haul_routes: r8.haul_routes,
         // keeps this compiling when other rounds add World fields
         ..Default::default()
     };
+    round8::check_counts(&world, &manifest, &mut w);
     validate(&mut world, &manifest, &mut w);
+    round8::repair(&mut world, r8_present, &mut w);
 
     let report = ImportReport {
         units: world.units.len(),
@@ -794,6 +826,13 @@ pub fn load_export(dir: &Path) -> Result<(World, ImportReport), ImportError> {
         settings: has_settings,
         building_links: trigger_links(&world),
         engravings: world.engravings.len(),
+        round8: r8_present,
+        work_details: world.work_details.len(),
+        kitchen: world.kitchen.len(),
+        locations: world.locations.len(),
+        crimes: world.crimes.len(),
+        haul_routes: world.haul_routes.len(),
+        stockpile_filters: round8::filter_count(&world),
         warnings: {
             let mut list = w.finish();
             for n in &manifest.notes {
@@ -1085,6 +1124,12 @@ pub fn write_export(world: &World, dir: &Path) -> Result<(), ImportError> {
     write_json("caravans.json", to_json(&world.caravans))?;
     // Round-5 file (optional for the importer; always written here).
     write_json("engravings.json", to_json(&world.engravings))?;
+    // Round-8 files (optional for the importer; always written here).
+    write_json("work_details.json", to_json(&world.work_details))?;
+    write_json("kitchen.json", to_json(&world.kitchen))?;
+    write_json("locations.json", to_json(&world.locations))?;
+    write_json("crimes.json", to_json(&world.crimes))?;
+    write_json("haul_routes.json", to_json(&world.haul_routes))?;
     let plane = world.dims.x as usize * world.dims.y as usize;
     for z in 0..world.dims.z as usize {
         let mut buf = Vec::with_capacity(plane * TILE_RECORD_BYTES);
@@ -1132,6 +1177,17 @@ pub fn write_export(world: &World, dir: &Path) -> Result<(), ImportError> {
         ("caravans", world.caravans.len()),
         ("building_links", trigger_links(world)),
         ("engravings", world.engravings.len()),
+        ("work_details", world.work_details.len()),
+        ("kitchen", world.kitchen.len()),
+        ("locations", world.locations.len()),
+        ("occupations", world.locations.iter().map(|l| l.occupations.len()).sum()),
+        ("crimes", world.crimes.len()),
+        ("haul_routes", world.haul_routes.len()),
+        ("stockpile_filters", round8::filter_count(world)),
+        ("pets", world.units.iter().filter(|u| u.pet_owner >= 0).count()),
+        ("pastured", world.units.iter().filter(|u| u.pasture >= 0).count()),
+        ("slaughter", world.units.iter().filter(|u| u.slaughter).count()),
+        ("pregnant", world.units.iter().filter(|u| u.pregnancy > 0).count()),
     ] {
         counts.insert(k.to_string(), v as i64);
     }

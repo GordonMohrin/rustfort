@@ -640,6 +640,131 @@ fn round4(w: &World, dir: &std::path::Path, rep: &rf_import::ImportReport) {
     );
 }
 
+/// Round 8: work details, stockpile filters, kitchen, locations, justice, animals, hauling, rooms.
+fn round8(w: &rf_core::World, dir: &std::path::Path, rep: &rf_import::ImportReport) {
+    if !rep.round8 {
+        println!("\nround 8: no work_details.json (export predates exporter rev 2026-10-10e)");
+        return;
+    }
+    let x = rf_import::load_extras(dir);
+    let name = |id: i32| w.units.iter().find(|u| u.id == id).map(|u| u.name.clone()).unwrap_or_else(|| format!("#{id}"));
+    println!("\nwork details ({}):", w.work_details.len());
+    for d in &w.work_details {
+        println!("  {:<18} {:<22} {:>3} members  labors {}", d.name, d.mode, d.assigned.len(), d.labors.join(","));
+    }
+    let piles: Vec<&rf_core::Building> = w.buildings.iter().filter(|b| b.stockpile.is_some()).collect();
+    let nfil: usize = piles.iter().map(|b| b.stockpile.as_ref().unwrap().filters.len()).sum();
+    let linked = piles.iter().filter(|b| b.stockpile.as_ref().is_some_and(|s| !s.give_to.is_empty() || !s.take_from.is_empty())).count();
+    let only = piles.iter().filter(|b| b.stockpile.as_ref().is_some_and(|s| s.use_links_only)).count();
+    println!("\nstockpiles: {} with {} filter strings, {} linked, {} take from links only", piles.len(), nfil, linked, only);
+    for b in piles.iter().take(6) {
+        let s = b.stockpile.as_ref().unwrap();
+        let partial = s.filters.iter().filter(|f| !f.ends_with("/*") && !f.contains("/options/")).count();
+        println!(
+            "  {:>6} {:<22} [{}] {} strings ({} single leaves), give {:?} take {:?}",
+            b.id,
+            b.name,
+            s.categories.join(","),
+            s.filters.len(),
+            partial,
+            s.give_to,
+            s.take_from
+        );
+    }
+    let cook = w.kitchen.iter().filter(|k| k.no_cook).count();
+    let brew = w.kitchen.iter().filter(|k| k.no_brew).count();
+    let mut kt: BTreeMap<String, usize> = BTreeMap::new();
+    for k in &w.kitchen {
+        *kt.entry(k.item_type.clone()).or_default() += 1;
+    }
+    println!("\nkitchen: {} entries ({} no cook, {} no brew): {}", w.kitchen.len(), cook, brew, top(&kt, 10).into_iter().map(|(k, c)| format!("{k} {c}")).collect::<Vec<_>>().join(", "));
+    println!("\nlocations ({}):", w.locations.len());
+    for l in &w.locations {
+        let occ: Vec<String> = l.occupations.iter().map(|o| if o.unit >= 0 { format!("{} {}", o.kind, name(o.unit)) } else { format!("{} vacant", o.kind) }).collect();
+        let deity = if l.deity >= 0 { w.hist_figs.iter().find(|h| h.id == l.deity).map(|h| h.name.clone()).unwrap_or_else(|| format!("hf {}", l.deity)) } else { String::new() };
+        let room = x.rooms.iter().find(|r| l.zones.contains(&r.id) && r.room_value >= 0);
+        println!(
+            "  {:>3} {:<9} {:<28} zones {:?} {}{}{} {}",
+            l.id,
+            l.kind,
+            l.name,
+            l.zones,
+            if deity.is_empty() { String::new() } else { format!("deity {deity} ") },
+            if l.profession.is_empty() { String::new() } else { format!("{} ", l.profession) },
+            room.map(|r| format!("value {} = {}", r.room_value, r.room_name)).unwrap_or_default(),
+            occ.join(", ")
+        );
+    }
+    let mut ck: BTreeMap<String, usize> = BTreeMap::new();
+    for c in &w.crimes {
+        *ck.entry(c.kind.clone()).or_default() += 1;
+    }
+    println!(
+        "\njustice: {} crimes at the site ({} convicted): {}; {} punishments running",
+        w.crimes.len(),
+        w.crimes.iter().filter(|c| c.convicted >= 0).count(),
+        top(&ck, 8).into_iter().map(|(k, c)| format!("{k} {c}")).collect::<Vec<_>>().join(", "),
+        x.punishments.len()
+    );
+    for c in w.crimes.iter().rev().take(3) {
+        println!("  #{} year {} {} by {} against {} -> {}", c.id, c.year, c.kind, name(c.criminal), name(c.victim), if c.punishment.is_empty() { "-" } else { &c.punishment });
+    }
+    let animals: Vec<&rf_core::Unit> = w.units.iter().filter(|u| u.flags.animal && u.flags.tame && !u.flags.dead).collect();
+    let mut tr: BTreeMap<String, usize> = BTreeMap::new();
+    for u in &animals {
+        *tr.entry(u.training.clone()).or_default() += 1;
+    }
+    println!(
+        "\nanimals: {} tame ({} pets with owner, {} pastured, {} for slaughter); training {}; pregnant units {}",
+        animals.len(),
+        animals.iter().filter(|u| u.pet_owner >= 0).count(),
+        animals.iter().filter(|u| u.pasture >= 0).count(),
+        animals.iter().filter(|u| u.slaughter).count(),
+        top(&tr, 6).into_iter().map(|(k, c)| format!("{k} {c}")).collect::<Vec<_>>().join(", "),
+        w.units.iter().filter(|u| u.pregnancy > 0).count()
+    );
+    let prods: Vec<String> = x
+        .animal_products
+        .iter()
+        .filter(|p| animals.iter().any(|u| u.race == p.race && u.caste == p.caste))
+        .map(|p| {
+            let mut v = Vec::new();
+            if p.milkable.is_some() {
+                v.push("milk");
+            }
+            if p.grazer > 0 {
+                v.push("grazer");
+            }
+            if !p.shearable.is_empty() {
+                v.push("shear");
+            }
+            if !p.egg_materials.is_empty() {
+                v.push("eggs");
+            }
+            format!("{}:{} {}", p.race, p.caste, v.join("+"))
+        })
+        .collect();
+    println!("  products of the castes present: {}", if prods.is_empty() { "none".into() } else { prods.join(", ") });
+    println!("\nhauling routes: {}", w.haul_routes.len());
+    for r in &w.haul_routes {
+        println!("  {} {}: {} stops, {} vehicles", r.id, r.name, r.stops.len(), r.vehicles.len());
+    }
+    // room evaluation: DF's verdict per personal room (owner thought severity) and per location
+    let mut sev: BTreeMap<(String, i32), usize> = BTreeMap::new();
+    for r in &x.rooms {
+        if r.room_thought_severity >= 0 {
+            *sev.entry((r.room_thought.clone(), r.room_thought_severity)).or_default() += 1;
+        }
+    }
+    println!(
+        "\nrooms: {} civzones evaluated, {} with DF value (locations), {} with a description; owner thoughts by severity: {}",
+        x.rooms.len(),
+        x.rooms.iter().filter(|r| r.room_value >= 0).count(),
+        x.rooms.iter().filter(|r| !r.room_description.is_empty()).count(),
+        sev.iter().map(|((t, s), c)| format!("{t}:{s} x{c}")).collect::<Vec<_>>().join(", ")
+    );
+}
+
 fn main() {
     let mut dir: Option<PathBuf> = None;
     let mut zsel: Option<i16> = None;
@@ -733,6 +858,7 @@ fn main() {
     production(&w, &dir);
     round3(&w, &dir, &rep);
     round4(&w, &dir, &rep);
+    round8(&w, &dir, &rep);
 
     // tiles per z-range
     println!("\ntiles per z-range (shape %, material class %, top materials; hidden = undiscovered):");

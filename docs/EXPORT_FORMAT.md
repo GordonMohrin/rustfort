@@ -38,6 +38,12 @@ export/<fort>/
   caravans.json      rf_core::Caravan array: merchant caravans (round 4, optional)
   diplomats.json     diplomats / outpost liaisons (round 4, optional; rf_import::load_extras)
   engravings.json    rf_core::Engraving array: DF's existing engravings (round 5, optional)
+  work_details.json  rf_core::WorkDetail array: v50 work details (round 8, optional)
+  kitchen.json       rf_core::KitchenSetting array: cook/brew exclusions (round 8, optional)
+  locations.json     rf_core::Location array: temples, taverns, libraries, guildhalls, hospitals (round 8, optional)
+  crimes.json        rf_core::Crime array: justice cases at the site (round 8, optional)
+  punishments.json   punishments DF is carrying out (round 8, optional; rf_import::load_extras)
+  haul_routes.json   rf_core::HaulRoute array: hauling routes with stops (round 8, optional)
   progress.json      exporter status, rewritten about once per second (not imported)
   error.json         only if the export aborted (not imported)
   export.lock        only while an export is running
@@ -631,3 +637,187 @@ Extras (ignored by the importer): `artist_hf` (historical figure id), `sides` (w
 The importer drops engravings outside the map and a second engraving on the same tile, clamps `quality` to 5, and replaces an unknown or out-of-range `mat` with the material of the tile. Each repair is a warning in `ImportReport::warnings`.
 
 New `counts` key: `engravings` (compared with what was loaded). New phase in `max_slice_by_phase`: `engravings` (the budget is checked every 32 entries).
+
+## Additions for round 8 (still format v1)
+
+Exporter revision `2026-10-10e`. Everything is optional for the importer: an export without `work_details.json` loads with empty `World::work_details` / `kitchen` / `locations` / `crimes` / `haul_routes`, stockpiles without filters (= everything in their categories) and units with `pet_owner = pasture = -1` (`ImportReport::round8` is then false). The rf-import code lives in `crates/rf-import/src/round8.rs`.
+
+| file | content |
+|---|---|
+| `units.jsonl` | new fields `pet_owner`, `training`, `pasture`, `slaughter`, `pregnancy`, `work_details` |
+| `buildings.jsonl` | stockpiles: `filters`, `use_links_only`, `give_to`, `take_from`; civzones: room evaluation extras |
+| `work_details.json` | `rf_core::WorkDetail` per v50 work detail |
+| `kitchen.json` | `rf_core::KitchenSetting` per kitchen exclusion |
+| `locations.json` | `rf_core::Location` per abstract building of the fort's site |
+| `crimes.json` | `rf_core::Crime` per justice case at the fort's site |
+| `punishments.json` | `rf_import::PunishmentInfo` per punishment in progress (via `load_extras`) |
+| `haul_routes.json` | `rf_core::HaulRoute` per hauling route |
+| `creature_raws.json` | caste extras for animal products; pseudo-flag `SHEARABLE` |
+| `manifest.json` | new `counts` keys (see below) |
+
+### units.jsonl: animals, pregnancy, work details
+
+| field | source |
+|---|---|
+| `pet_owner` | `unit.relationship_ids.PetOwner` (a unit id), -1 = none |
+| `training` | animals only: `df.animal_training_level[unit.training_level]` (`SemiWild`, `Trained`, `WellTrained`, `SkilfullyTrained`, `ExpertlyTrained`, `ExceptionallyTrained`, `MasterfullyTrained`, `Domesticated`, `WildUntamed`); `""` for non-animals |
+| `pasture` | the Pen/pasture civzone whose `assigned_units` lists the unit (DF v50 keeps the pasture assignment there), else the unit's `BUILDING_CIVZONE_ASSIGNED` general ref, else -1 |
+| `slaughter` | `unit.flags2.slaughter` |
+| `pregnancy` | `unit.pregnancy_timer` in ticks (all units, citizens too); 0 = not pregnant |
+| `work_details` | names of the work details whose `assigned_units` lists the unit, in DF's work detail order |
+
+Extras: `gelded` (`flags3.gelded`), `only_do_assigned_jobs` (`flags4.only_do_assigned_jobs`, DF 53's per-unit "only do assigned work details" switch), `pregnancy_caste`, `pregnancy_spouse`.
+
+The importer rebuilds `Unit::work_details` from the work details' member lists (warning when they differ), sets an owner that is not among the exported units to -1, and a pasture that is not a civzone to -1. `0` from `Unit::default()` (worlds made in code) becomes -1 without a warning.
+
+### buildings.jsonl: stockpile filters and links
+
+`stockpile` gains:
+
+| field | source |
+|---|---|
+| `filters` | DF's full pile settings (`building_stockpilest.settings`) as leaf strings, see below |
+| `use_links_only` | `stockpile_flag.use_links_only` ("take from links only") |
+| `give_to` | `links.give_to_pile` + `links.give_to_workshop` (building ids) |
+| `take_from` | `links.take_from_pile` + `links.take_from_workshop` |
+
+Extras: `give_to_pile`, `take_from_pile`, `give_to_workshop`, `take_from_workshop` (the links split by kind), `stockpile_number`, `filters_complete`.
+
+**Filter strings.** One string per leaf, `category/group/token`. Category and group names are DF's field names in `stockpile_settings` (the same names DFHack's `stockpiles` plugin uses in its settings files):
+
+- `category/group/TOKEN` enables one leaf;
+- `category/group/*` enables the whole group (written when all of DF's entries are set);
+- when more than half of a group is set, the exporter writes `category/group/*` plus `category/group/!TOKEN` for each excluded leaf;
+- `category/options/NAME` is a switch that is on;
+- `category/none/-` marks an enabled category with nothing enabled in it (so it is never confused with "no filters");
+- `misc/options/allow_organic`, `misc/options/allow_inorganic` are pile-wide (`settings.misc`); `misc/none/-` if both are off.
+
+A category without any filter string accepts everything in it (exports before round 8, piles created without detailed settings). `rf_core::StockpileSettings::filter_allows(category, group, token)` and `filter_option(category, option)` implement these rules.
+
+| category | groups (token kind) | options |
+|---|---|---|
+| `animals` | `enabled` (creature) | `empty_cages`, `empty_traps` |
+| `food` | `meat`, `fish`, `unprepared_fish`, `egg`, `plants`, `drink_plant`, `drink_animal`, `cheese_plant`, `cheese_animal`, `seeds`, `leaves`, `powder_plant`, `powder_creature`, `glob`, `glob_paste`, `glob_pressed`, `liquid_plant`, `liquid_animal`, `liquid_misc` (all organic material) | `prepared_meals` |
+| `furniture` | `type` (furniture type), `other_mats` (list A), `mats` (inorganic), `quality_core`, `quality_total` (quality) | |
+| `corpses` | `corpses` (creature) | |
+| `refuse` | `type` (item type), `corpses`, `body_parts`, `skulls`, `bones`, `hair`, `shells`, `teeth`, `horns` (creature) | `fresh_raw_hide`, `rotten_raw_hide` |
+| `stone` | `mats` (inorganic), `ore` (inorganic, DF 53's separate `settings.ore` list; empty on Trussroads) | |
+| `ammo` | `type` (itemdef ammo), `other_mats` (list D), `mats` (inorganic), `quality_core`, `quality_total` | |
+| `coins` | `mats` (inorganic) | |
+| `bars_blocks` | `bars_other_mats` (list E), `blocks_other_mats` (list F), `bars_mats`, `blocks_mats` (inorganic) | |
+| `gems` | `rough_other_mats`, `cut_other_mats` (builtin material), `rough_mats`, `cut_mats` (inorganic) | |
+| `finished_goods` | `type` (item type), `other_mats` (list B), `mats` (inorganic), `color` (color), `quality_core`, `quality_total` | `dyed`, `undyed` |
+| `leather` | `mats` (organic Leather), `color` | `dyed`, `undyed` |
+| `cloth` | `thread_silk`, `thread_plant`, `thread_yarn`, `thread_metal`, `cloth_silk`, `cloth_plant`, `cloth_yarn`, `cloth_metal` (organic Silk / PlantFiber / Yarn / MetalThread), `color` | `dyed`, `undyed` |
+| `wood` | `mats` (plant) | |
+| `weapons` | `weapon_type` (itemdef weapons), `trapcomp_type` (itemdef trapcomps), `other_mats` (list C), `mats` (inorganic), `quality_core`, `quality_total` | `usable`, `unusable` |
+| `armor` | `body`, `head`, `feet`, `hands`, `legs`, `shield` (itemdef armor/helms/shoes/gloves/pants/shields), `other_mats` (list C), `mats` (inorganic), `color`, `quality_core`, `quality_total` | `usable`, `unusable`, `dyed`, `undyed` |
+| `sheet` | `paper`, `parchment` (organic Paper / Parchment) | |
+
+Token kinds (index `i` of DF's settings vector → token):
+
+| kind | token | example |
+|---|---|---|
+| creature | `world.raws.creatures.all[i].creature_id` | `COW` |
+| organic | material token of `mat_table.organic_types[cat][i]` / `organic_indexes[cat][i]` (cat = `df.organic_mat_category` of the group) | `CREATURE:COW:MUSCLE`, `PLANT:MUSHROOM_HELMET_PLUMP:DRINK` |
+| inorganic | `INORGANIC:` + `inorganics.all[i].id` | `INORGANIC:HEMATITE` |
+| plant | `PLANT:` + `plants.all[i].id` + `:WOOD` (the wood material token; the list covers every plant) | `PLANT:TOWER_CAP:WOOD` |
+| item type / furniture type | `df.item_type[i]` / `df.furniture_type[i]` | `BARREL`, `BED` |
+| itemdef | `world.raws.itemdefs.<list>[i].id` | `ITEM_WEAPON_PICK` |
+| builtin material | material token of type `i` | `GLASS_GREEN` |
+| color | `descriptors.colors[i].id` | `AMBER` |
+| quality | `df.item_quality[i]` (7 entries) | `Masterful` |
+| list A (furniture, 15) | `WOOD PLANT_CLOTH BONE TOOTH HORN PEARL SHELL LEATHER SILK AMBER CORAL GREEN_GLASS CLEAR_GLASS CRYSTAL_GLASS YARN` | |
+| list B (finished goods, 16) | list A + `WAX` | |
+| list C (weapons/armor, 10) | `WOOD PLANT_CLOTH BONE SHELL LEATHER SILK GREEN_GLASS CLEAR_GLASS CRYSTAL_GLASS YARN` | |
+| list D (ammo, 2) | `WOOD BONE` | |
+| list E (bars, 5) | `COAL POTASH ASH PEARLASH SOAP` | |
+| list F (blocks, 4) | `GREEN_GLASS CLEAR_GLASS CRYSTAL_GLASS WOOD` | |
+
+The lengths of lists A-F match DF 53.16's vectors (checked on Trussroads); their order follows DFHack's stockpiles plugin (ESTIMATE: not checked one by one in the UI). A list whose length differs from DF's vector gets `#<index>` tokens and a manifest note. An index without a resolvable token is written as `#<index>`.
+
+The `pile_filters` phase scans the settings before the buildings phase. It yields every 1 024 entries and re-finds the pile by id after a yield; a vector that changed length in between ends that group early. Trussroads: 43 piles, 481 strings (most groups are complete `*`; "Farmebene Ernte" lists 114 single plants).
+
+### buildings.jsonl: room evaluation of civzones
+
+Every civzone gets these extras (read by `rf_import::load_extras` as `RoomEval`):
+
+| extra | source |
+|---|---|
+| `room_value` | DF's own value where DF has one: the location's `abstract_building.contents.location_value` for the location's meeting-area zone; -1 for personal rooms (bedrooms, offices, dining halls, tombs, also a tavern's rented bedrooms) |
+| `room_name` | `dfhack.buildings.getRoomDescription(zone, owner)` when non-empty, else the location tier name: temples and guildhalls by DF's difficulty thresholds (`TEMPLE_VALUE` 2 000 -> `Temple`, `TEMPLE_COMPLEX_VALUE` 10 000 -> `Temple Complex`, `GUILDHALL_VALUE` 2 000 / `GRAND_GUILDHALL_VALUE` 10 000; below: `Meeting Hall`; rule from DFHack's `caravan/pedestal.lua`), other locations their kind |
+| `room_description` | `getRoomDescription` as returned |
+| `location_id`, `location_kind`, `location_tier` | the location (`contents.building_ids` or the zone's `location_id`), its kind and `contents.location_tier` |
+| `room_thought`, `room_thought_severity`, `room_thought_year`, `room_thought_tick` | the owner's newest `BedroomQuality` / `DiningQuality` / `OfficeQuality` / `TombQuality` emotion (by zone type): DF's verdict on the room; -1 if none |
+| `room_collision` | `flags.room_collision` |
+
+**What DF 53.16 offers (observed 10.10.2026):** DF keeps no value for personal rooms. `building_civzonest` has no value field, `dfhack.buildings.getRoomDescription` returns `""` for every v50 zone and every bed/table (with and without the owner), and the zone vmethods `getPersonalValue(unit)` / `getArchValue()` return 0 (calling them changed no flags). So DF's evaluation of bedrooms is only visible as the owners' quality thoughts, and the exact value-to-tier thresholds of personal rooms cannot be read from DF. For locations DF stores the value, and the tier names follow the difficulty thresholds above (Trussroads: 10 temples from 990 to 68 369, three of them "Temple Complex").
+
+### work_details.json
+
+`rf_core::WorkDetail` per `plotinfo.labor_info.work_details` entry:
+
+| field | source |
+|---|---|
+| `name` | `work_detail.name` |
+| `labors` | `df.unit_labor` names with `allowed_labors[l]` set |
+| `assigned` | `assigned_units` (unit ids; the importer drops ids that are not exported units, e.g. the dead) |
+| `mode` | `df.work_detail_mode[flags.mode]`: `Default`, `EverybodyDoesThis`, `NobodyDoesThis`, `OnlySelectedDoesThis` |
+| `icon` | `icon` (DF's icon index as a string) |
+| `no_other_work` | always false: DF 53 has no such per-detail flag; the per-unit switch is the unit extra `only_do_assigned_jobs` |
+
+Extras: `index`, `no_modify`, `cannot_be_everybody`. Trussroads: the 12 details (Miners, Woodcutters, Hunters, Planters, Fisherdwarves, Plant gatherers, Stonecutters, Engravers, Haulers, Orderlies, Siege operators, Smelters).
+
+### kitchen.json
+
+`rf_core::KitchenSetting` per entry of `plotinfo.kitchen` (parallel vectors `item_types`, `item_subtypes`, `mat_types`, `mat_indices`, `exc_types`): `item_type` (DF name), `item_subtype` (subtype token), `mat` (material token), `no_cook` = `exc_types[i].Cook`, `no_brew` = `exc_types[i].Brew`. Extras `mat_type`, `mat_index`, `item_subtype_index`. The importer merges duplicate (type, subtype, material) entries. Trussroads: 269 entries, all "no cook" (84 seeds, 78 drinks, 34 globs (tallow), 32 plants, 27 plant growths, 14 misc liquids), none "no brew".
+
+### locations.json
+
+`rf_core::Location` per abstract building of `plotinfo.main.fortress_site.buildings`:
+
+| field | source |
+|---|---|
+| `id` | `abstract_building.id` (= the civzones' `location_id`) |
+| `kind` | `df.abstract_building_type`: `TEMPLE` -> `Temple`, `INN_TAVERN` -> `Tavern`, `LIBRARY` -> `Library`, `GUILDHALL` -> `Guildhall`, `HOSPITAL` -> `Hospital`, others in CamelCase |
+| `name` | English `translateName(name, true)` |
+| `deity` | historical figure of `deity_data.Deity` when `deity_type` = 0 (a deity), else -1 (extra `religion` = the religion entity when `deity_type` = 1) |
+| `profession` | guildhalls: `df.profession[contents.profession]` |
+| `zones` | `contents.building_ids` plus every civzone whose `location_id` is the location |
+| `occupations` | `abstract_building.occupations`: `kind` = `df.occupation_type` (`TAVERN_KEEPER`, `PERFORMER`, `SCHOLAR`, `DOCTOR`, `DIAGNOSTICIAN`, `SURGEON`, `BONE_DOCTOR`, ...), `unit` = `occupation.unit_id` (-1 vacant) |
+| `allow_visitors` | flag `VISITORS_ALLOWED` |
+
+Extras: `type`, `name_native`, `religion`, `deity_type`, `flags` (`df.abstract_building_flags`), `non_citizens_allowed`, `members_only`, `exists`, `location_value`, `location_tier`, `tier_name`, `supplies` (desired/count of goblets, instruments, paper, splints, thread, cloth, crutches, powder, buckets, soap, copies), `occupations_detail` (with occupation and histfig ids). Deities of temples are added to `hist_figs.json`. The importer drops zones that are not exported buildings and makes holders that are not exported units vacant.
+
+Trussroads (year 280): 23 locations: 10 temples (7 with a deity), 2 taverns ("The Confusing Pick" with 5 zones incl. 4 rented bedrooms, value 3 899), 3 libraries, 6 guildhalls (mason, farmer, miner, planter, craftsman, stoneworker), 2 hospitals; 15 occupations (tavern keeper, 2 performers, 2 scholars, 10 hospital posts).
+
+### crimes.json and punishments.json
+
+`rf_core::Crime` per `world.crimes.all` entry with `site` = the fort's site:
+
+| field | source |
+|---|---|
+| `id`, `kind` | `crime.id`, `df.crime_type[crime.mode]` (`ProductionOrderViolation`, `ExportViolation`, `JobOrderViolation`, `Murder`, `DisorderlyBehavior`, `BuildingDestruction`, `Vandalism`, `Theft`, ...) |
+| `criminal`, `victim` | unit ids (`crime.criminal`, `crime.victim`; often dead units, so not among the exported units) |
+| `site_tick`, `year` | `event_time`, `event_year` |
+| `convicted` | `crime.accused` if `flags.sentenced`, else -1 |
+| `punishment` | if sentenced: `Hammerstrikes N`, `Jail N` (`punishment.prison_time` as DF stores it; unit not confirmed), `Beating`, `Exile`, `Death`, comma-separated |
+| `witnesses` | distinct `witnesses[i].witness_id` (unit ids) |
+
+Extras: `accused`, `criminal_hf`, `victim_hf`, `criminal_name`, `victim_name`, `flags` (`sentenced`, `discovered`, `needs_trial`), `hammerstrikes`, `prison_time`, `punishment_flags`, `discovered_year`, `discovered_tick`, `entity`, `item_id`, `incident_id`.
+
+`punishments.json` (`rf_import::PunishmentInfo` via `load_extras`): `plotinfo.punishments`: `criminal`, `officer`, `beating`, `hammerstrikes`, `prison_counter` (remaining ticks), `time_to_assign`, `chain`, `victims`.
+
+Trussroads: 328 crimes since year 215 (205 disorderly behavior, 60 production order violations = mandates, all 60 sentenced, 36 vandalism, 26 building destruction, 1 murder); 1-2 punishments running.
+
+### haul_routes.json
+
+`rf_core::HaulRoute` per `plotinfo.hauling.routes` entry: `id`, `name`, `vehicles` (`vehicle_ids`, minecart item ids), and `stops`: `name`, `pos`, `take_from` / `give_to` (stockpile ids of `stop.stockpiles` by link mode `take` / `give`), `conditions` as text: `<Push|Ride|Guide> <North|South|East|West>[ after N ticks][ when >= P% full | when <= P% full][ [flags]]` from `stop.conditions` (`mode`, `direction`, `timeout`, `load_percent`, `flags`). Extras: `vehicle_stops`, per stop `id`, `cart_id`, `time_waiting`, `links` (`building_id` + mode flags). Trussroads has no routes, so this path is tested with synthetic data only. The importer drops stop links to missing buildings and missing vehicles.
+
+### creature_raws.json: animal products
+
+Caste extras (read by `rf_import::load_extras` as `AnimalProducts` for castes that have any): `milkable` (`{mat, frequency}` from `extracts.milkable_mat/matidx` and `misc.milkable`, or `null`), `grazer` (`misc.grazer` when the caste has `GRAZER`, else -1; DF fills `misc.grazer` for every caste), `shearable` (`shearable_tissue_layer`: `length` and the body part tokens), `egg_materials` (material tokens), `clutch_size`, `litter_size`, `egg_size`, `pet_value`. `MILKABLE`, `GRAZER` and `LAYS_EGGS` were already in the caste `flags`; castes with a shearable layer now also carry the Rustfort pseudo-flag `SHEARABLE`.
+
+### manifest.json: round-8 keys
+
+New `counts`: `work_details`, `kitchen`, `locations`, `occupations`, `crimes`, `punishments`, `haul_routes`, `stockpile_filters` (all filter strings), `pets` (units with an owner), `pastured`, `slaughter`, `pregnant`. The importer compares all but `punishments` with what it loaded (before its repairs). New phases in `max_slice_by_phase`: `pile_filters`, `work_details`, `kitchen`, `locations`, `crimes`, `haul_routes`.
