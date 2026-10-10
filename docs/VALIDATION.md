@@ -425,6 +425,146 @@ Notes:
 - Stress now rises over the window as in DF, also without scripted deaths: the r4 export holds
   the memories of the r3 siege deaths, which are relived (`social_recall`).
 
+## Round 10: crash hunting ([chaos10])
+
+Gordon now plays the fort, so a crash or a lost save is the worst bug. `examples/chaos.rs`
+(shared code in `examples/chaos_support/mod.rs`, short versions and regression tests in
+`tests/chaos.rs`) loads the real fort (or a synthetic world) and, for many seeds and game
+years, fires random but valid player actions through the public `Sim` API:
+
+- designations (dig, channel, stairs, ramps, chop, gather, remove) in boxes near citizens
+- buildings, furniture, farm plots, constructions, smoothing/engraving, removing buildings
+  (also the export's)
+- stockpiles with random categories, filters and links; zones, burrows, locations and
+  occupations
+- work orders, workshop jobs, labors, work details (also deleted the way the UI does), kitchen
+- squads: members, orders (station, kill, train), schedules, uniforms, ammo, barracks, patrols
+- levers, door flags, links, traffic, item flags (forbid, dump, melt...)
+- animals (slaughter, pasture, training), petitions, convictions
+- trade, caravans, toggles; and (unless `--peaceful`) sieges, raids, beasts and kills
+
+It also calls everything the UI reads (all reports, unit/building/tile queries). After every
+step it checks invariants: unique ids; units and on-ground items in bounds; no NaN; every item
+id a building, unit inventory, container, holder or squad points to exists; jobs in bounds.
+Every 100-150 steps it does a save/load round trip exactly like the app (bincode of `World`,
+`reindex`, `Sim::new`). A run is reproduced by its seed number (`--seeds 7`). `--slow N` lists
+steps below N ticks/s, and `CHAOS_TRACE=1` prints each phase, which locates a stack overflow
+that kills the process.
+
+```
+RUSTFORT_EXPORT=<abs path>/export/tileshtulon \
+cargo run -p rf-sim --release --example chaos -- --seeds 1-12 --years 2 --jobs 4 [--peaceful --no-invasions]
+```
+
+### What it found (all fixed at the root, one regression test each in `tests/chaos.rs`)
+
+| # | symptom | cause | fix |
+|---|---|---|---|
+| 1 | **game freezes to ~500 ticks/s** (from 50k) | a squad stationed on a wall/open-air tile: every soldier re-ran an A* over the whole fort every 60 ticks (14 M nodes per 1 200 ticks) | `military.rs` `station_tile`: go to the nearest standable tile (DF) |
+| 2 | **stack overflow, game crashes** | under a civilian alert, `construct_try` recursed once per planned construction without material inside the burrow: a few thousand frames | `construct.rs`: a loop with at most 64 skips per search |
+| 3 | **stack overflow, game crashes** | civilian alert on a burrow a dwarf cannot reach (raised bridge, cave-in, separate component): `burrow_think` -> `release` -> `decide` -> civilian -> `burrow_think` without end | `military.rs`/`combat.rs`: such a dwarf ignores the alert for 200 ticks |
+| 4 | arrows pointing at a quiver that no longer exists (116 cases in 24 runs) | invaders and merchants leaving the map destroyed their quiver/bags but not the contents | `invasion.rs`/`trade.rs`: contents leave too; `destroy_item` spills the contents of any destroyed container where it stood (DF) |
+| 5 | farm plots and units keep ids of items that no longer exist (every run; carried into saves) | seeds planted in DF's plots become crops (the item is destroyed), the plot's `Building::items` kept the id | `perf.rs` item compaction drops dead ids from buildings and inventories |
+| 6 | squads list units that do not exist; a unit in two squads | `assign_squad_member` accepted any id and did not take the unit out of its old position | `round3_api.rs`: unknown units/squads ignored, one position per unit, the replaced unit leaves |
+
+Also: `rf-app` now writes a **rescue save** (`saves/<fort>-crash-<time>.rfsave`) if the
+simulation thread ever panics, before the panic reaches the UI (`simthread.rs`). A stack
+overflow cannot be caught that way (the process ends), so fixes 2 and 3 matter most.
+
+### Runs (real fort r5, 87 citizens; each seed with save/load every 100-150 steps)
+
+| batch | seeds x years | mode | result |
+|---|---|---|---|
+| before the fixes | 24 x 2 | war | 0 panics; violations 4 and 6 (16 of 24 seeds); fort usually lost (sieges + a scrambled military) |
+| after fixes 1, 4-6 | 12 x 2 + 12 x 2 | war / peaceful | **stack overflow** in both (seed 204, and one of 108-112): fix 2 |
+| after fix 2 | 12 x 2 + 12 x 2 | war / peaceful | **stack overflow** again within minutes: fix 3 |
+| after fix 3 | 12 x 2 + 12 x 2 + 16 x 1 (bench world, 60 dwarves) | war / peaceful / synthetic | **0 panics, 0 overflows, 0 new invariant violations** (40 runs, about 23 000 actions, 150 save/load round trips) |
+
+Peaceful chaos seed 405 still lost 149 citizens to starvation (alert lifted after half a
+month); whether that is only player sabotage (kitchen exclusions, forbidden food, labors) or a
+food-access bug is not checked yet.
+
+Two years `rustfort bench --ticks 806400 --standdown` on r5 after all fixes: seeds 1 / 2 / 3
+end with 86 / 88 / 90 of 87 citizens at 64k / 70k / 51k ticks/s (machine shared with chaos and
+validation runs); seed 1 gives the same state hash `bec069419db20edf` with
+`RAYON_NUM_THREADS=1`.
+
+Still open: some chaos steps run at about 1 000 ticks/s with more than 1 000 open
+construction jobs but little pathing (job scans, not A*); worth a profile next round.
+
+Deaths in the chaos runs are mostly starvation in peaceful runs (random civilian alerts to
+small burrows without food, forbidden food, labors switched off: player sabotage, DF would
+starve them too; the harness now lifts an alert after half a month like a player) and sieges
+in war runs.
+
+## Round 10: validation re-run on v0.9 (+ chaos fixes)
+
+Same tool and flags as above; 6 seeds each, 3 sims side by side on a machine shared with four
+other builds. r4 -> r5: `--standing-orders --restore-schedules`; r5 -> r6 and r3 -> r4:
+`--standing-orders` (plain stand-down). Gamelog windows 11 816 811-12 027 766, 12 027 767-
+12 166 369 and 11 637 500-11 816 811. In range or close: **101 of 194** metrics (r4 -> r5),
+73 of 193 (r5 -> r6), 70 of 185 (r3 -> r4).
+
+| metric | r4 -> r5 DF | sim min / median / max | r5 -> r6 DF | sim | r3 -> r4 DF | sim |
+|---|---|---|---|---|---|---|
+| citizens at the end | 87 | 62 / 90 / 91 | 15 | 61 / 82 / 89 | 88 | 89 / 90 / 92 |
+| citizens lost | **14** | 2 / **15** / 43 (r9: 7) | **73** | 1 / 34 / 61 (r9: 26) | 2 | 3 / 5 / 15 |
+| migrants arrived | 11 | 2 / 15 / 20 | 1 | 3 / **27** / 34 | 0 | 2 / 5 / 13 |
+| sieges / ambush groups | 2 / 6 | 1 / 7 (median) | 1 / 4 | 1 / 7 | 0 / 4 | 1 / 4 |
+| invaders (all raids) | | 33 / 106 / 204 | >= 143 | 41 / 170 / 181 | | 31 / 45 / 57 |
+| hostiles on the map at the end | 16 | 22 / 35 / 52 | 147 | 29 / 80 / 116 | 6 | 24 / 28 / 34 |
+| caravans / moods / artifacts | 4 / 5 / 5 | 4 / 5 / 3 | 2 / 3 / 3 | 3 / 3 / 3 | 2 / 4 / 4 | 1 / 4 / 4 |
+| forgotten beasts | 0 | 0 / 0 / 0 | 0 | 0 | 0 | 0 |
+| stressed or worse at the end | 17 | 13 / 22 / 50 | 3 (of 15) | 6 / 42 / 56 | **6** | 25 / **39** / 41 |
+| mean stress | -25 720 | -12 734 / **-8 291** / 55 684 | -27 908 | 7 479 (median) | **-42 328** | -13 113 / **6 309** / 11 854 |
+| military XP per dwarf-year | 14 545 | 15 256 / 17 326 / 19 356 | 55 335 | 1 520 | 27 097 | 935 |
+| social XP per dwarf-year | 1 977 | 1 808 / 2 011 / 2 063 | 2 191 | 544 | 1 811 | 512 |
+| work XP per dwarf-year | 1 892 | 931 / 1 139 / 1 298 | 1 709 | 1 485 | 2 183 | 1 518 |
+| craft quality mean / masterworks | 2.6 / 25 | 1.7 / 10 | 2.4 / 30 | (2 crafts) | 2.9 / 46 | 1.7 / 3 |
+| all new goods: quality mean / masterworks | 1.3 / 76 | 2.5 / 219 | 1.4 | 2.4 | 1.9 | 2.7 |
+| "masterpiece" announcements | 85 | 0 | 50 | 0 | 96 | 0 |
+| animal births | 12 | 0 | 2 | 0 | 9 | 0 |
+| new drinks / meals | 1 096 / 263 | 716 / 217 | 1 946 / 348 | 284 / 89 | 709 / 440 | 442 / 61 |
+| drinks / meals in stock | 1 600 / 645 | 924 / 347 | 3 176 / 795 | 894 / 276 | 1 286 / 774 | 857 / 356 |
+| new furniture / crafts | 119 / 290 | 67 / 369 | 48 / 360 | 68 / 2 | 326 / 346 | 68 / 236 |
+| trees (change) | +65 | +74 | -20 | +40 | | |
+| item wealth | 3 215k | 3 683k (1.15) | 3 416k | 3 707k (1.08) | 3 028k | 3 393k (1.12) |
+| ticks/s per sim (3 side by side) | 80 | 22 429 | | 21 024 | | 30 441 |
+
+Reading it:
+
+- **War is now right on r4 -> r5** (15 lost, DF 14; 1 siege + 7 ambush groups) and half of DF on
+  the fall (34 of 73); migrants refill the dying fort (27, DF 1).
+- **Stress overshoots** since the round-9 grief/memory changes: r3 -> r4, a calm window in DF
+  (6 stressed), ends with 39 stressed and a positive mean stress; r4 -> r5 has 22 stressed
+  (DF 17) but a mean of -8k (DF -26k).
+- Military and social XP match on r4 -> r5 (restored training routine); with the plain
+  stand-down (r3 -> r4, r5 -> r6) the squads are off duty and get 3-5 % of DF's XP. DF's 55k
+  in r5 -> r6 is siege fighting.
+- Two event types are never reported by the sim: masterpiece announcements and animal births
+  (the sim makes masterworks and breeds animals, so this is likely the census or missing
+  announcements).
+- Drink/meal production falls behind once the fort is hit (r5 -> r6: 0.15 / 0.26 of DF).
+
+## Prioritized calibration fixes for round 11
+
+1. **Stress balance** (`social.rs`, the round-9 `social_recall` / grief replay): a calm DF year
+   (r3 -> r4) must stay calm (DF: 6 stressed, mean -42k). Check the strength and decay of
+   relived memories and grief, and the share of dwarves reaching "stressed" without deaths.
+2. **Migrants after losses** (`population.rs`): DF sent 1 migrant during the fall (r5 -> r6),
+   the sim 27; DF's migrant waves depend on the fort's state (wiki: no migrants while under
+   siege / after heavy losses; check the trigger conditions).
+3. **Announcements the census expects**: masterpiece ("has created a masterpiece") and animal
+   births; verify the sim's breeding actually produces young on r4 (12 births in DF).
+4. **Food and drink under stress**: production collapses during sieges (0.15-0.26 of DF);
+   civilians under alert should keep brewing/cooking inside the burrow, and standing orders
+   should react to the stock falling.
+5. **Craft quality**: crafts 1.7 (DF 2.4-2.9), while all other new goods are too good (2.5 vs
+   1.3, meals); job assignment should favour skilled crafters, meal quality is too high.
+6. **Siege lethality on the fall**: 34 of 73; invaders still do not dig, climb or ride their
+   mounts.
+7. **Furniture and digging** remain player-driven (Gordon's orders); not a sim error.
+
 ## Limitations
 
 - One real history and a few seeds. Sieges dominate the deaths, so seeds vary a lot.
