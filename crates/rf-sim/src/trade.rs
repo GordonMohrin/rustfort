@@ -66,6 +66,8 @@ pub(crate) struct Caravan {
 pub(crate) struct DepotMove {
     pub item: i32,
     pub claimed: u32,
+    /// When the move was ordered (unclaimed moves are given up after a week).
+    pub since: u64,
 }
 
 /// One caravan visit (for the UI, the bench and tests).
@@ -103,6 +105,9 @@ pub(crate) struct Trade {
     pub broker_called: bool,
     pub rep: TradeReport,
     pub off: bool,
+    /// Cached depot tile for haulers (NONE = no depot) and whether anyone has HAUL_TRADE.
+    pub dest: u32,
+    pub trade_labor: bool,
 }
 
 /// Base value of an item type (wiki "Item value"; approximate).
@@ -383,6 +388,8 @@ impl Sim {
             return out;
         }
         // Execute: fort goods go to the merchants, bought goods become the fort's.
+        let sold: Vec<(String, String)> = offer.iter().filter_map(|id| self.world.item(*id).map(|i| (i.desc.clone(), i.subtype.clone()))).collect();
+        self.check_export_bans(&sold, now);
         for &id in offer {
             self.destroy_with_contents(id);
             if let Some(b) = self.world.buildings.iter_mut().find(|b| b.id == depot) {
@@ -460,7 +467,8 @@ impl Sim {
             if self.trade.pending.iter().any(|m| m.item == id) {
                 continue;
             }
-            self.trade.pending.push(DepotMove { item: id, claimed: NONE });
+            self.trade.pending.push(DepotMove { item: id, claimed: NONE, since: self.ticks });
+            self.trade_refresh_haul_cache();
         }
     }
 
@@ -470,13 +478,14 @@ impl Sim {
         if self.trade.pending.is_empty() || self.ai[s].labors & labor::ANY_HAUL == 0 {
             return false;
         }
-        let u = &self.world.units[self.ai[s].uidx];
-        if !u.has_labor("HAUL_TRADE") && u.labors.iter().any(|l| l.starts_with("HAUL_")) && self.world.citizens().any(|c| c.has_labor("HAUL_TRADE")) {
+        // Trade-goods hauling labor if anybody has it, else any hauler.
+        if self.trade.trade_labor && !self.world.units[self.ai[s].uidx].has_labor("HAUL_TRADE") {
             return false;
         }
-        let Some(depot) = self.trade.caravan.as_ref().map(|c| c.depot).or_else(|| self.first_depot()) else { return false };
-        let tiles = self.depot_tiles(depot);
-        let Some(&dest) = tiles.first() else { return false };
+        let dest = self.trade.dest;
+        if dest == NONE {
+            return false;
+        }
         let c = self.nav.comp_near(self.ai[s].pos as usize);
         if c == 0 || self.nav.comp_near(dest as usize) != c {
             return false;
@@ -506,6 +515,13 @@ impl Sim {
             return true;
         }
         false
+    }
+
+    /// Depot destination tile and "does anybody have the trade-hauling labor" (cached).
+    fn trade_refresh_haul_cache(&mut self) {
+        let depot = self.trade.caravan.as_ref().map(|c| c.depot).or_else(|| self.first_depot());
+        self.trade.dest = depot.and_then(|d| self.depot_tiles(d).first().copied()).unwrap_or(NONE);
+        self.trade.trade_labor = self.world.citizens().any(|c| c.has_labor("HAUL_TRADE"));
     }
 
     pub(crate) fn trade_stored(&mut self, id: i32, tile: u32) {
@@ -556,7 +572,7 @@ impl Sim {
 
     /// Season start: schedule this season's caravan.
     pub(crate) fn trade_season(&mut self, now: u64) {
-        if self.trade.off || self.trade.caravan.is_some() {
+        if self.trade.off || self.trade.caravan.is_some() || !self.has_civilization() {
             return;
         }
         let season = self.world.calendar.month() / 3;
@@ -633,10 +649,17 @@ impl Sim {
                 self.spawn_caravan(e);
             }
         }
-        // Haulers that gave up on a depot move.
-        for k in 0..self.trade.pending.len() {
+        // Haulers that gave up on a depot move; moves nobody could take for a week are dropped.
+        let mut k = 0;
+        while k < self.trade.pending.len() {
             let m = &self.trade.pending[k];
             if m.claimed == NONE {
+                let gone = self.item_idx.get(&m.item).map(|&i| self.imeta[i as usize].dead).unwrap_or(true);
+                if gone || now >= m.since + 7 * DAY {
+                    self.trade.pending.remove(k);
+                    continue;
+                }
+                k += 1;
                 continue;
             }
             let s = m.claimed as usize;
@@ -644,6 +667,10 @@ impl Sim {
             if !busy {
                 self.trade.pending[k].claimed = NONE;
             }
+            k += 1;
+        }
+        if !self.trade.pending.is_empty() && now % DAY < crate::population::POP_PERIOD {
+            self.trade_refresh_haul_cache();
         }
         let Some(c) = self.trade.caravan.as_ref() else { return };
         let (leaving, warned, leave_at, unloaded, arrived) = (c.leaving, c.warned, c.leave_at, c.unloaded, c.arrived);
@@ -1074,6 +1101,7 @@ mod tests {
 
     fn world_with_depot() -> World {
         let mut w = World::synthetic(48, 48, 20);
+        w.meta.source = "export:test".into();
         let c = Pos::new(32, 32, SZ);
         w.buildings.push(Building { id: 900, kind: "TradeDepot".into(), x1: 30, y1: 30, x2: 34, y2: 34, z: SZ, center: c, built: true, owner: -1, ..Default::default() });
         w.units[0].skills.push(rf_core::Skill { id: "APPRAISAL".into(), rating: 5, xp: 0 });

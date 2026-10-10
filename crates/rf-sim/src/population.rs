@@ -149,6 +149,8 @@ pub(crate) struct Pop {
     pub rep: PopulationReport,
     /// Disable migrants/births (tests, comparisons).
     pub off: bool,
+    /// The whole population/trade simulation off (speed comparisons).
+    pub disabled: bool,
 }
 
 /// One vanilla DWARF attribute range: 7 points (min .. median .. max).
@@ -258,6 +260,17 @@ impl Sim {
     /// Switch migrants and pregnancies off (or on again). Default on, like DF.
     pub fn set_population_growth(&mut self, on: bool) {
         self.pop.off = !on;
+    }
+
+    /// Switch the whole round-4 population/trade/noble simulation off (speed comparisons).
+    pub fn set_society_enabled(&mut self, on: bool) {
+        self.pop.disabled = !on;
+    }
+
+    /// Migrants and caravans need the fort's civilization: an exported `Own` entity, or a
+    /// world imported from DF (synthetic test worlds have neither).
+    pub(crate) fn has_civilization(&self) -> bool {
+        self.world.entities.iter().any(|e| e.relation == "Own") || self.world.meta.source.starts_with("export")
     }
 
     pub fn population_report(&self) -> PopulationReport {
@@ -479,6 +492,9 @@ impl Sim {
 
     /// [hook] Population pass, every `POP_PERIOD` ticks.
     pub(crate) fn population_tick(&mut self, now: u64) {
+        if self.pop.disabled {
+            return;
+        }
         if !self.pop.ready {
             self.pop_init(now);
         }
@@ -710,7 +726,7 @@ impl Sim {
     fn pop_season(&mut self, now: u64) {
         self.trade_season(now);
         self.mandates_season(now);
-        if self.pop.off || self.pop.wave_due.is_some() {
+        if self.pop.off || self.pop.wave_due.is_some() || !self.has_civilization() {
             return;
         }
         let (cap, strict, _, _) = self.population_caps();
@@ -960,6 +976,9 @@ impl Sim {
 
     /// [hook] Decide: burial and depot hauling, broker duty. True if the unit got a task.
     pub(crate) fn society_decide(&mut self, s: usize, now: u64) -> bool {
+        if self.pop.bury.is_empty() && self.trade.pending.is_empty() && !self.trade.broker_called {
+            return false;
+        }
         if self.trade.broker_called && self.trade_broker_decide(s, now) {
             return true;
         }
@@ -1167,8 +1186,10 @@ impl Sim {
         let mut k = 0;
         while k < self.pop.mandates.len() {
             let m = &self.pop.mandates[k];
-            let done = !m.kind.is_empty() && self.count_kind(&m.kind) - m.baseline >= m.count;
+            let ban = m.kind.starts_with("BAN:");
             let late = now >= m.deadline;
+            // An export ban that ran out without being broken counts as kept.
+            let done = if ban { late } else { !m.kind.is_empty() && self.count_kind(&m.kind) - m.baseline >= m.count };
             if !done && !late {
                 k += 1;
                 continue;
@@ -1189,6 +1210,35 @@ impl Sim {
                 self.announce(now, format!("The {} is upset: the mandate \"{}\" was not fulfilled.", m.noble.to_ascii_lowercase().replace('_', " "), m.text), None, AnnouncementKind::Warning);
             }
         }
+    }
+
+    /// Trading away goods under an export ban angers the noble (punishment not simulated).
+    /// Returns the bans broken by offering items with these descriptions/subtypes.
+    pub(crate) fn check_export_bans(&mut self, items: &[(String, String)], now: u64) -> usize {
+        let mut broken = 0;
+        let mut k = 0;
+        while k < self.pop.mandates.len() {
+            let m = &self.pop.mandates[k];
+            let Some(word) = m.kind.strip_prefix("BAN:") else {
+                k += 1;
+                continue;
+            };
+            let w = word.to_ascii_lowercase();
+            let hit = items.iter().any(|(desc, sub)| desc.to_ascii_lowercase().contains(&w) || sub.to_ascii_lowercase().contains(&w));
+            if !hit {
+                k += 1;
+                continue;
+            }
+            let m = self.pop.mandates.remove(k);
+            broken += 1;
+            self.pop.rep.mandates_missed += 1;
+            let holder = self.world.nobles.iter().find(|n| n.token == m.noble).map(|n| n.holder).unwrap_or(-1);
+            if let Some(s) = self.unit_slot.get(&holder).copied().filter(|&s| self.ai[s].kind == Kind::Worker) {
+                self.feel(s, "MandateIgnored", Class::Neg, 200, -1, 0, now);
+            }
+            self.announce(now, format!("The {} is upset: the export ban \"{}\" was broken.", m.noble.to_ascii_lowercase().replace('_', " "), m.text), None, AnnouncementKind::Warning);
+        }
+        broken
     }
 
     fn nobles_yearly(&mut self, now: u64) {
@@ -1294,9 +1344,15 @@ impl Sim {
     }
 }
 
-/// "Make 3 goblets (iron)" -> (3, "GOBLET"); unknown -> (0, "").
+/// "Make 3 goblets (iron)" -> (3, "GOBLET"); "Ban export of spears" -> (0, "BAN:spear");
+/// unknown -> (0, "").
 fn parse_mandate(text: &str) -> (i32, String) {
     let t = text.to_ascii_lowercase();
+    if let Some(rest) = t.strip_prefix("ban export of ") {
+        let w = rest.split(" (").next().unwrap_or(rest).trim();
+        let stem = w.strip_suffix("es").filter(|s| s.ends_with("ss") || s.ends_with("sh") || s.ends_with("ch")).or_else(|| w.strip_suffix('s')).unwrap_or(w);
+        return (0, format!("BAN:{stem}"));
+    }
     let mut words = t.split_whitespace();
     if words.next() != Some("make") {
         return (0, String::new());
@@ -1382,7 +1438,13 @@ pub(crate) mod tests {
 
     #[test]
     fn no_migrant_waves_at_the_population_cap() {
-        let mut sim = Sim::new(World::synthetic(48, 48, 20), 4);
+        let mut w = World::synthetic(48, 48, 20);
+        let mut sim = Sim::new(w.clone(), 4);
+        sim.set_population_cap(60);
+        sim.pop_season(7);
+        assert!(sim.pop.wave_due.is_none(), "synthetic world: no civilization, no migrants");
+        w.meta.source = "export:test".into();
+        let mut sim = Sim::new(w, 4);
         sim.set_population_cap(7);
         for k in 0..12u64 {
             sim.pop_season(k * 3 * MONTH);
