@@ -1662,6 +1662,9 @@ impl Sim {
         if !restricted && self.society_decide(s, now) {
             return; // [society] burial, depot hauling, broker
         }
+        if !restricted && self.society2_idle(s, now) {
+            return; // [society2] occupations: tavern keeper, performer, scholar work at their location
+        }
         if self.construct_try(s, now) {
             return; // [construct] constructions, detailing, dumping
         }
@@ -1688,9 +1691,6 @@ impl Sim {
             ai.seen_haul = eh;
             ai.seen_prod = ep;
             ai.next_search = now + RESEARCH_TICKS + (s as u64 % 64);
-        }
-        if self.society2_idle(s, now) {
-            return; // [society2] occupations: tavern keeper, performer, scholar
         }
         self.wander(s, now, &mut r);
     }

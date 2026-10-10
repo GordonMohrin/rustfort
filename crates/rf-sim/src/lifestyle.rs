@@ -5,8 +5,8 @@
 //! - **Wear** (w:Wear, w:Clothing): clothing worn by a citizen (armor, pants, shoes, gloves,
 //!   helms of cloth, leather, bone ...; metal does not wear) ages: worn (x), threadbare (X),
 //!   tattered (XX), then it falls apart ("RottedClothing"). Threadbare clothing gives
-//!   "OldClothing", tattered "TatteredClothing". A dwarf in threadbare or tattered clothing
-//!   fetches a free replacement of the same kind (same item subtype) from a stockpile, puts it on
+//!   "OldClothing", tattered "TatteredClothing". A dwarf whose clothing is worn fetches a new
+//!   (unworn) replacement of the same kind (same item subtype) from a stockpile, puts it on
 //!   ("WearItem" for a quality item) and drops the old piece.
 //! - **Meal quality** (w:Kitchen, w:Quality): each prepared meal gets a quality from the cook's
 //!   (focus-adjusted) Cooking skill; its value is the ingredient values times DF's quality
@@ -17,13 +17,18 @@
 //! - **Miasma** (w:Miasma, w:Rot): rotten corpses, body parts and food lying loose indoors give
 //!   off miasma, which spreads orthogonally over open floor; a dwarf walking through it thinks
 //!   "Miasma" ("after retching on a miasma"). Nothing outdoors (under the sky) makes miasma.
-//! - **Rain** (w:Weather): with weather on, citizens outdoors in the rain think "Rain".
+//! - **Rain** (w:Weather): with weather on it rains on some days; with `Sim::set_rain_thoughts`
+//!   citizens outdoors in the rain think "Rain" (off by default: none of the 17 281 thoughts in
+//!   Gordon's export is a Rain thought although his world has weather on).
 //!
 //! # Estimates (not on the wiki)
 //! - One wear level per 336 days of wearing; clothing thoughts at most once a month; dwarves
-//!   look for replacements at threadbare (X) and try again weekly when none is free.
+//!   look for replacements once an item is worn (x) and try again weekly when none is free.
+//!   Calibrated on Gordon's fort: 91 % of the worn clothing is unworn, 7 % worn, 2 % threadbare
+//!   or tattered, no OldClothing/TatteredClothing thoughts but about 25 WearItem a month.
 //! - Corpses of creatures that die in the sim rot after 14 days and stop giving off miasma 56
-//!   days later (skeletal); miasma reaches 3 tiles from its source; one Miasma thought per day.
+//!   days later (skeletal); miasma reaches 2 tiles from its source; at most one Miasma thought
+//!   per dwarf in 2 days (the export has 30-60 Miasma thoughts a month).
 //! - Rain on 1 day in 5 outside winter, for 2-8 hours.
 
 use crate::path::Goals;
@@ -40,7 +45,7 @@ pub const WEAR_DAYS: u16 = 336;
 pub const CORPSE_ROT_DAYS: u16 = 14;
 pub const CORPSE_MIASMA_DAYS: u16 = 56;
 /// Miasma reach in tiles (estimate).
-pub const MIASMA_RANGE: u32 = 3;
+pub const MIASMA_RANGE: u32 = 2;
 
 /// Lifestyle statistics for reports and the benchmark.
 #[derive(Clone, Debug, Default)]
@@ -82,6 +87,8 @@ pub(crate) struct Life {
     rain_start: u64,
     rain_until: u64,
     rain_seen: Vec<u64>,
+    /// "Rain" thoughts on (`Sim::set_rain_thoughts`; off by default, see module docs).
+    pub rain_thoughts: bool,
     /// Kitchen exclusions per material: bits 0-3 no-cook for PLANT / PLANT_GROWTH / other /
     /// any type, bits 4-7 no-brew.
     kitchen: Vec<u8>,
@@ -220,11 +227,11 @@ impl Sim {
             }
             let t = self.ai[s].pos;
             if check_miasma && self.life.miasma.contains(&t) && now >= self.life.next_miasma[s] {
-                self.life.next_miasma[s] = now + DAY;
+                self.life.next_miasma[s] = now + 2 * DAY;
                 self.life.rep.miasma_events += 1;
                 self.feel(s, "Miasma", Class::NegMild, 80, -1, 0, now);
             }
-            if raining && now >= self.life.rain_start && self.world.tiles[t as usize].flags & tile_flags::OUTSIDE != 0 && self.life.rain_seen[s] < self.life.rain_start {
+            if raining && self.life.rain_thoughts && now >= self.life.rain_start && self.world.tiles[t as usize].flags & tile_flags::OUTSIDE != 0 && self.life.rain_seen[s] < self.life.rain_start {
                 self.life.rain_seen[s] = now;
                 self.life.rep.rain_thoughts += 1;
                 self.feel(s, "Rain", Class::NegMild, 50, -1, 0, now);
@@ -278,7 +285,7 @@ impl Sim {
     fn refresh_spares(&mut self) {
         let mut v = Vec::new();
         for (i, it) in self.world.items.iter().enumerate() {
-            if !is_clothing(&it.kind) || it.wear >= 2 || it.holder >= 0 || self.imeta[i].dead {
+            if !is_clothing(&it.kind) || it.wear >= 1 || it.holder >= 0 || self.imeta[i].dead {
                 continue;
             }
             let f = &it.flags;
@@ -332,7 +339,7 @@ impl Sim {
         let worn = self.world.units[uidx].inventory.iter().copied().find(|id| {
             self.item_idx.get(id).map(|&i| {
                 let it = &self.world.items[i as usize];
-                is_clothing(&it.kind) && it.wear >= 2
+                is_clothing(&it.kind) && it.wear >= 1
             })
             .unwrap_or(false)
         });
@@ -504,6 +511,12 @@ impl Sim {
         }
     }
 
+    /// "Rain" thoughts for citizens caught outdoors in the rain (default off: Gordon's fort
+    /// shows none in 17 000 exported thoughts although weather is on).
+    pub fn set_rain_thoughts(&mut self, on: bool) {
+        self.life.rain_thoughts = on;
+    }
+
     pub(crate) fn lifestyle_report_impl(&self) -> LifestyleReport {
         self.life.rep.clone()
     }
@@ -517,3 +530,6 @@ fn desc_skeletal(desc: &str) -> bool {
     let d = desc.to_ascii_lowercase();
     d.contains("skeleton") || d.contains("bone") || d.contains("skull")
 }
+
+#[cfg(test)]
+mod tests;

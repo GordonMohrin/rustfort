@@ -516,3 +516,6 @@ impl Sim {
         self.unit_slot.get(&unit_id).map(|&s| self.justice.prisoners.iter().any(|p| p.slot == s as u32)).unwrap_or(false)
     }
 }
+
+#[cfg(test)]
+mod tests;

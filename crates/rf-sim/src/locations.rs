@@ -208,9 +208,15 @@ pub(crate) struct Locs {
     pub rep: LocationReport,
 }
 
-/// First word of a name, lowercased (deity matching).
+/// First word of a name, lowercased, ASCII letters only (deity matching). Zone names typed in
+/// DF arrive with their non-ASCII letters mangled (CP437 view of UTF-8 bytes), so only the
+/// ASCII letters are compared: "Rîsen" and its mangled form both give "rsen".
 fn first_word(s: &str) -> String {
-    s.split_whitespace().next().unwrap_or("").to_lowercase()
+    ascii_key(s.split_whitespace().next().unwrap_or(""))
+}
+
+fn ascii_key(w: &str) -> String {
+    w.chars().filter(|c| c.is_ascii_alphanumeric()).map(|c| c.to_ascii_lowercase()).collect()
 }
 
 impl Sim {
@@ -357,7 +363,7 @@ impl Sim {
             } else {
                 continue;
             };
-            let words: Vec<String> = n.split_whitespace().map(|w| w.to_string()).collect();
+            let words: Vec<String> = n.split_whitespace().map(ascii_key).collect();
             let deity = if kind == "Temple" {
                 deities.iter().find(|(_, w)| !w.is_empty() && words.iter().any(|x| x == w)).map(|d| d.0).unwrap_or(-1)
             } else {
@@ -1113,3 +1119,6 @@ impl Sim {
         mix(l.replacements ^ l.miasma_events << 16 ^ l.wear_steps << 32);
     }
 }
+
+#[cfg(test)]
+pub(crate) mod tests;
