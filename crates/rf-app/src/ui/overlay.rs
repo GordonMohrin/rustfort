@@ -76,7 +76,7 @@ fn map_tooltip(g: &mut Game) {
     let w = &g.sim.world;
     let mut lines: Vec<(String, Color)> = Vec::new();
     for u in w.units.iter().filter(|u| u.pos == p && !u.flags.dead).take(3) {
-        let hostile = g.hostiles.binary_search(&u.id).is_ok();
+        let hostile = g.hostiles.binary_search(&u.id).is_ok() || (u.flags.hostile && !g.sim.unit_hidden(u.id)); // [feel-ui] also unseen-but-revealed ones
         let tag = if hostile { if u.flags.caged { " (hostile, caged)" } else { " (hostile)" } } else if u.flags.caged { " (caged)" } else { "" };
         lines.push((format!("{}, {}{tag}", unit_name(u), unit_profession(u)), if hostile { col::TEXT_BAD } else { col::TEXT_HI }));
     }

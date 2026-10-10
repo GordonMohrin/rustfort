@@ -20,6 +20,7 @@ pub mod overlay;
 pub mod panels;
 pub mod places; // [app8]
 pub mod psyche;
+pub mod rclick; // [feel-ui] right-click backs out like DF Steam
 pub mod reports;
 pub mod round4; // [round 4]
 pub mod round5; // [round 5]

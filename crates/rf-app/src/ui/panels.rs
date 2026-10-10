@@ -66,6 +66,71 @@ fn close_button(g: &mut Game, r: Rect) -> bool {
     text_button(&mut g.ui, &g.font, b, "x", BtnState::Normal)
 }
 
+/// [feel-ui] Screen size of the sheet's portrait: DF's 96 px tiles at a whole-number scale
+/// where possible (crisp pixel art), never below 72 px.
+pub fn portrait_px(s: f32) -> f32 {
+    let k = if s >= 1.0 { s.floor() } else { s };
+    (96.0 * k).max(72.0)
+}
+
+/// [feel-ui] The unit's portrait in `pr`: DF's portrait background, the layered portrait
+/// (`Gfx::portrait`), the frame. Creatures without portrait graphics get their (big) map
+/// sprite, centered, and without any sprite the glyph.
+pub fn draw_portrait(g: &mut Game, u: &Unit, pr: Rect) {
+    let mut v: Vec<rf_gfx::Sprite> = Vec::new();
+    let have = g.gfx.portrait(&g.sim.world, u, &mut v);
+    match g.gfx.named("DEFAULT_PORTRAIT_BACKGROUND") {
+        Some(b) => {
+            g.rend.draw_ui_sprite(&g.gfx, &b, pr);
+        }
+        None => draw_rectangle(pr.x, pr.y, pr.w, pr.h, Color::from_rgba(52, 40, 58, 255)),
+    }
+    let mut drawn = false;
+    if have {
+        for sp in &v {
+            drawn |= g.rend.draw_ui_sprite(&g.gfx, sp, pr);
+        }
+    }
+    if !drawn {
+        v.clear();
+        g.gfx.unit(&g.sim.world, u, &mut v);
+        // Bounding box in map tiles (large sprites are bottom-aligned and centered).
+        let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+        for sp in &v {
+            let sx = sp.dx as f32 - (sp.tw as f32 - 1.0) / 2.0;
+            let sy = sp.dy as f32;
+            x0 = x0.min(sx);
+            y0 = y0.min(sy);
+            x1 = x1.max(sx + sp.tw as f32);
+            y1 = y1.max(sy + sp.th as f32);
+        }
+        if !v.is_empty() {
+            let span = (x1 - x0).max(y1 - y0).max(1.0);
+            // A 1-tile creature fills 3/4 of the box at a whole multiple of 32 px.
+            let fit = pr.w * 0.8 / span;
+            let tp = if fit >= 32.0 { (fit / 32.0).floor() * 32.0 } else { fit };
+            let ox = pr.x + (pr.w - (x1 - x0) * tp) / 2.0 - x0 * tp;
+            let oy = pr.y + (pr.h - (y1 - y0) * tp) / 2.0 - y0 * tp;
+            for sp in &v {
+                let sx = sp.dx as f32 - (sp.tw as f32 - 1.0) / 2.0;
+                let rr = Rect::new(ox + sx * tp, oy + sp.dy as f32 * tp, sp.tw as f32 * tp, sp.th as f32 * tp);
+                drawn |= g.rend.draw_ui_sprite(&g.gfx, sp, rr);
+            }
+        }
+    }
+    if !drawn {
+        let code = if u.race == "DWARF" { 1 } else { u.race.bytes().next().unwrap_or(b'?') };
+        let gw = pr.w * 0.6;
+        g.font.glyph(code, pr.x + (pr.w - gw) / 2.0, pr.y + pr.h * 0.1, gw, pr.h * 0.8, col::TEXT_HI);
+    }
+    match g.gfx.named("DEFAULT_PORTRAIT_FRAME") {
+        Some(f) => {
+            g.rend.draw_ui_sprite(&g.gfx, &f, pr);
+        }
+        None => draw_rectangle_lines(pr.x, pr.y, pr.w, pr.h, 1.0, col::BORDER),
+    }
+}
+
 fn unit_sheet(g: &mut Game, id: i32, r: Rect) {
     let s = g.ui.scale;
     let lh = g.ui.line_h();
@@ -78,19 +143,23 @@ fn unit_sheet(g: &mut Game, id: i32, r: Rect) {
     let status = g.sim.unit_status(id);
     let Some(u) = g.sim.world.unit(id).cloned() else { return };
     let (x, mut y) = (r.x + pad, r.y + pad);
-    // Portrait box (glyph) + name like the Steam sheet header.
-    let pr = Rect::new(x, y, 36.0 * s, 36.0 * s);
-    draw_rectangle(pr.x, pr.y, pr.w, pr.h, Color::from_rgba(30, 28, 26, 255));
-    draw_rectangle_lines(pr.x, pr.y, pr.w, pr.h, 1.0, col::BORDER);
-    let code = if u.race == "DWARF" { 1 } else { u.race.bytes().next().unwrap_or(b'?') };
-    g.font.glyph(code, pr.x + 6.0 * s, pr.y + 2.0 * s, 24.0 * s, 32.0 * s, col::TEXT_HI);
-    let tx = x + pr.w + 8.0 * s;
+    // [feel-ui] DF Premium portrait + name like the Steam sheet header.
+    let ps = portrait_px(s);
+    let pr = Rect::new(x, y, ps, ps);
+    draw_portrait(g, &u, pr);
+    let tx = x + pr.w + 10.0 * s;
     let tmax = ((r.x + r.w - pad - tx) / (8.0 * s)) as usize;
-    g.font.draw(&clip(&unit_name(&u), tmax.saturating_sub(3)), tx, y, s, col::TEXT_HI);
-    g.font.draw(&clip(&unit_profession(&u), tmax), tx, y + lh, s, col::TEXT);
+    let ty = y + 4.0 * s;
+    g.font.draw(&clip(&unit_name(&u), tmax.saturating_sub(3)), tx, ty, s, col::TEXT_HI);
+    g.font.draw(&clip(&unit_profession(&u), tmax), tx, ty + lh, s, col::TEXT);
     let act = if status.activity.is_empty() { "No Job".to_string() } else { status.activity.clone() };
-    g.font.draw(&clip(&act, tmax), tx, y + 2.0 * lh, s, col::TEXT_CYAN);
-    y += 3.0 * lh + 6.0 * s;
+    g.font.draw(&clip(&act, tmax), tx, ty + 2.0 * lh, s, col::TEXT_CYAN);
+    // The stress face and level under the job, like the Steam header.
+    let lvl = g.sim.stress_level(u.id);
+    let sc = stress_color(lvl);
+    g.font.draw(stress_face(lvl), tx, ty + 3.0 * lh, s, sc);
+    g.font.draw(&clip(lvl.label(), tmax.saturating_sub(2)), tx + 16.0 * s, ty + 3.0 * lh, s, sc);
+    y += pr.h.max(4.0 * lh + 4.0 * s) + 8.0 * s;
     // Tabs in two rows like the Steam sheet. Indices: 0 Overview, 1 Skills, 2 Labor, 3 Items,
     // 4 Thoughts, 5 Needs, 6 Personality, 7 Health, 8 Relations, 9 Mood (`--ui` names them).
     const TAB_ROWS: [&[(usize, &str)]; 2] = [

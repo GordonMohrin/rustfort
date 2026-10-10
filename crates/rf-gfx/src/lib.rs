@@ -174,6 +174,8 @@ pub struct Gfx {
     item_cache: HashMap<String, [Option<Sprite>; 7]>,
     /// Unit id -> evaluated look (layers), filled by `prepare`.
     looks: HashMap<i32, creature::UnitLook>,
+    /// [feel-ui] Unit id -> (look signature, portrait sprites), filled by [`Gfx::portrait`].
+    portraits: HashMap<i32, (u64, Vec<Sprite>)>,
     pub df_dir: PathBuf,
     pub(crate) plants_t: plants::PlantTables,
     /// Per world tiletype id: tree classification (filled by `prepare`).
@@ -789,6 +791,41 @@ impl Gfx {
         creature::unit(self, world, u, out)
     }
 
+    /// [feel-ui] The unit sheet portrait (DF Premium `[LAYER_SET:PORTRAIT]`): layered sprites,
+    /// back to front, each one 96x96 tile (`pages[s.page].tile_w`), all drawn into the same
+    /// square. Dwarves are composed from body, face (eyes, nose, ears by appearance
+    /// modifiers), hair, beard, eyebrows and their worn clothing/armor in its material colors;
+    /// animals and other creatures with a portrait get their one picture. Returns false (and
+    /// pushes nothing) for creatures without portrait graphics: draw [`Gfx::unit`] instead.
+    /// Cached per unit until its race, caste, profession, age class or inventory change; new
+    /// palette variants are created on the way (so the renderer uploads them on first use).
+    pub fn portrait(&mut self, world: &World, u: &Unit, out: &mut Vec<Sprite>) -> bool {
+        let sig = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            (&u.race, &u.caste, &u.profession, u.age > 120.0, &u.inventory).hash(&mut h);
+            h.finish()
+        };
+        if let Some((s, v)) = self.portraits.get(&u.id) {
+            if *s == sig {
+                out.extend_from_slice(v);
+                return !v.is_empty();
+            }
+        }
+        let layers = creature::evaluate_portrait(self, world, u).unwrap_or_default();
+        let mut v = Vec::with_capacity(layers.len());
+        for (s, pal) in layers {
+            v.push(match pal {
+                Some((pl, row)) => Sprite { page: self.make_variant(s.page, pl, row), ..s },
+                None => s,
+            });
+        }
+        out.extend_from_slice(&v);
+        let ok = !v.is_empty();
+        self.portraits.insert(u.id, (sig, v));
+        ok
+    }
+
     pub fn item(&self, world: &World, it: &Item, out: &mut Vec<Sprite>) {
         terrain::item(self, world, it, out)
     }
@@ -1030,6 +1067,49 @@ mod tests {
         assert_eq!(g.building_size("TradeDepot", ""), (5, 5));
         assert_eq!(g.building_size("Workshop", "Quern"), (1, 1));
         assert!(!g.building_ghost("Bed", "").is_empty());
+    }
+
+    /// [feel-ui] Unit sheet portraits: dwarves are composed from many 96 px layers (body, face,
+    /// hair, clothing; males with a beard), a caste/sex changes the look, animals with a
+    /// portrait get one picture, creatures without one get nothing (the app falls back).
+    #[test]
+    fn portraits_like_df() {
+        let dir = df_dir();
+        if !dir.join("data").join("vanilla").exists() {
+            eprintln!("DF install not found, skipping");
+            return;
+        }
+        let mut g = Gfx::load(&dir).expect("load");
+        let w = World::synthetic(32, 32, 12);
+        g.prepare(&w);
+        let mut dwarf = w.units.iter().find(|u| u.race == "DWARF").unwrap().clone();
+        let mut out = Vec::new();
+        dwarf.caste = "MALE".into();
+        assert!(g.portrait(&w, &dwarf, &mut out), "dwarf portrait");
+        assert!(out.len() >= 8, "layered portrait, got {} layers", out.len());
+        assert!(out.iter().all(|s| g.pages[s.page as usize].tile_w == 96), "portrait pages are 96 px");
+        let hair_page = g.page_by_token("PORTRAIT_DWARF_HAIR").unwrap();
+        let male = out.clone();
+        // Cached: the same answer again.
+        let mut again = Vec::new();
+        g.portrait(&w, &dwarf, &mut again);
+        assert_eq!(again, male);
+        dwarf.caste = "FEMALE".into();
+        dwarf.id += 1_000_000; // a different (uncached) unit
+        out.clear();
+        assert!(g.portrait(&w, &dwarf, &mut out));
+        assert_ne!(out, male, "female portrait differs");
+        // Hair/beard layers come from the hair page or its palette variants.
+        let base = |s: &Sprite| g.pages[s.page as usize].token.split('#').next().unwrap_or("").to_string();
+        assert!(male.iter().any(|s| base(s) == "PORTRAIT_DWARF_HAIR"), "hair or beard layer (page {hair_page})");
+        // An animal with a portrait, and a race without any portrait graphics.
+        let cat = rf_core::Unit { id: 77, race: "CAT".into(), caste: "FEMALE".into(), ..Default::default() };
+        out.clear();
+        assert!(g.portrait(&w, &cat, &mut out) && out.len() == 1, "cat portrait: {out:?}");
+        let none = rf_core::Unit { id: 78, race: "NO_SUCH_RACE".into(), ..Default::default() };
+        out.clear();
+        assert!(!g.portrait(&w, &none, &mut out) && out.is_empty());
+        assert!(g.named("DEFAULT_PORTRAIT_BACKGROUND").is_some() && g.named("DEFAULT_PORTRAIT_FRAME").is_some());
     }
 
     /// Round 6: engravings, item markers, seasons, procedural beasts, caste sprites, webs.
