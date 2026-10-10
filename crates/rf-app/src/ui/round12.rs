@@ -1199,7 +1199,7 @@ fn demo_machines(g: &mut Game) {
         ("Rollers", "", -6, 0, -3, 0, "E"),
         ("Trap", "TrackStop", -2, 0, -2, 0, "E"),
         ("SiegeEngine", "Ballista", 0, 0, 2, 2, "N"),
-        ("SiegeEngine", "Catapult", 4, 0, 6, 2, "NE"),
+        ("SiegeEngine", "Catapult", 4, 0, 6, 2, "E"),
         ("SiegeEngine", "BoltThrower", 8, 0, 8, 0, "N"),
         ("AxleVertical", "", 8, -3, 8, -3, ""),
     ];

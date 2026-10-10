@@ -460,8 +460,8 @@ pub const PUMP_DIRECTIONS: &[&str] = &["FromNorth", "FromEast", "FromSouth", "Fr
 /// [app12] Roller push directions and track stop dump directions ("" = no dumping).
 pub const ROLLER_DIRECTIONS: &[&str] = &["N", "E", "S", "W"];
 pub const DUMP_DIRECTIONS: &[&str] = &["", "N", "E", "S", "W"];
-/// [app12] Siege engine facings.
-pub const FACINGS: &[&str] = &["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+/// [app12] Siege engine facings: DF builds ballistae and catapults facing one of the 4 cardinal directions.
+pub const FACINGS: &[&str] = &["N", "E", "S", "W"];
 /// [app12] Longest dragged axle / roller (wiki: 10 tiles).
 pub const MAX_LINE: i16 = 10;
 
