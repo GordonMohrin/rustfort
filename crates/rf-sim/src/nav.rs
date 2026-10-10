@@ -16,6 +16,8 @@
 //! `suspect`, and the next path failure inside one component triggers a full rebuild.
 
 use rf_core::{tile_flags, Shape, Tile, World};
+use std::cmp::Reverse; // [perf9]
+use std::collections::BinaryHeap; // [perf9]
 
 pub const WALK: u8 = 1;
 pub const UP: u8 = 2;
@@ -81,6 +83,46 @@ pub struct Nav {
     floor_force: Vec<u64>,
     novert: Vec<u64>,
     any_override: bool,
+    /// [perf9] Landmark distances for the A* heuristic (see [`Landmarks`]).
+    pub lm: Landmarks,
+}
+
+/// [perf9] Landmarks per walk component: number of slots per tile.
+pub const LM_K: usize = 8;
+/// [perf9] No landmark value for this tile and slot.
+pub const LM_INF: u16 = u16::MAX;
+/// [perf9] Components with fewer walkable tiles get no landmarks (plain heuristic).
+const LM_MIN_COMP: usize = 1500;
+/// [perf9] Relaxations allowed in one incremental update before the tables are given up.
+const LM_RELAX_CAP: u64 = 4_000_000;
+
+/// [perf9] ALT heuristic data ("A*, Landmarks and Triangle inequality", Goldberg & Harrelson).
+///
+/// Every component with at least `LM_MIN_COMP` tiles gets `LM_K` landmark tiles picked by
+/// farthest-point selection; slot `j` of a tile holds its path cost from landmark `j` of its
+/// component. A* then uses, besides the distance bound, `D(g) - D(n)` and
+/// `D(n) - D(g) + cost(g) - cost(n)` (moves are symmetric and a step costs the entered tile, so
+/// the reverse distance is the forward one shifted by the two end costs).
+///
+/// Both bounds stay admissible and consistent as long as the table is a *feasible potential*:
+/// `D(x) <= D(y) + cost(x)` for every move y -> x. Removing moves (walls, locked doors) keeps
+/// that; new moves (digging, opened doors, cheaper traffic) are repaired right away by a
+/// decrease-only relaxation from the changed tiles (`relax_box`). So paths stay optimal. They can
+/// differ from the old heuristic's paths among equally cheap ones (other tie-breaks).
+#[derive(Default)]
+pub struct Landmarks {
+    pub on: bool,
+    /// Tile -> compact index (u32::MAX = none).
+    id: Vec<u32>,
+    /// Compact index -> tile.
+    tile: Vec<u32>,
+    d: Vec<[u16; LM_K]>,
+    /// Landmark tiles (all components).
+    pub marks: Vec<u32>,
+    inq: Vec<bool>,
+    queue: std::collections::VecDeque<u32>,
+    /// Relaxations done by incremental updates (stats).
+    pub relaxed: u64,
 }
 
 impl Nav {
@@ -119,6 +161,7 @@ impl Nav {
             floor_force: Vec::new(), // [defense]
             novert: Vec::new(),      // [defense]
             any_override: false,     // [defense]
+            lm: Landmarks::default(), // [perf9]
         };
         let tiles = &world.tiles;
         let mut min_traffic = 2;
@@ -131,7 +174,241 @@ impl Nav {
         }
         nav.min_cost = min_traffic;
         nav.rebuild_components();
+        nav.build_landmarks(); // [perf9]
         nav
+    }
+
+    // ------------------------------------------------------------------ [perf9] landmarks
+
+    /// [perf9] Landmark distances of walkable tile `i` (None: no table, or not walkable).
+    #[inline]
+    pub fn lm_dist(&self, i: usize) -> Option<&[u16; LM_K]> {
+        if !self.lm.on || self.flags[i] & WALK == 0 {
+            return None;
+        }
+        let k = *self.lm.id.get(i)?;
+        self.lm.d.get(k as usize)
+    }
+
+    /// Path costs from compact tile `src` to every tile of its component (u32::MAX = not reached).
+    fn lm_dijkstra(&self, src: u32, dist: &mut [u32], heap: &mut BinaryHeap<Reverse<(u32, u32)>>) {
+        dist.iter_mut().for_each(|d| *d = u32::MAX);
+        heap.clear();
+        dist[src as usize] = 0;
+        heap.push(Reverse((0, src)));
+        let mut buf = [0u32; MAX_NEIGHBORS];
+        while let Some(Reverse((d, c))) = heap.pop() {
+            if d > dist[c as usize] {
+                continue;
+            }
+            let t = self.lm.tile[c as usize] as usize;
+            let n = self.neighbors(t, &mut buf);
+            for &q in &buf[..n] {
+                let qc = self.lm.id[q as usize];
+                if qc == u32::MAX {
+                    continue;
+                }
+                let nd = d + self.cost(q as usize);
+                if nd < dist[qc as usize] {
+                    dist[qc as usize] = nd;
+                    heap.push(Reverse((nd, qc)));
+                }
+            }
+        }
+    }
+
+    /// Farthest-point landmarks of one component (compact indices in increasing order) and
+    /// their distance columns (one per landmark, over all compact indices).
+    fn lm_component(&self, members: &[u32]) -> (Vec<u32>, Vec<Vec<u16>>) {
+        let n = self.lm.tile.len();
+        let mut dist = vec![u32::MAX; n];
+        let mut heap = BinaryHeap::new();
+        // Member with the largest finite value (ties: the lowest index).
+        let far = |vals: &[u32]| -> u32 {
+            let mut best = (0u32, members[0]);
+            for &m in members {
+                let v = vals[m as usize];
+                if v != u32::MAX && v > best.0 {
+                    best = (v, m);
+                }
+            }
+            best.1
+        };
+        self.lm_dijkstra(members[0], &mut dist, &mut heap);
+        let mut pick = far(&dist);
+        let mut mind = vec![u32::MAX; n];
+        let mut marks = Vec::new();
+        let mut cols = Vec::new();
+        for _ in 0..LM_K {
+            marks.push(pick);
+            self.lm_dijkstra(pick, &mut dist, &mut heap);
+            let mut col = vec![LM_INF; n];
+            for &m in members {
+                let d = dist[m as usize];
+                if d < LM_INF as u32 {
+                    col[m as usize] = d as u16;
+                }
+                mind[m as usize] = mind[m as usize].min(d);
+            }
+            cols.push(col);
+            pick = far(&mind);
+        }
+        (marks, cols)
+    }
+
+    /// [perf9] (Re)build the landmark tables from scratch: farthest-point landmarks in every
+    /// component of at least `LM_MIN_COMP` tiles, one Dijkstra each (components in parallel;
+    /// the result does not depend on the thread count).
+    pub fn build_landmarks(&mut self) {
+        use rayon::prelude::*;
+        let n = self.flags.len();
+        let mut lm = Landmarks { id: vec![u32::MAX; n], ..Default::default() };
+        let mut by_comp: std::collections::BTreeMap<u32, Vec<u32>> = Default::default();
+        for i in 0..n {
+            if self.flags[i] & WALK != 0 {
+                let c = lm.tile.len() as u32;
+                lm.id[i] = c;
+                lm.tile.push(i as u32);
+                by_comp.entry(self.comp_root(i)).or_default().push(c);
+            }
+        }
+        lm.d = vec![[LM_INF; LM_K]; lm.tile.len()];
+        lm.inq = vec![false; lm.tile.len()];
+        let comps: Vec<Vec<u32>> = by_comp.into_values().filter(|v| v.len() >= LM_MIN_COMP).collect();
+        let old = std::mem::replace(&mut self.lm, lm);
+        let relaxed = old.relaxed;
+        let res: Vec<(Vec<u32>, Vec<Vec<u16>>)> = comps.par_iter().map(|m| self.lm_component(m)).collect();
+        for (k, (marks, cols)) in res.into_iter().enumerate() {
+            for &m in &marks {
+                self.lm.marks.push(self.lm.tile[m as usize]);
+            }
+            for &c in &comps[k] {
+                for (j, col) in cols.iter().enumerate() {
+                    self.lm.d[c as usize][j] = col[c as usize];
+                }
+            }
+        }
+        self.lm.relaxed = relaxed;
+        // RF_NO_LANDMARKS: debug switch for A/B runs (old heuristic, old paths).
+        self.lm.on = !comps.is_empty() && std::env::var_os("RF_NO_LANDMARKS").is_none();
+    }
+
+    /// Compact index of walkable tile `i`, adding one (no values yet) if it has none.
+    fn lm_ensure(&mut self, i: usize) -> u32 {
+        let k = self.lm.id[i];
+        if k != u32::MAX {
+            return k;
+        }
+        let k = self.lm.tile.len() as u32;
+        self.lm.id[i] = k;
+        self.lm.tile.push(i as u32);
+        self.lm.d.push([LM_INF; LM_K]);
+        self.lm.inq.push(false);
+        k
+    }
+
+    /// `D(to) = min(D(to), D(from) + c)` per slot; true if something got smaller.
+    #[inline]
+    fn lm_relax(&mut self, from: u32, to: u32, c: u32) -> bool {
+        let a = self.lm.d[from as usize];
+        let b = &mut self.lm.d[to as usize];
+        let mut changed = false;
+        for j in 0..LM_K {
+            if a[j] == LM_INF {
+                continue;
+            }
+            let v = a[j] as u32 + c;
+            if v < b[j] as u32 {
+                b[j] = v as u16; // v < LM_INF here
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    fn lm_push(&mut self, k: u32) {
+        if !self.lm.inq[k as usize] {
+            self.lm.inq[k as usize] = true;
+            self.lm.queue.push_back(k);
+        }
+    }
+
+    /// Relax every move into and out of walkable tile `i` (after its moves or cost changed).
+    fn lm_touch(&mut self, i: usize) {
+        if self.flags[i] & WALK == 0 {
+            return;
+        }
+        let k = self.lm_ensure(i);
+        let ci = self.cost(i);
+        let mut buf = [0u32; MAX_NEIGHBORS];
+        let n = self.neighbors(i, &mut buf);
+        for &q in &buf[..n] {
+            let qk = self.lm_ensure(q as usize);
+            if self.lm_relax(qk, k, ci) {
+                self.lm_push(k);
+            }
+            let cq = self.cost(q as usize);
+            if self.lm_relax(k, qk, cq) {
+                self.lm_push(qk);
+            }
+        }
+    }
+
+    /// Decrease-only propagation until the table is a feasible potential again.
+    fn lm_propagate(&mut self) {
+        let mut buf = [0u32; MAX_NEIGHBORS];
+        let mut work = 0u64;
+        while let Some(k) = self.lm.queue.pop_front() {
+            self.lm.inq[k as usize] = false;
+            let t = self.lm.tile[k as usize] as usize;
+            if self.flags[t] & WALK == 0 {
+                continue;
+            }
+            let n = self.neighbors(t, &mut buf);
+            work += n as u64;
+            for &q in &buf[..n] {
+                let qk = self.lm_ensure(q as usize);
+                let cq = self.cost(q as usize);
+                if self.lm_relax(k, qk, cq) {
+                    self.lm_push(qk);
+                }
+            }
+            if work > LM_RELAX_CAP {
+                // Give up (deterministically): plain heuristic from now on.
+                self.lm.on = false;
+                while let Some(k) = self.lm.queue.pop_front() {
+                    self.lm.inq[k as usize] = false;
+                }
+                break;
+            }
+        }
+        self.lm.relaxed += work;
+    }
+
+    /// [perf9] The traffic cost of tile `i` was changed directly in `flags`.
+    pub fn lm_cost_changed(&mut self, i: usize) {
+        if self.lm.on {
+            self.lm_touch(i);
+            self.lm_propagate();
+        }
+    }
+
+    /// [perf9] Repair the landmark table after the flags in a box changed (`gained`: tiles
+    /// that became walkable; their old values are dropped so they are relearned exactly).
+    fn lm_relax_box(&mut self, x0: usize, x1: usize, y0: usize, y1: usize, z0: usize, z1: usize, gained: &[u32]) {
+        for &g in gained {
+            let k = self.lm_ensure(g as usize);
+            self.lm.d[k as usize] = [LM_INF; LM_K];
+        }
+        for zz in z0..=z1 {
+            for yy in y0..=y1 {
+                for xx in x0..=x1 {
+                    let q = self.idx(xx, yy, zz);
+                    self.lm_touch(q);
+                }
+            }
+        }
+        self.lm_propagate();
     }
 
     #[inline]
@@ -410,6 +687,8 @@ impl Nav {
         let (x0, x1) = (x.saturating_sub(1), (x + 1).min(self.dx - 1));
         let (y0, y1) = (y.saturating_sub(1), (y + 1).min(self.dy - 1));
         let (z0, z1) = (z.saturating_sub(1), (z + 1).min(self.dz - 1));
+        let mut gained = [0u32; 27]; // [perf9] tiles that became walkable
+        let (mut n_gained, mut any_change) = (0usize, false); // [perf9]
         for zz in z0..=z1 {
             for yy in y0..=y1 {
                 for xx in x0..=x1 {
@@ -417,6 +696,13 @@ impl Nav {
                     let old = self.flags[q];
                     let new = self.compute(tiles, q);
                     self.flags[q] = new;
+                    if old != new {
+                        any_change = true; // [perf9]
+                        if old & WALK == 0 && new & WALK != 0 {
+                            gained[n_gained] = q as u32;
+                            n_gained += 1;
+                        }
+                    }
                     let removed = old & !new;
                     if removed & (WALK | UP | DOWN | RAMP) != 0 || (new & SOLID != 0 && old & SOLID == 0) {
                         lost = true;
@@ -466,6 +752,9 @@ impl Nav {
         }
         if lost {
             self.suspect = true;
+        }
+        if any_change && self.lm.on {
+            self.lm_relax_box(x0, x1, y0, y1, z0, z1, &gained[..n_gained]); // [perf9]
         }
         lost
     }

@@ -11,7 +11,7 @@
 //!   in the CPU cache). Expansion order and tie-breaks are unchanged, so every path is
 //!   exactly the one the earlier version found.
 
-use crate::nav::{Nav, MAX_NEIGHBORS};
+use crate::nav::{Nav, LM_INF, LM_K, MAX_NEIGHBORS};
 use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
 
@@ -276,15 +276,45 @@ impl AStar {
         }
         let gp = &gp[..goals.n];
         let mc = nav.min_cost;
+        // [perf9] Landmark (ALT) bounds per goal, see `nav::Landmarks`.
+        let mut gd = [[LM_INF; LM_K]; MAX_GOALS];
+        let mut gc = [0i32; MAX_GOALS];
+        let mut alt = false;
+        for (k, &t) in goals.as_slice().iter().enumerate() {
+            if let Some(d) = nav.lm_dist(t as usize) {
+                gd[k] = *d;
+                gc[k] = nav.cost(t as usize) as i32;
+                alt = true;
+            }
+        }
+        let gd = &gd[..goals.n];
         let h = |i: u32| -> u32 {
             let (x, y, z) = nav.xyz(i as usize);
             let (x, y, z) = (x as i32, y as i32, z as i32);
-            let mut best = u32::MAX;
-            for &(gx, gy, gz) in gp {
-                let d = ((gx - x).abs().max((gy - y).abs())).max((gz - z).abs()) as u32;
-                best = best.min(d);
+            let dn = if alt { nav.lm_dist(i as usize) } else { None };
+            let Some(dn) = dn else {
+                let mut best = u32::MAX;
+                for &(gx, gy, gz) in gp {
+                    let d = ((gx - x).abs().max((gy - y).abs())).max((gz - z).abs()) as u32;
+                    best = best.min(d);
+                }
+                return best * mc;
+            };
+            let cn = nav.cost(i as usize) as i32;
+            let mut best = i32::MAX;
+            for (k, &(gx, gy, gz)) in gp.iter().enumerate() {
+                let mut hk = ((gx - x).abs().max((gy - y).abs())).max((gz - z).abs()) * mc as i32;
+                let g = &gd[k];
+                for j in 0..LM_K {
+                    let (a, b) = (g[j], dn[j]);
+                    if a != LM_INF && b != LM_INF {
+                        let (a, b) = (a as i32, b as i32);
+                        hk = hk.max(a - b).max(b - a + gc[k] - cn);
+                    }
+                }
+                best = best.min(hk);
             }
-            best * mc
+            best as u32
         };
         let s0 = self.slot(start);
         self.nodes[s0].g = 0;
@@ -336,7 +366,9 @@ impl AStar {
                 node.g = ng;
                 node.parent = e.idx;
                 let hq = h(q);
-                self.heap.push(Entry { f: ng + hq, h: hq, idx: q, slot: qs as u32 });
+                // [perf9] Pathmax: f never drops below the popped f (a no-op for a consistent
+                // heuristic; keeps the bucket queue monotone if a table is ever off).
+                self.heap.push(Entry { f: (ng + hq).max(e.f), h: hq, idx: q, slot: qs as u32 });
             }
         }
         self.expanded_total += expanded as u64;
