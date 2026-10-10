@@ -6,7 +6,7 @@
 //!   done next ("do now") or cancelled; designations and planned constructions can be
 //!   cancelled.
 //! - **Hauling** (DF `D_HAULING`): the hauling routes of the imported fort with their stops,
-//!   conditions and linked stockpiles (read-only: Rustfort has no minecarts yet).
+//!   conditions and linked stockpiles ([app12]: now an editor, see `round12`).
 //! - **Build hotkey chains** from the player's `interface.txt`: `b`, then the category
 //!   (`HOTKEY_BUILDING_WORKSHOP` ...), then the building (`HOTKEY_BUILDING_WORKSHOP_MASON` ...),
 //!   with DF's workshop sub-groups (farming, clothing/leather, furnaces).
@@ -473,86 +473,7 @@ pub fn cancel_task(g: &mut Game, t: &TaskRow) {
 
 // ====================================================================== hauling
 
-pub fn draw_hauling(g: &mut Game) {
-    let s = g.ui.scale;
-    let lh = g.ui.line_h();
-    let Some(c) = frame(g, "Hauling", 1100.0) else { return };
-    let top = c.y + 2.0 * lh + 4.0 * s;
-    draw_line(c.x, top - 6.0 * s, c.x + c.w, top - 6.0 * s, 1.0, col::BORDER);
-    let routes = g.sim.world.haul_routes.clone();
-    let maxc = (c.w / (GW * s)) as usize;
-    if routes.is_empty() {
-        let mut y = top;
-        for l in [
-            "No hauling routes in this fort.",
-            "In Dwarf Fortress you make routes for minecarts and wheelbarrows here: stops, what to load, when to leave.",
-            "Rustfort shows the routes of your imported fort on this screen. Minecarts are not simulated yet,",
-            "so routes cannot be created or run here; dwarves haul everything by hand to the stockpiles.",
-        ] {
-            g.font.draw(&clip(l, maxc), c.x, y, s, if y == top { col::TEXT } else { col::TEXT_DIM });
-            y += lh;
-        }
-        return;
-    }
-    if g.r10.haul_sel.map(|id| !routes.iter().any(|r| r.id == id)).unwrap_or(true) {
-        g.r10.haul_sel = routes.first().map(|r| r.id);
-    }
-    g.font.draw(&format!("{} routes (read-only: Rustfort does not run minecarts yet)", routes.len()), c.x, top, s, col::TEXT_DIM);
-    let y0 = top + lh + 6.0 * s;
-    let lw = (c.w * 0.32).max(200.0 * s);
-    let list = Rect::new(c.x, y0, lw, c.y + c.h - y0);
-    let row_h = lh + 4.0 * s;
-    let vis = ((list.h / row_h) as usize).max(1);
-    g.r10.haul_scroll = scroll(g, list, g.r10.haul_scroll, routes.len(), vis);
-    for (k, r) in routes.iter().enumerate().skip(g.r10.haul_scroll).take(vis) {
-        let y = list.y + (k - g.r10.haul_scroll) as f32 * row_h;
-        let sel = g.r10.haul_sel == Some(r.id);
-        if list_row(&mut g.ui, Rect::new(list.x, y, list.w, row_h - 2.0 * s), sel) {
-            g.r10.haul_sel = Some(r.id);
-        }
-        let name = if r.name.is_empty() { format!("Route {}", r.id + 1) } else { r.name.clone() };
-        let t = format!("{name} ({} stops, {} carts)", r.stops.len(), r.vehicles.len());
-        g.font.draw(&clip(&t, ((list.w - 8.0 * s) / (GW * s)) as usize), list.x + 4.0 * s, y + 2.0 * s, s, if sel { col::TEXT_HI } else { col::TEXT });
-    }
-    let Some(r) = routes.iter().find(|r| Some(r.id) == g.r10.haul_sel) else { return };
-    let dx = c.x + lw + 16.0 * s;
-    let dw = c.x + c.w - dx;
-    let dc = (dw / (GW * s)) as usize;
-    let mut y = y0;
-    let name = if r.name.is_empty() { format!("Route {}", r.id + 1) } else { r.name.clone() };
-    g.font.draw(&clip(&name, dc), dx, y, s, col::TEXT_HI);
-    y += lh + 4.0 * s;
-    let pile_name = |g: &Game, id: i32| g.sim.world.building(id).map(|b| building_title(g, b)).unwrap_or_else(|| format!("#{id} (gone)"));
-    let mut go = None;
-    for (n, st) in r.stops.iter().enumerate() {
-        if y > c.y + c.h - 3.0 * lh {
-            g.font.draw("...", dx, y, s, col::TEXT_DIM);
-            break;
-        }
-        let sname = if st.name.is_empty() { format!("Stop {}", n + 1) } else { st.name.clone() };
-        g.font.draw(&clip(&format!("{}. {sname}  at {}, {}, z {}", n + 1, st.pos.x, st.pos.y, st.pos.z), dc.saturating_sub(8)), dx, y, s, col::TEXT);
-        if text_button(&mut g.ui, &g.font, Rect::new(dx + dw - 7.0 * 8.0 * s, y - 2.0 * s, 7.0 * 8.0 * s, lh), "Go", BtnState::Normal) {
-            go = Some(st.pos);
-        }
-        y += lh;
-        let conds = if st.conditions.is_empty() { "Leave right away".to_string() } else { st.conditions.join("; ") };
-        g.font.draw(&clip(&format!("   Departs: {conds}"), dc), dx, y, s, col::TEXT_DIM);
-        y += lh;
-        for (what, ids) in [("Takes from", &st.take_from), ("Gives to", &st.give_to)] {
-            if !ids.is_empty() {
-                let names: Vec<String> = ids.iter().map(|&id| pile_name(g, id)).collect();
-                g.font.draw(&clip(&format!("   {what}: {}", names.join(", ")), dc), dx, y, s, col::TEXT_DIM);
-                y += lh;
-            }
-        }
-        y += 4.0 * s;
-    }
-    if let Some(p) = go {
-        g.screen = Screen::None;
-        g.cam.focus(p);
-        g.selected = Selected::Tile(p);
-    }
-}
+// [app12] The Hauling screen is the route editor in `round12::draw_hauling`.
 
 // ====================================================================== build hotkey chains
 
@@ -619,6 +540,20 @@ pub const BUILD_KEYS: &[(&str, &str, BTarget)] = &[
     ("Constructions", "HOTKEY_BUILDING_CONSTRUCTION_STAIR_UPDOWN", BTarget::Constr(ConstructionKind::UpDownStair)),
     ("Constructions", "HOTKEY_BUILDING_CONSTRUCTION_FORTIFICATION", BTarget::Constr(ConstructionKind::Fortification)),
     ("Constructions", "HOTKEY_BUILDING_CONSTRUCTION_TRACK", BTarget::Constr(ConstructionKind::Track)),
+    // [app12] Machines (DF `m`), siege engines (DF Military `y`), the track stop (Shift+K).
+    ("Constructions", "HOTKEY_BUILDING_CONSTRUCTION_TRACK_STOP", BTarget::Opt("Trap", "TrackStop")),
+    ("", "HOTKEY_BUILDING_MACHINE", BTarget::Group("Machines", "Machines")),
+    ("", "HOTKEY_BUILDING_MILITARY", BTarget::Group("Military", "Siege engines")),
+    ("Machines", "HOTKEY_BUILDING_MACHINE_SCREW_PUMP", BTarget::Opt("ScrewPump", "")),
+    ("Machines", "HOTKEY_BUILDING_MACHINE_WATER_WHEEL", BTarget::Opt("WaterWheel", "")),
+    ("Machines", "HOTKEY_BUILDING_MACHINE_WINDMILL", BTarget::Opt("Windmill", "")),
+    ("Machines", "HOTKEY_BUILDING_MACHINE_GEAR_ASSEMBLY", BTarget::Opt("GearAssembly", "")),
+    ("Machines", "HOTKEY_BUILDING_MACHINE_AXLE_HORIZONTAL", BTarget::Opt("AxleHorizontal", "")),
+    ("Machines", "HOTKEY_BUILDING_MACHINE_AXLE_VERTICAL", BTarget::Opt("AxleVertical", "")),
+    ("Machines", "HOTKEY_BUILDING_MACHINE_ROLLERS", BTarget::Opt("Rollers", "")),
+    ("Military", "HOTKEY_BUILDING_SIEGEENGINE_BALLISTA", BTarget::Opt("SiegeEngine", "Ballista")),
+    ("Military", "HOTKEY_BUILDING_SIEGEENGINE_CATAPULT", BTarget::Opt("SiegeEngine", "Catapult")),
+    ("Military", "HOTKEY_BUILDING_SIEGEENGINE_BOLT_THROWER", BTarget::Opt("SiegeEngine", "BoltThrower")),
 ];
 
 /// The group the build menu is in (last path element, `""` at the top).
@@ -667,6 +602,8 @@ fn build_keys(g: &mut Game) -> bool {
             "Furnaces" => vec!["Workshops", "Furnaces"],
             "Furniture" => vec!["Furniture"],
             "Constructions" => vec!["Constructions"],
+            "Machines" => vec!["Machines"],     // [app12]
+            "Siege engines" => vec!["Military"], // [app12]
             _ => Vec::new(),
         };
         g.r10.bcat_seen = Some(g.build_cat);
@@ -999,6 +936,9 @@ pub fn look_lines(g: &Game, p: Pos) -> Vec<(String, Color)> {
         };
         v.push((line, col::TEXT));
     }
+    if let Some(l) = super::round12::track_line(tt) {
+        v.push((l, col::TEXT_CYAN)); // [app12] track directions
+    }
     if let Some(e) = g.sim.engraving_at(p) {
         let (q, mark) = QUALITY[e.quality.min(5) as usize];
         let surf = if e.floor { "floor" } else { "wall" };
@@ -1288,7 +1228,7 @@ pub fn draw_screens(g: &mut Game) {
     }
     match g.screen {
         Screen::Tasks => draw_tasks(g),
-        Screen::Hauling => draw_hauling(g),
+        Screen::Hauling => super::round12::draw_hauling(g), // [app12] the route editor
         _ => {}
     }
     if g.submenu == Submenu::Build && g.screen == Screen::None && !g.menu_open {

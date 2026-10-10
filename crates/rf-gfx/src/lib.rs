@@ -17,6 +17,7 @@
 
 mod creature;
 mod engrave;
+mod machines; // [app12] machines, tracks, rollers, track stops, siege engines
 mod plants;
 mod terrain;
 
@@ -165,6 +166,8 @@ pub struct Gfx {
     /// First sprite per TILE_GRAPHICS name (multi-tile names are combined into one sprite).
     pub(crate) named: HashMap<String, Sprite>,
     pub(crate) terrain_t: terrain::Tables,
+    /// [app12] Machine, track and siege engine sprites.
+    pub(crate) machines_t: machines::MachineTables,
     pub(crate) creatures: HashMap<String, creature::CreatureGfx>,
     /// Per world material palette index: standard palette row (filled by `prepare`).
     mat_rows: Vec<u16>,
@@ -303,6 +306,7 @@ impl Gfx {
         }
         g.db = db;
         g.terrain_t = terrain::Tables::build(&g);
+        g.machines_t = machines::MachineTables::build(&g); // [app12]
         g.plants_t = plants::PlantTables::build(&g, raws);
         g.terrain_t.typed = terrain::typed_items(&g, raws);
         g.creatures = creature::parse_all(&mut g, raws);

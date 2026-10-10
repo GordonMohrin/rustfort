@@ -270,7 +270,11 @@ pub fn draw_toolbar(g: &mut Game) -> f32 {
                 let n = super::devices::mechanisms(&g.sim.world);
                 top = draw_hint(g, cx, y, &format!("Link lever: click a door, bridge, floodgate, hatch, cage or grate ({n} mechanisms). Right-click cancels."));
             }
-            _ => {}
+            _ => {
+                if let Some(h) = super::round12::tool_hint(g) {
+                    top = draw_hint(g, cx, y, &h); // [app12] route stops, pile links, aiming
+                }
+            }
         },
     }
     top

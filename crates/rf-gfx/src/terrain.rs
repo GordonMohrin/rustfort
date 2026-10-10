@@ -1127,6 +1127,21 @@ fn floor(g: &Gfx, world: &World, p: Pos, mat: u16, tt: &rf_core::TiletypeInfo, h
             out.extend(cust[4 + i]);
         }
     }
+    // [app12] Minecart track by its directions: carved into natural floors, constructed ones
+    // in stone or wood.
+    if tt.special == TtSpecial::Track {
+        let bits = crate::machines::track_bits(&tt.direction);
+        if bits != 0 {
+            let kind = match (tt.material, class) {
+                (TtMaterial::Construction, MatClass::Wood) => 2,
+                (TtMaterial::Construction, _) => 1,
+                _ => 0,
+            };
+            if let Some(s) = crate::machines::track_sprite(g, kind, bits) {
+                out.push(if kind == 0 { s } else { g.recolor(s, world, mat) });
+            }
+        }
+    }
     wall_shadows(g, &walls, out);
 }
 
@@ -1427,6 +1442,10 @@ pub(crate) fn building(g: &Gfx, world: &World, b: &Building, p: Pos, out: &mut V
             emit(0, -1, out);
         }
         emit(ly + 1, 0, out);
+        return;
+    }
+    // [app12] machines, rollers, track stops, siege engines
+    if crate::machines::building(g, world, b, p, out) {
         return;
     }
     match b.kind.as_str() {

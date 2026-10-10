@@ -92,6 +92,18 @@ pub fn option_icon(kind: &str, subtype: &str) -> String {
         ("Trap", "CageTrap") => "TRAP_CAGE",
         ("Trap", "Lever") => "LEVER",
         ("Trap", "PressurePlate") => "PRESSURE_PLATE",
+        // [app12] machines and siege engines
+        ("Trap", "TrackStop") => "TRACK_STOP",
+        ("ScrewPump", _) => "SCREW_PUMP",
+        ("WaterWheel", _) => "WATER_WHEEL",
+        ("Windmill", _) => "WINDMILL",
+        ("GearAssembly", _) => "GEAR_ASSEMBLY",
+        ("AxleHorizontal", _) => "AXLE_HORIZONTAL",
+        ("AxleVertical", _) => "AXLE_VERTICAL",
+        ("Rollers", _) => "ROLLERS",
+        ("SiegeEngine", "Catapult") => "CATAPULT",
+        ("SiegeEngine", "BoltThrower") => "BOLT_THROWER",
+        ("SiegeEngine", _) => "BALLISTA",
         _ => "",
     };
     if s.is_empty() {
@@ -112,7 +124,7 @@ pub fn category_icon(cat: &str) -> &'static str {
         "Machines" | "Fluids" => "BUILDING_ICON_MACHINES_FLUIDS",
         "Cages" => "BUILDING_ICON_CAGES_RESTRAINT",
         "Traps" => "BUILDING_ICON_TRAPS",
-        "Military" => "BUILDING_ICON_MILITARY",
+        "Military" | "Siege engines" => "BUILDING_ICON_MILITARY", // [app12]
         _ => "BUILDING_ICON_WORKSHOPS",
     }
 }
@@ -191,7 +203,8 @@ pub fn draw_build_menu(g: &mut Game, toolbar_y: f32) -> f32 {
     let (title, title_c, hint) = match g.tool {
         Tool::Build(i) if i < g.build_opts.len() => {
             let o = &g.build_opts[i];
-            let size = if o.dragged { "drag a rectangle".to_string() } else { format!("{}x{}", o.size.0, o.size.1) };
+            let sz = g.sim.build_size(i, super::round12::cur_dir(g, i)); // [app12] rotated footprints
+            let size = if o.dragged { "drag a rectangle".to_string() } else { format!("{}x{}", sz.0, sz.1) };
             (
                 format!("Build: {} ({size}), needs {}", o.label, o.needs),
                 col::TEXT_HI,
@@ -215,7 +228,22 @@ pub fn draw_build_menu(g: &mut Game, toolbar_y: f32) -> f32 {
     };
     let maxc = ((w - 2.0 * pad) / (8.0 * s)) as usize;
     g.font.draw(&clip(&title, maxc), r.x + pad, r.y + pad, s, title_c);
-    g.font.draw(&clip(&hint, maxc), r.x + pad, r.y + pad + lh, s, col::TEXT_DIM);
+    // [app12] The Machines tab toggles the power overlay.
+    if cur_cat == "Machines" {
+        let bw = 15.0 * 8.0 * s;
+        let st = if g.r12.power_overlay { BtnState::Active } else { BtnState::Normal };
+        if super::text_button(&mut g.ui, &g.font, Rect::new(r.x + w - pad - bw, r.y + pad - 3.0 * s, bw, GH * s + 4.0 * s), "Power overlay", st) {
+            g.r12.power_overlay = !g.r12.power_overlay;
+        }
+    }
+    // [app12] Buildings with a direction: the direction buttons replace the hint.
+    let dir_drawn = match g.tool {
+        Tool::Build(i) => super::round12::draw_dir_buttons(g, i, r.x + pad, r.y + pad + lh, w - 2.0 * pad),
+        _ => false,
+    };
+    if !dir_drawn {
+        g.font.draw(&clip(&hint, maxc), r.x + pad, r.y + pad + lh, s, col::TEXT_DIM);
+    }
     // Category tabs.
     let mut tx = r.x + pad;
     let ty = r.y + pad + 2.0 * lh;
@@ -319,20 +347,18 @@ pub fn draw_ghost(g: &mut Game) {
         (true, Some(d)) => Pos::new(d.a.x, d.a.y, h.z),
         _ => h,
     };
-    let (lo, hi) = footprint(&o, a, h);
-    let ok = match &g.build_check {
-        Some((ci, ca, cb, res)) if *ci == i && *ca == lo && *cb == hi => res.clone(),
-        _ => {
-            let res = g.sim.can_place(i, lo, hi);
-            g.build_check = Some((i, lo, hi, res.clone()));
-            res
-        }
-    };
+    // [app12] Footprint and check with the chosen direction (rotated pumps and wheels).
+    let (lo, hi) = super::round12::footprint(g, i, a, h);
+    let ok = super::round12::check(g, i, lo, hi);
     let good = ok.is_ok();
     let tint = if good { [150, 255, 150, 200] } else { [255, 110, 110, 200] };
     let fill = if good { Color::new(0.3, 0.9, 0.3, 0.22) } else { Color::new(0.95, 0.25, 0.2, 0.28) };
     let line = if good { Color::new(0.45, 1.0, 0.45, 0.95) } else { Color::new(1.0, 0.4, 0.35, 0.95) };
-    let tmp = ghost_building(&o, lo, hi);
+    let mut tmp = ghost_building(&o, lo, hi);
+    tmp.direction = super::round12::cur_dir(g, i).to_string(); // [app12]
+    if o.kind == "AxleHorizontal" && hi.y > lo.y {
+        tmp.direction = "NS".into();
+    }
     let tp = g.cam.tile_px();
     let mut sprites = std::mem::take(&mut g.rend.buf);
     let mut any = false;
@@ -361,6 +387,7 @@ pub fn draw_ghost(g: &mut Game) {
         draw_icon(&g.gfx, &mut g.rend, &option_icon(o.kind, o.subtype), ir, Color::new(1.0, 1.0, 1.0, 0.8));
     }
     draw_rectangle_lines(a.x, a.y, b.x - a.x, b.y - a.y, 2.0, line);
+    super::round12::ghost_extras(g, i, lo, hi); // [app12] direction arrow
     let m = g.mouse();
     let msg = match &ok {
         Ok(()) if o.dragged => format!("{} {}x{}", o.label, hi.x - lo.x + 1, hi.y - lo.y + 1),

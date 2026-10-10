@@ -99,7 +99,7 @@ const DEAD_BED: u32 = u32::MAX - 1;
 impl Sim {
     /// What the Build menu offers.
     pub fn build_options(&self) -> Vec<BuildOption> {
-        OPTIONS.to_vec()
+        OPTIONS.iter().chain(app12_extra()).cloned().collect() // [app12] + machines, siege engines
     }
 
     fn footprint(o: &BuildOption, pos: Pos, b: Pos) -> (i16, i16, i16, i16) {
@@ -113,7 +113,11 @@ impl Sim {
     /// Check whether `opt` (index into `build_options()`) fits with its top-left at `pos`
     /// (`b` = opposite corner for dragged options).
     pub fn can_place(&self, opt: usize, pos: Pos, b: Pos) -> Result<(), String> {
-        let o = OPTIONS.get(opt).ok_or("unknown build option")?;
+        let o = opt_at(opt).ok_or("unknown build option")?; // [app12]
+        if opt >= OPTIONS.len() {
+            let (x1, y1, x2, y2) = Sim::footprint(o, pos, b);
+            return self.can_place_dir(opt, Pos::new(x1, y1, pos.z), Pos::new(x2, y2, pos.z), ""); // [app12]
+        }
         let (x1, y1, x2, y2) = Sim::footprint(o, pos, b);
         for y in y1..=y2 {
             for x in x1..=x2 {
@@ -172,6 +176,12 @@ impl Sim {
 
     /// Place a building (unbuilt; dwarves construct it). Returns the new building id.
     pub fn place_building(&mut self, opt: usize, pos: Pos, b: Pos) -> Result<i32, String> {
+        if opt >= OPTIONS.len() {
+            // [app12] machines and siege engines
+            let o = opt_at(opt).ok_or("unknown build option")?;
+            let (x1, y1, x2, y2) = Sim::footprint(o, pos, b);
+            return self.place_building_dir(opt, Pos::new(x1, y1, pos.z), Pos::new(x2, y2, pos.z), "");
+        }
         self.can_place(opt, pos, b)?;
         let o = &OPTIONS[opt];
         let (x1, y1, x2, y2) = Sim::footprint(o, pos, b);
@@ -423,5 +433,214 @@ impl Sim {
             .filter(|p| season.map(|s| p.seasons & (1 << s.min(3)) != 0).unwrap_or(true))
             .map(|p| p.token.clone())
             .collect()
+    }
+}
+
+// ====================================================================== [app12] machines, siege engines
+
+/// [app12] Round-12 build options: machines (DF `HOTKEY_BUILDING_MACHINE`, plus the track stop)
+/// and siege engines. They follow `OPTIONS` in `build_options()`; an entry `OPTIONS` itself
+/// lists (same kind and subtype) is skipped, so the indices stay consistent.
+const APP12_OPTIONS: &[BuildOption] = &[
+    BuildOption { kind: "ScrewPump", subtype: "", label: "Screw pump", category: "Machines", size: (1, 2), needs: "1 block, 1 enormous corkscrew, 1 pipe section", dragged: false },
+    BuildOption { kind: "WaterWheel", subtype: "", label: "Water wheel", category: "Machines", size: (3, 1), needs: "3 logs or wooden blocks; flowing water below", dragged: false },
+    BuildOption { kind: "Windmill", subtype: "", label: "Windmill", category: "Machines", size: (3, 3), needs: "4 logs or wooden blocks; outside (wind)", dragged: false },
+    BuildOption { kind: "GearAssembly", subtype: "", label: "Gear assembly", category: "Machines", size: (1, 1), needs: "1 mechanism", dragged: false },
+    BuildOption { kind: "AxleHorizontal", subtype: "", label: "Horizontal axle", category: "Machines", size: (1, 1), needs: "1 log per tile (drag up to 10 tiles)", dragged: true },
+    BuildOption { kind: "AxleVertical", subtype: "", label: "Vertical axle", category: "Machines", size: (1, 1), needs: "1 log", dragged: false },
+    BuildOption { kind: "Rollers", subtype: "", label: "Roller", category: "Machines", size: (1, 1), needs: "1 mechanism, 1 chain or rope (drag up to 10 tiles)", dragged: true },
+    BuildOption { kind: "Trap", subtype: "TrackStop", label: "Track stop", category: "Machines", size: (1, 1), needs: "1 mechanism", dragged: false },
+    BuildOption { kind: "SiegeEngine", subtype: "Ballista", label: "Ballista", category: "Siege engines", size: (3, 3), needs: "1 ballista parts", dragged: false },
+    BuildOption { kind: "SiegeEngine", subtype: "Catapult", label: "Catapult", category: "Siege engines", size: (3, 3), needs: "1 catapult parts", dragged: false },
+    BuildOption { kind: "SiegeEngine", subtype: "BoltThrower", label: "Bolt thrower", category: "Siege engines", size: (1, 1), needs: "1 bolt thrower parts", dragged: false },
+];
+
+/// [app12] Pump directions (DF "pump from north" ...): the input end.
+pub const PUMP_DIRECTIONS: &[&str] = &["FromNorth", "FromEast", "FromSouth", "FromWest"];
+/// [app12] Roller push directions and track stop dump directions ("" = no dumping).
+pub const ROLLER_DIRECTIONS: &[&str] = &["N", "E", "S", "W"];
+pub const DUMP_DIRECTIONS: &[&str] = &["", "N", "E", "S", "W"];
+/// [app12] Siege engine facings.
+pub const FACINGS: &[&str] = &["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+/// [app12] Longest dragged axle / roller (wiki: 10 tiles).
+pub const MAX_LINE: i16 = 10;
+
+fn app12_extra() -> impl Iterator<Item = &'static BuildOption> {
+    APP12_OPTIONS.iter().filter(|o| !OPTIONS.iter().any(|x| x.kind == o.kind && x.subtype == o.subtype))
+}
+
+/// [app12] Option `i` of `build_options()`.
+fn opt_at(i: usize) -> Option<&'static BuildOption> {
+    OPTIONS.get(i).or_else(|| app12_extra().nth(i - OPTIONS.len()))
+}
+
+impl Sim {
+    /// [app12] The direction choices of a build option (the first is the default; empty = none):
+    /// screw pumps "pump from" N/E/S/W, water wheels and 1-tile horizontal axles `EW`/`NS`,
+    /// rollers the push direction, track stops the dump direction, siege engines the facing.
+    pub fn build_directions(&self, opt: usize) -> &'static [&'static str] {
+        match opt_at(opt).map(|o| (o.kind, o.subtype)) {
+            Some(("ScrewPump", _)) => PUMP_DIRECTIONS,
+            Some(("WaterWheel", _)) | Some(("AxleHorizontal", _)) => &["EW", "NS"],
+            Some(("Rollers", _)) => ROLLER_DIRECTIONS,
+            Some(("Trap", "TrackStop")) => DUMP_DIRECTIONS,
+            Some(("SiegeEngine", _)) => FACINGS,
+            _ => &[],
+        }
+    }
+
+    /// [app12] Footprint size (w, h) of a fixed-size option built with direction `dir`: screw
+    /// pumps are 1x2 from north/south and 2x1 from east/west, water wheels 3x1 (`EW`) or 1x3.
+    pub fn build_size(&self, opt: usize, dir: &str) -> (i16, i16) {
+        let Some(o) = opt_at(opt) else { return (1, 1) };
+        match o.kind {
+            "ScrewPump" if dir == "FromEast" || dir == "FromWest" => (2, 1),
+            "ScrewPump" => (1, 2),
+            "WaterWheel" if dir == "NS" => (1, 3),
+            "WaterWheel" => (3, 1),
+            _ => o.size,
+        }
+    }
+
+    /// [app12] Whether option `opt` fits on the rectangle `lo..=hi` (one z-level) with direction
+    /// `dir`. Old options use `can_place`. Machine rules (wiki v50 Machine component, Screw pump,
+    /// Water wheel, Axle, Roller, Track stop, Siege engine): screw pumps, water wheels,
+    /// windmills, gear assemblies and axles may hang over open space (floor or open space, no
+    /// wall); rollers, track stops and siege engines need flat floor; dragged axles and rollers
+    /// are one tile wide and at most 10 long, rollers along their push direction.
+    pub fn can_place_dir(&self, opt: usize, lo: Pos, hi: Pos, dir: &str) -> Result<(), String> {
+        let o = opt_at(opt).ok_or("unknown build option")?;
+        let (x1, y1, x2, y2) = (lo.x.min(hi.x), lo.y.min(hi.y), lo.x.max(hi.x), lo.y.max(hi.y));
+        if opt < OPTIONS.len() {
+            let a = Pos::new(x1, y1, lo.z);
+            return self.can_place(opt, a, if o.dragged { Pos::new(x2, y2, lo.z) } else { a });
+        }
+        let (w, h) = (x2 - x1 + 1, y2 - y1 + 1);
+        if o.dragged {
+            if w > 1 && h > 1 {
+                return Err("one tile wide (a straight line)".into());
+            }
+            if w.max(h) > MAX_LINE {
+                return Err(format!("at most {MAX_LINE} tiles long"));
+            }
+            if o.kind == "Rollers" && w.max(h) > 1 && matches!(dir, "N" | "S") != (h > 1) {
+                return Err("rollers run along their direction".into());
+            }
+        } else if (w, h) != self.build_size(opt, dir) {
+            return Err("wrong size".into());
+        }
+        let hanging = matches!(o.kind, "ScrewPump" | "WaterWheel" | "Windmill" | "GearAssembly" | "AxleHorizontal" | "AxleVertical");
+        for y in y1..=y2 {
+            for x in x1..=x2 {
+                let p = Pos::new(x, y, lo.z);
+                if !self.world.in_bounds(p) {
+                    return Err("outside the map".into());
+                }
+                if self.world.tile(p).map(|t| t.hidden()).unwrap_or(true) {
+                    return Err("not revealed".into());
+                }
+                let shape = self.world.tt(p).shape;
+                let ok = matches!(shape, Shape::Floor | Shape::Pebbles) || (hanging && matches!(shape, Shape::Empty));
+                if !ok {
+                    return Err(if hanging { "needs floor or open space".into() } else { "needs flat floor".into() });
+                }
+                if self.world.buildings.iter().any(|bl| bl.kind != "Stockpile" && bl.kind != "Civzone" && bl.contains(p)) {
+                    return Err("blocked by a building".into());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// [app12] Place option `opt` on `lo..=hi` with direction `dir` (stored in
+    /// `Building::direction`; dragged horizontal axles get `NS`/`EW` from their line). Returns
+    /// the new building id; the building starts unbuilt like every other.
+    pub fn place_building_dir(&mut self, opt: usize, lo: Pos, hi: Pos, dir: &str) -> Result<i32, String> {
+        let (x1, y1, x2, y2) = (lo.x.min(hi.x), lo.y.min(hi.y), lo.x.max(hi.x), lo.y.max(hi.y));
+        if opt < OPTIONS.len() {
+            let a = Pos::new(x1, y1, lo.z);
+            let id = self.place_building(opt, a, if OPTIONS[opt].dragged { Pos::new(x2, y2, lo.z) } else { a })?;
+            if !dir.is_empty() {
+                if let Some(b) = self.world.buildings.iter_mut().find(|b| b.id == id) {
+                    b.direction = dir.into();
+                }
+            }
+            return Ok(id);
+        }
+        let o = opt_at(opt).ok_or("unknown build option")?;
+        let dirs = self.build_directions(opt);
+        let dir = if dir.is_empty() && !dirs.is_empty() && o.kind != "Trap" { dirs[0] } else { dir };
+        self.can_place_dir(opt, lo, hi, dir)?;
+        let dir = match o.kind {
+            "AxleHorizontal" if y2 > y1 => "NS",
+            "AxleHorizontal" if x2 > x1 => "EW",
+            _ => dir,
+        };
+        let id = self.world.buildings.iter().map(|b| b.id).max().unwrap_or(0) + 1;
+        self.world.buildings.push(Building {
+            id,
+            kind: o.kind.into(),
+            subtype: o.subtype.into(),
+            x1,
+            y1,
+            x2,
+            y2,
+            z: lo.z,
+            center: Pos::new((x1 + x2) / 2, (y1 + y2) / 2, lo.z),
+            mat: rf_core::NO_MAT,
+            stage: 0,
+            built: false,
+            owner: -1,
+            direction: dir.into(),
+            ..Default::default()
+        });
+        self.mark_prod_dirty();
+        self.rebuild_prod_index();
+        Ok(id)
+    }
+}
+
+#[cfg(test)]
+mod app12_tests {
+    use super::*;
+
+    #[test]
+    fn machine_options_place_with_directions() {
+        let mut s = Sim::new(rf_core::World::synthetic(32, 32, 12), 1);
+        let opts = s.build_options();
+        let find = |k: &str, sub: &str| opts.iter().position(|o| o.kind == k && o.subtype == sub).unwrap();
+        let (pump, axle, roll, bal) = (find("ScrewPump", ""), find("AxleHorizontal", ""), find("Rollers", ""), find("SiegeEngine", "Ballista"));
+        assert!(opts.iter().any(|o| o.category == "Machines") && opts.iter().any(|o| o.category == "Siege engines"));
+        assert_eq!(s.build_size(pump, "FromWest"), (2, 1));
+        assert_eq!(s.build_size(pump, "FromNorth"), (1, 2));
+        // A revealed 4x4 floor of the synthetic world.
+        let w = &s.world;
+        let mut spot = None;
+        'f: for z in 0..w.dims.z as i16 {
+            for y in 2..27 {
+                for x in 2..27 {
+                    let ok = (0..4).all(|dy| (0..4).all(|dx| {
+                        let q = Pos::new(x + dx, y + dy, z);
+                        w.tt(q).shape == Shape::Floor && !w.tile(q).map(|t| t.hidden()).unwrap_or(true) && !w.buildings.iter().any(|b| b.contains(q))
+                    }));
+                    if ok {
+                        spot = Some(Pos::new(x, y, z));
+                        break 'f;
+                    }
+                }
+            }
+        }
+        let p = spot.expect("a 4x4 floor");
+        let id = s.place_building_dir(pump, p, p.offset(1, 0, 0), "FromWest").unwrap();
+        let b = s.world.building(id).unwrap();
+        assert_eq!((b.kind.as_str(), b.direction.as_str(), b.x2 - b.x1, b.y2 - b.y1), ("ScrewPump", "FromWest", 1, 0));
+        assert!(s.can_place_dir(axle, p.offset(0, 1, 0), p.offset(2, 2, 0), "").is_err(), "axles are lines");
+        let a = s.place_building_dir(axle, p.offset(0, 1, 0), p.offset(0, 3, 0), "").unwrap();
+        assert_eq!(s.world.building(a).unwrap().direction, "NS");
+        assert!(s.can_place_dir(roll, p.offset(1, 1, 0), p.offset(3, 1, 0), "N").is_err(), "rollers along their direction");
+        assert!(s.can_place_dir(roll, p.offset(1, 1, 0), p.offset(3, 1, 0), "E").is_ok());
+        assert!(s.can_place_dir(bal, p.offset(1, 1, 0), p.offset(3, 3, 0), "N").is_ok());
+        // The old index API works for the new options too.
+        assert!(s.can_place(bal, p.offset(1, 1, 0), p.offset(1, 1, 0)).is_ok());
     }
 }

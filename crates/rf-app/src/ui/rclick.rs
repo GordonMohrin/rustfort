@@ -80,6 +80,9 @@ fn pick_mode(g: &mut Game) -> bool {
         Tool::Link(_) => g.tool = Tool::None,
         Tool::PileLink(id, _) => crate::ui::round8::open_pile(g, id),
         Tool::Patrol(_) => crate::ui::round9::patrol_back(g),
+        Tool::RouteStop(_) | Tool::RoutePile(..) | Tool::AimSiege(_) => {
+            crate::ui::round12::back(g); // [app12] back to Hauling / the engine's sheet
+        }
         Tool::SquadStation(_) | Tool::SquadKill(_) => {
             g.tool = Tool::None;
             g.screen = Screen::Military;

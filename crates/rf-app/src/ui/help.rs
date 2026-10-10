@@ -101,6 +101,7 @@ pub fn mouse_rows(b: &Bindings) -> Vec<(String, String)> {
         ("3D box".into(), "Change z in between".into()),
         ("Back out".into(), "Right click".into()),
         ("Tile actions (no tool)".into(), "Right click".into()), // [app10] context menu
+        ("Turn pump/roller/engine (placing)".into(), "Tab / Shift+Tab".into()), // [app12]
         ("Pan".into(), "Middle drag".into()),
         ("Level up / down".into(), wheel_pair(&wheel("CURSOR_UP_Z"), &wheel("CURSOR_DOWN_Z"))),
         ("10 levels".into(), wheel_pair(&wheel("CURSOR_UP_Z_FAST"), &wheel("CURSOR_DOWN_Z_FAST"))),

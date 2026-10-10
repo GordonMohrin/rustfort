@@ -79,6 +79,12 @@ pub enum Tool {
     PileLink(i32, bool),
     /// [app9] Click the waypoints of this squad's patrol route (Enter finishes).
     Patrol(i32),
+    /// [app12] Click a track stop / track tile: a new stop of this hauling route.
+    RouteStop(i32),
+    /// [app12] Click a stockpile to link it to (route, stop): take from (true) or give to.
+    RoutePile(i32, usize, bool),
+    /// [app12] Click the tile this siege engine aims at.
+    AimSiege(i32),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -462,6 +468,8 @@ pub struct Game {
     pub r9: crate::ui::round9::R9Ui,
     /// [app10] Tasks and hauling screens, build hotkey chains, map context menu, crash guard.
     pub r10: crate::ui::round10::R10Ui,
+    /// [app12] Hauling editor, machine and siege engine sheets, power overlay, build directions.
+    pub r12: crate::ui::round12::R12Ui,
 }
 
 /// [round 6] How the game loop ended.
@@ -650,6 +658,7 @@ impl Game {
             r8: Default::default(),
             r9: Default::default(),
             r10: Default::default(),
+            r12: Default::default(), // [app12]
         };
         // [round 6] Defaults from the settings for a fresh start (imports, synthetic forts).
         if loaded.new_game {
@@ -943,6 +952,7 @@ impl Game {
                 // [app8] work details, kitchen, stockpile settings, animals, places, ...
                 _ if crate::ui::round8::ui_arg(self, k, v) => {}
                 _ if crate::ui::round9::ui_arg(self, k, v) => {} // [app9]
+                _ if crate::ui::round12::ui_arg(self, k, v) => {} // [app12]
                 _ if crate::ui::round10::ui_arg(self, k, v) => {} // [app10]
                 _ if crate::ui::military::ui_arg(self, k, v) => {} // [mil-ui]
                 _ => eprintln!("unknown --ui state {u}"),
@@ -1192,6 +1202,9 @@ impl Game {
         // [round 5] Inside the smooth/traffic/item menus their DESIGNATE_* keys pick the tool.
         if crate::ui::round5::submenu_keys(self) {
             return;
+        }
+        if crate::ui::round12::keys(self) {
+            return; // [app12] Tab turns the building being placed
         }
         if crate::ui::round10::keys(self) {
             return; // [app10] build menu hotkey chains, Tasks (D_JOBLIST), Hauling (D_HAULING)
@@ -1673,6 +1686,11 @@ impl Game {
                     crate::ui::round9::patrol_click(self, sq, h); // [app9]
                 }
             }
+            Tool::RouteStop(_) | Tool::RoutePile(..) | Tool::AimSiege(_) => {
+                if lp {
+                    crate::ui::round12::tool_click(self, h); // [app12]
+                }
+            }
             Tool::SquadKill(sq) => {
                 if lp {
                     crate::ui::military::kill_click(self, sq, h); // [mil-ui] all ticked squads
@@ -1732,18 +1750,11 @@ impl Game {
                 self.tool = Tool::None;
             }
             Tool::SquadStation(_) | Tool::SquadKill(_) | Tool::Link(_) | Tool::PileLink(..) | Tool::Patrol(_) => {}
+            Tool::RouteStop(_) | Tool::RoutePile(..) | Tool::AimSiege(_) => {} // [app12]
             Tool::Construct(_) | Tool::Detail(_) | Tool::Traffic(_) | Tool::ItemDes(_) => {
                 crate::ui::round5::apply(self, a, b);
             }
-            Tool::Build(i) => {
-                let Some(o) = self.build_opts.get(i).cloned() else { return };
-                let (lo, hi) = crate::ui::build::footprint(&o, a, Pos::new(b.x, b.y, a.z));
-                match self.sim.place_building(i, lo, hi) {
-                    Ok(id) => self.set_status(format!("{} placed (#{id}), needs {}", o.label, o.needs)),
-                    Err(e) => self.set_status(format!("Cannot place {}: {e}", o.label)),
-                }
-                self.build_check = None;
-            }
+            Tool::Build(i) => crate::ui::round12::place(self, i, a, b), // [app12] with direction
             Tool::None => {}
         }
     }
