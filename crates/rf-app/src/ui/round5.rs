@@ -568,6 +568,13 @@ fn fallback_marker(r: Rect, c: [u8; 3]) {
 /// Forbidden / dump / hidden markers on an item drawn at `r` (DF's `DESIGNATION_ITEM_*`).
 pub fn item_marker(rend: &mut MapRenderer, gfx: &Gfx, it: &Item, r: Rect, tp: f32) {
     let f = &it.flags;
+    // [gfx6] Melt marks (and forbidden+melt) come from rf-gfx's DESIGNATION_ITEM_* lookup.
+    if f.melt && !f.dump {
+        if let Some(s) = gfx.item_marker(it) {
+            rend.draw_sprite(gfx, &s, r.x, r.y, tp);
+            return;
+        }
+    }
     if !f.forbid && !f.dump && !f.hidden {
         return;
     }

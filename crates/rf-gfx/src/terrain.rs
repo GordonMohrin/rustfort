@@ -232,6 +232,13 @@ pub(crate) struct Tables {
     pub pebbles: FloorSet,
     pub boulders: Vec<Sprite>,
     pub smooth_floor: Option<Sprite>,
+    /// [gfx6] Engraved smooth stone floor (palette page, recolored by the stone) and the
+    /// non-palette version for stones without a palette row.
+    pub engraved_floor: Option<Sprite>,
+    pub engraved_floor_np: Option<Sprite>,
+    /// [gfx6] Item designation markers: forbidden, dump, forbidden+dump, melt,
+    /// forbidden+melt, hidden (`DESIGNATION_ITEM_*`).
+    pub item_marks: [Option<Sprite>; 6],
     pub wood_floor: Option<Sprite>,
     pub metal_floor: Option<Sprite>,
     pub block_floor: Option<Sprite>,
@@ -344,6 +351,16 @@ impl Tables {
             pebbles: FloorSet::new(g, "PEBBLES_FLOOR"),
             boulders: g.db.tiles_named("BOULDER").filter_map(|t| g.page_id(&t.page).map(|p| Sprite::simple(p, t.x, t.y))).collect(),
             smooth_floor: n("SMOOTH_FLOOR"),
+            engraved_floor: n("FLOOR_STONE_ENGRAVED_PALETTE"),
+            engraved_floor_np: n("FLOOR_STONE_ENGRAVED_NON_PALETTE"),
+            item_marks: [
+                n("DESIGNATION_ITEM_FORBIDDEN"),
+                n("DESIGNATION_ITEM_DUMP"),
+                n("DESIGNATION_ITEM_FORBIDDEN_DUMP"),
+                n("DESIGNATION_ITEM_MELT"),
+                n("DESIGNATION_ITEM_FORBIDDEN_MELT"),
+                n("DESIGNATION_ITEM_HIDDEN"),
+            ],
             wood_floor: n("WOOD_FLOOR"),
             metal_floor: n("METAL_FLOOR"),
             block_floor: first_on_page(g, "FLOOR_STONE_BLOCK"),
@@ -955,7 +972,15 @@ fn floor(g: &Gfx, world: &World, p: Pos, mat: u16, tt: &rf_core::TiletypeInfo, h
         }
         _ => {
             if matches!(tt.special, TtSpecial::Smooth | TtSpecial::SmoothDead) {
-                t.smooth_floor
+                // [gfx6] Engraved floors: DF keeps the smooth tiletype, the engraving lies on top.
+                if g.engraved_at(world, p) == Some(true) {
+                    match t.engraved_floor {
+                        Some(s) if g.mat_row(world, mat) != 0 => Some(g.recolor(s, world, mat)),
+                        _ => t.engraved_floor_np.or(t.engraved_floor).or(t.smooth_floor),
+                    }
+                } else {
+                    t.smooth_floor
+                }
             } else {
                 t.stone.center(tt.variant, h)
             }
@@ -1077,6 +1102,8 @@ fn wall(g: &Gfx, world: &World, p: Pos, mat: u16, tt: &rf_core::TiletypeInfo, h:
         }
         TtMaterial::Root => "WALL_ROOT",
         _ => match tt.special {
+            // [gfx6] Engraved walls use the engraved edge set (same autotiling).
+            TtSpecial::Smooth | TtSpecial::SmoothDead if g.engraved_at(world, p) == Some(false) => "WALL_STONE_ENGRAVED",
             TtSpecial::Smooth | TtSpecial::SmoothDead => "WALL_STONE_SMOOTHED",
             TtSpecial::Worn1 => "WALL_WORN1_STONE",
             TtSpecial::Worn2 => "WALL_WORN2_STONE",

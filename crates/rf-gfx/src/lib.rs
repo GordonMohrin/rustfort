@@ -185,6 +185,8 @@ pub struct Gfx {
     creature_names: Vec<(String, String)>,
     /// Item id -> corpse/remains sprite (filled by `prepare`).
     pub(crate) corpse_cache: HashMap<i32, Sprite>,
+    /// Engraved tiles (tile index -> engraved floor?), rebuilt by `prepare` from `World::engravings`.
+    pub(crate) engr_at: HashMap<u32, bool>,
     /// Non-vanilla mods whose graphics were loaded (`id:numeric_version`, load order).
     pub mods_loaded: Vec<String>,
     /// Mod list entries that could not be matched exactly (see [`Gfx::load_with_mods`]).
@@ -279,6 +281,16 @@ impl Gfx {
         for (name, (page, x0, y0, x1, y1, _, _)) in parts {
             g.named.entry(name).or_insert(Sprite { page, tx: x0, ty: y0, tw: x1 - x0 + 1, th: y1 - y0 + 1, tint: [255; 4], dx: 0, dy: 0 });
         }
+        // [gfx6] Rectangles `[TILE_GRAPHICS_RECTANGLE:PAGE:x:y:w:h:NAME]` (procedural beasts).
+        for o in raws.of_kind("TILE_GRAPHICS_RECTANGLE") {
+            let h = o.header();
+            let Some(&page) = g.page_ids.get(h.arg(0)) else { continue };
+            let (Some(x), Some(y), Some(w), Some(hh)) = (h.arg_i32(1), h.arg_i32(2), h.arg_i32(3), h.arg_i32(4)) else { continue };
+            if x < 0 || y < 0 || w < 1 || hh < 1 || o.id.is_empty() {
+                continue;
+            }
+            g.named.entry(o.id.clone()).or_insert(Sprite { page, tx: x as u16, ty: y as u16, tw: w as u16, th: hh as u16, tint: [255; 4], dx: 0, dy: 0 });
+        }
         g.db = db;
         g.terrain_t = terrain::Tables::build(&g);
         g.plants_t = plants::PlantTables::build(&g, raws);
@@ -344,6 +356,16 @@ impl Gfx {
             Some(t) if !t.hidden() => self.tree_tt(t.tt),
             _ => plants::TreeTt::None,
         }
+    }
+
+    /// Is the tile at `p` engraved? `Some(true)` = engraved floor, `Some(false)` = engraved
+    /// wall (needs `prepare`, which indexes `World::engravings`).
+    #[inline]
+    pub(crate) fn engraved_at(&self, world: &World, p: Pos) -> Option<bool> {
+        if self.engr_at.is_empty() {
+            return None;
+        }
+        world.idx(p).and_then(|i| self.engr_at.get(&(i as u32)).copied())
     }
 
     /// Plant graphics of a world material (needs `prepare`).
@@ -516,6 +538,13 @@ impl Gfx {
                 self.mat_growth.push(growth);
             }
         }
+        // Engravings (DF keeps the smooth tiletype; the engraving lies on top).
+        self.engr_at.clear();
+        for e in &world.engravings {
+            if let Some(i) = world.idx(e.pos) {
+                self.engr_at.insert(i as u32, e.floor);
+            }
+        }
         // Crops: planted seeds inside farm plots.
         self.crops_at.clear();
         let has_farms = world.buildings.iter().any(|b| b.kind == "FarmPlot");
@@ -591,6 +620,13 @@ impl Gfx {
             if self.looks.contains_key(&u.id) {
                 continue;
             }
+            if !self.creatures.contains_key(&u.race) {
+                // [gfx6] Procedural creatures (forgotten beasts, demons, ...): DF's beast sprites.
+                if let Some(sprites) = creature::procedural_look(self, world, u) {
+                    self.looks.insert(u.id, creature::UnitLook { sprites });
+                }
+                continue;
+            }
             if let Some(layers) = creature::evaluate(self, world, u) {
                 let mut look = creature::UnitLook::default();
                 for (s, pal) in layers {
@@ -642,6 +678,23 @@ impl Gfx {
         };
         let s = self.terrain_t.bld.cage_occupied[fam].or(self.terrain_t.bld.cage_occupied[0])?;
         Some(self.recolor(s, world, mat))
+    }
+
+    /// The item designation marker DF draws over an item (`DESIGNATION_ITEM_*`): forbidden,
+    /// dump, melt, the forbidden+dump / forbidden+melt combinations, or hidden. `None` for an
+    /// unmarked item. Draw it on top of the item's sprites.
+    pub fn item_marker(&self, it: &Item) -> Option<Sprite> {
+        let m = &self.terrain_t.item_marks;
+        let f = &it.flags;
+        match (f.forbid, f.dump, f.melt) {
+            (true, true, _) => m[2].or(m[0]),
+            (true, false, true) => m[4].or(m[0]),
+            (true, false, false) => m[0],
+            (false, true, _) => m[1],
+            (false, false, true) => m[3],
+            _ if f.hidden => m[5],
+            _ => None,
+        }
     }
 
     /// Footprint (w, h) in tiles of a building kind/subtype as DF builds it: 3x3 workshops and

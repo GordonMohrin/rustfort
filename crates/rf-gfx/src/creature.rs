@@ -77,6 +77,9 @@ pub(crate) struct CreatureGfx {
     pub corpse: Option<Sprite>,
     pub remains: Option<Sprite>,
     pub sets: Vec<LayerSet>,
+    /// [gfx6] `[CREATURE_CASTE_GRAPHICS:<race>:<caste>]` sprites (chickens, ducks, sheep, deer,
+    /// ...): (caste, default, child, corpse). Picked before the race-wide ones.
+    pub castes: Vec<(String, Option<Sprite>, Option<Sprite>, Option<Sprite>)>,
 }
 
 /// The evaluated, palette-resolved sprites of one unit (cached by `Gfx::prepare`).
@@ -237,7 +240,153 @@ pub(crate) fn parse_all(g: &mut Gfx, raws: &Raws) -> HashMap<String, CreatureGfx
         }
         out.insert(o.id.clone(), cg);
     }
+    // Caste-specific simple sprites (rooster/hen, drake/duck, ram/ewe, ...).
+    for o in raws.of_kind("CREATURE_CASTE_GRAPHICS") {
+        let caste = o.header().arg(1).to_string();
+        let (mut d, mut c, mut k) = (None, None, None);
+        for t in &o.tokens[1..] {
+            match t.name.as_str() {
+                "DEFAULT" if d.is_none() => d = sprite_ref(g, t, 0),
+                "CHILD" if c.is_none() && t.args.last().map(|s| s == "DEFAULT").unwrap_or(false) => c = sprite_ref(g, t, 0),
+                "CORPSE" if k.is_none() => k = sprite_ref(g, t, 0),
+                "LAYER_SET" => break,
+                _ => {}
+            }
+        }
+        if d.is_none() && c.is_none() && k.is_none() {
+            continue;
+        }
+        let cg = out.entry(o.id.clone()).or_default();
+        match cg.castes.iter_mut().find(|e| e.0 == caste) {
+            Some(e) => {
+                e.1 = e.1.or(d);
+                e.2 = e.2.or(c);
+                e.3 = e.3.or(k);
+            }
+            None => cg.castes.push((caste, d, c, k)),
+        }
+        // A race whose graphics are all per caste still gets a default (the first caste's).
+        cg.default = cg.default.or(d);
+        cg.corpse = cg.corpse.or(k);
+    }
     out
+}
+
+/// [gfx6] Body plan of a procedural creature (forgotten beasts, demons, titans, ...), matching
+/// DF Premium's `BEAST_<TYPE>` sprites.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BeastBody {
+    Amorphous,
+    Snake,
+    WormShort,
+    Insect,
+    Spider,
+    Scorpion,
+    BipedalDinosaur,
+    Humanoid,
+    FrontGrasp,
+    QuadrupedBulky,
+    QuadrupedSlinky,
+}
+
+impl BeastBody {
+    fn token(self) -> &'static str {
+        match self {
+            BeastBody::Amorphous => "AMORPHOUS",
+            BeastBody::Snake => "SNAKE",
+            BeastBody::WormShort => "WORM_SHORT",
+            BeastBody::Insect => "INSECT",
+            BeastBody::Spider => "SPIDER",
+            BeastBody::Scorpion => "SCORPION",
+            BeastBody::BipedalDinosaur => "BIPEDAL_DINOSAUR",
+            BeastBody::Humanoid => "HUMANOID",
+            BeastBody::FrontGrasp => "FRONT_GRASP",
+            BeastBody::QuadrupedBulky => "QUADRUPED_BULKY",
+            BeastBody::QuadrupedSlinky => "QUADRUPED_SLINKY",
+        }
+    }
+}
+
+/// Classify a body from its parts (`STANCE` limbs = legs, `GRASP` parts = hands, wings).
+/// Returns (body, has wings).
+pub(crate) fn beast_body(parts: &[rf_core::BodyPartRaw], seed: u32) -> (BeastBody, bool) {
+    let has = |p: &rf_core::BodyPartRaw, f: &str| p.flags.iter().any(|x| x == f);
+    let legs = parts.iter().filter(|p| has(p, "STANCE") && has(p, "LIMB")).count();
+    let hands = parts.iter().filter(|p| has(p, "GRASP")).count();
+    let wings = parts.iter().any(|p| p.category.contains("WING") || (has(p, "FLIER") && has(p, "LIMB")));
+    let head = parts.iter().any(|p| has(p, "HEAD") && !has(p, "UPPERBODY"));
+    let tail = parts.iter().any(|p| p.category.contains("TAIL"));
+    let body = match legs {
+        0 if head && tail => BeastBody::Snake,
+        0 if head => BeastBody::WormShort,
+        0 => BeastBody::Amorphous,
+        1..=2 if hands > 0 => BeastBody::Humanoid,
+        1..=2 => BeastBody::BipedalDinosaur,
+        3..=4 if hands > 0 => BeastBody::FrontGrasp,
+        3..=4 => {
+            if seed % 2 == 0 {
+                BeastBody::QuadrupedBulky
+            } else {
+                BeastBody::QuadrupedSlinky
+            }
+        }
+        5..=6 => BeastBody::Insect,
+        7..=8 => BeastBody::Spider,
+        _ => BeastBody::Scorpion,
+    };
+    (body, wings)
+}
+
+/// [gfx6] Look of a creature without graphics raws: DF Premium's procedural beast sprites
+/// (`BEAST_<BODY>` 3x2 tiles, `BEAST_ORGANIC_<BODY>` for flesh, plus wing layers), chosen from
+/// the creature's exported body parts; the sim's forgotten beasts (`FORGOTTEN_BEAST_n`, no
+/// raws) by their quadruped flag. Stone-like for forgotten beasts (most are made of a mineral),
+/// organic for demons and other generated creatures. Not recolored (the unit carries no
+/// material). `None` if the beast pages are missing.
+pub(crate) fn procedural_look(g: &Gfx, world: &World, u: &Unit) -> Option<Vec<Sprite>> {
+    let seed = u.race.bytes().fold(0x811C_9DC5u32, |a, b| (a ^ b as u32).wrapping_mul(0x0100_0193));
+    let raw = world.creature_raws.iter().find(|c| c.token == u.race);
+    let (body, wings) = match raw {
+        Some(c) => {
+            let caste = c.castes.iter().find(|k| k.token == u.caste).or(c.castes.first());
+            match caste {
+                Some(k) if !k.body_parts.is_empty() => beast_body(&k.body_parts, seed),
+                _ => (BeastBody::Humanoid, c.flags.iter().any(|f| f == "HAS_ANY_FLIER")),
+            }
+        }
+        None if u.race.starts_with("FORGOTTEN_BEAST") || u.race.starts_with("TITAN") => {
+            let b = if u.flags.animal {
+                if seed % 2 == 0 {
+                    BeastBody::QuadrupedBulky
+                } else {
+                    BeastBody::QuadrupedSlinky
+                }
+            } else {
+                BeastBody::Humanoid
+            };
+            (b, false)
+        }
+        None => return None,
+    };
+    let stone = u.race.starts_with("FORGOTTEN_BEAST");
+    let pre = if stone { "BEAST_" } else { "BEAST_ORGANIC_" };
+    let n = |s: String| g.named.get(&s).copied();
+    let base = n(format!("{pre}{}", body.token())).or_else(|| n(format!("BEAST_{}", body.token())))?;
+    let kind = match (raw.map(|c| c.flags.iter().any(|f| f == "HAS_ANY_DEMON")).unwrap_or(false), body) {
+        (true, _) => "BAT",
+        (_, BeastBody::Insect | BeastBody::Spider | BeastBody::Scorpion) => "LACY",
+        _ => "FEATHERED",
+    };
+    let wing = |side: &str| if wings { n(format!("BEAST_{}_WINGS_{kind}_{side}", body.token())) } else { None };
+    let mut v = Vec::with_capacity(3);
+    v.extend(wing("BACK"));
+    v.push(base);
+    v.extend(wing("FRONT"));
+    // Bottom-aligned like DF's large creature sprites (centered by `Sprite::unit_center_px`).
+    for s in &mut v {
+        s.dy = -(s.th as i16 - 1);
+    }
+    Some(v)
 }
 
 /// DF profession -> graphics profession category.
@@ -417,6 +566,13 @@ pub(crate) fn unit(g: &Gfx, _world: &World, u: &Unit, out: &mut Vec<Sprite>) {
     }
     let Some(cg) = g.creatures.get(&u.race) else { return };
     let child = matches!(u.profession.as_str(), "CHILD" | "BABY");
+    // Caste-specific sprites first (rooster vs hen).
+    if let Some(c) = cg.castes.iter().find(|c| c.0 == u.caste) {
+        if let Some(s) = if child { c.2.or(c.1) } else { c.1 } {
+            out.push(s);
+            return;
+        }
+    }
     if let Some(s) = if child { cg.child.or(cg.default) } else { cg.default } {
         out.push(s);
     }
