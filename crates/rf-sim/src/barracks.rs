@@ -614,7 +614,7 @@ mod tests {
         let mut sim = sim_of(w, 57);
         let iron = sim.ensure_material("INORGANIC:IRON");
         let steel = sim.ensure_material("INORGANIC:STEEL");
-        let mut axe = |sim: &mut Sim, mat: u16, x: i16| {
+        let axe = |sim: &mut Sim, mat: u16, x: i16| {
             let id = sim.next_item_id;
             sim.next_item_id += 1;
             sim.push_item(Item { id, kind: "WEAPON".into(), subtype: "ITEM_WEAPON_AXE_BATTLE".into(), mat, pos: Pos::new(x, 22, z), stack: 1, container: -1, holder: -1, building: -1, desc: "battle axe".into(), flags: ItemFlags { on_ground: true, ..Default::default() }, ..Default::default() });

@@ -1654,6 +1654,9 @@ impl Sim {
             if sh.busy != NONE || sh.blocked_until > now || sh.labors & labors == 0 || self.alert_blocks(s, sh.site as usize) {
                 continue; // [r7] civilian alert: workshops inside the burrow only
             }
+            if !self.power_shop_ok(sh.bid, &sh.subtype) {
+                continue; // [gaps10] millstones mill only while powered
+            }
             let d = manhattan(up, self.nav.xyz(sh.site as usize));
             if d >= best.0 {
                 continue;

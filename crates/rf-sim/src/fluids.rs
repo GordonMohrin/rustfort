@@ -315,6 +315,11 @@ impl Fluids {
     }
 
     #[inline]
+    /// [gaps10] Can tile `i` hold liquid (for screw pump outputs)?
+    pub(crate) fn holds(&self, tiles: &[Tile], i: usize) -> bool {
+        self.hold(tiles, i)
+    }
+
     fn hold(&self, tiles: &[Tile], i: usize) -> bool {
         self.class(&tiles[i]) & HOLD != 0 && !self.bsolid.get(i)
     }
@@ -1014,6 +1019,16 @@ impl Sim {
         f.cur = cur;
         f.cur.clear();
         let moved = std::mem::take(&mut f.moved_list);
+        if !self.power.under.is_empty() {
+            // [gaps10] water wheels: water moving under a wheel is "flowing"
+            for k in 0..self.power.under.len() {
+                let t = self.power.under[k];
+                if self.fluids.moved.get(t as usize) {
+                    self.power_flow_seen(t, now);
+                }
+            }
+        }
+        let f = &mut self.fluids;
         for &c in &moved {
             f.moved.clear(c as usize);
         }

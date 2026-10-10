@@ -89,6 +89,8 @@ pub use social::{Breakdown, MonthStress, SocialReport}; // [social]
 mod industry; // [industry]
 mod storage; // [industry]
 pub mod fluids; // [fluids]
+pub mod power; // [gaps10] screw pumps, water wheels, windmills, axles, gears
+pub use power::{MachineKind, PowerNet, PowerStats}; // [gaps10]
 pub use fluids::FluidReport; // [fluids]
 pub use industry::IndustryReport; // [industry]
 pub use storage::{PileReport, StorageReport}; // [industry]
@@ -191,6 +193,8 @@ pub mod labor {
     pub const ENGRAVER: u64 = 1 << 36;
     pub const SHEARER: u64 = 1 << 37;
     pub const SPINNER: u64 = 1 << 38;
+    /// [gaps10] Pump operating (DF `OPERATE_PUMP`).
+    pub const OPERATE_PUMP: u64 = 1 << 46;
     // [animals] high bits to stay clear of other additions.
     pub const MILK: u64 = 1 << 50;
     pub const MAKE_CHEESE: u64 = 1 << 51;
@@ -218,6 +222,7 @@ pub mod labor {
             "WOOD_CRAFT" => WOOD_CRAFT,
             "PROCESS_PLANT" => PROCESS_PLANT,
             "MILLER" => MILLER,
+            "OPERATE_PUMP" => OPERATE_PUMP, // [gaps10]
             "BUILD_CONSTRUCTION" => BUILD_CONSTRUCTION,
             "MECHANIC" => MECHANIC,
             "HAUL_STONE" => HAUL_STONE,
@@ -404,6 +409,8 @@ enum Task {
     Wander,
     /// [defense] Walk to lever (building id) and pull it.
     PullLever(i32),
+    /// [gaps10] Walk to a screw pump (building id) and work it by hand.
+    OperatePump(i32),
     /// [defense] Re-arm trap `.0` with cage/stone item `.1` (fetch, carry, load).
     LoadTrap(i32, i32),
     GoJob(u32),
@@ -595,6 +602,8 @@ pub struct Sim {
     combat: combat::Combat,
     /// [fluids] Water/magma flow, aquifers, drowning (see `fluids`).
     fluids: fluids::Fluids,
+    /// [gaps10] Machines and power networks (see `power`).
+    power: power::Power,
     /// [society] Migrants, births, burial, ghosts, nobles (see `population`).
     pop: population::Pop,
     /// [society] Caravans, depot and trading (see `trade`).
@@ -717,6 +726,7 @@ impl Sim {
             ind: industry::Ind::default(),    // [industry]
             combat: combat::Combat::default(), // [combat]
             fluids: fluids::Fluids::default(), // [fluids]
+            power: power::Power::default(), // [gaps10]
             pop: population::Pop::default(), // [society]
             trade: trade::Trade::default(), // [society]
             def: defense::Defense::default(), // [defense]
@@ -1087,6 +1097,7 @@ impl Sim {
         let (activity, job_pos): (&str, Option<Pos>) = match (ai.kind, ai.task) {
             (Kind::Dead, _) => ("Dead", None),
             (_, Task::PullLever(b)) => ("Pull the Lever", self.world.building(b).map(|b| b.center)), // [defense]
+            (_, Task::OperatePump(b)) => ("Operate Pump", self.world.building(b).map(|b| b.center)), // [gaps10]
             (_, Task::LoadTrap(b, _)) => (self.defense_reload_caption(b), self.world.building(b).map(|b| b.center)), // [defense]
             (_, Task::Idle) | (_, Task::Wander) => ("No Job", None),
             (_, Task::GoJob(j)) | (_, Task::Job(j)) => {
@@ -1159,6 +1170,7 @@ impl Sim {
         self.social_hash(&mut mix); // [social]
         self.combat_hash(&mut mix); // [combat]
         self.fluids_hash(&mut mix); // [fluids]
+        self.power_hash(&mut mix); // [gaps10]
         self.society_hash(&mut mix); // [society]
         self.moods_hash(&mut mix); // [moods]
         self.health_hash(&mut mix); // [moods]
@@ -1273,6 +1285,7 @@ impl Sim {
         let tq = Instant::now(); // [perf]
         self.phase[6] += (tq - tp).as_secs_f64(); // [perf]
         self.fluids_tick(now); // [fluids]
+        self.power_tick(now); // [gaps10] pumps and power
         let tp = Instant::now(); // [perf]
         self.phase[7] += (tp - tq).as_secs_f64(); // [perf]
         if now % population::POP_PERIOD == population::POP_PHASE {
@@ -1710,6 +1723,9 @@ impl Sim {
         if self.defense_try_job(s, now) { // [military2] levers inside the alert burrow too
             return; // [defense] Pull the Lever
         }
+        if self.power_try_job(s, now) {
+            return; // [gaps10] Operate pump by hand
+        }
         if restricted && self.alert_burial(s, now) {
             return; // [military2] burial inside the alert burrow
         }
@@ -1804,6 +1820,7 @@ impl Sim {
         let task = self.ai[s].task;
         match task {
             Task::PullLever(b) => self.defense_arrive_lever(s, b, now), // [defense]
+            Task::OperatePump(b) => self.power_arrive_pump(s, b, now), // [gaps10]
             Task::LoadTrap(b, it) => self.defense_arrive_reload(s, b, it, now), // [defense]
             Task::Wander | Task::Idle => {
                 self.ai[s].task = Task::Idle;
@@ -1957,6 +1974,7 @@ impl Sim {
         let task = self.ai[s].task;
         match task {
             Task::PullLever(b) => self.defense_cancel_lever(s, b), // [defense]
+            Task::OperatePump(b) => self.power_cancel_pump(s, b), // [gaps10]
             Task::LoadTrap(b, it) => self.defense_cancel_reload(s, b, it), // [defense]
             Task::GoJob(j) | Task::Job(j) => {
                 if self.jobs[j as usize].claimed == s as u32 {
