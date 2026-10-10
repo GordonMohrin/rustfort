@@ -1584,7 +1584,12 @@ pub async fn run(args: Args, loaded: Loaded) {
         frame += 1;
         if let Some(path) = &args.screenshot {
             if frame >= args.frames.max(1) {
-                let img = get_screen_data();
+                let mut img = get_screen_data();
+                // [round 4] The window ignores framebuffer alpha; so does the screenshot
+                // (translucent UI layers would otherwise look washed out in image viewers).
+                for px in img.bytes.chunks_exact_mut(4) {
+                    px[3] = 255;
+                }
                 if let Some(dir) = path.parent() {
                     let _ = std::fs::create_dir_all(dir);
                 }

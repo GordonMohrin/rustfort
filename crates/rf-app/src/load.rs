@@ -120,6 +120,21 @@ pub fn fill_from_export_files(world: &mut World, dir: &Path) {
     if world.armor_raws.is_empty() {
         world.armor_raws = read_json(dir, "armor_raws.json").unwrap_or_default();
     }
+    // [round 4] Civilizations, nobles, game settings, historical figure names.
+    if world.entities.is_empty() {
+        world.entities = read_json(dir, "entities.json").unwrap_or_default();
+    }
+    if world.nobles.is_empty() {
+        world.nobles = read_json(dir, "nobles.json").unwrap_or_default();
+    }
+    if world.hist_figs.is_empty() {
+        world.hist_figs = read_json(dir, "hist_figs.json").unwrap_or_default();
+    }
+    if world.settings.population_cap == 0 && world.settings.other.is_empty() {
+        if let Some(st) = read_json::<rf_core::GameSettings>(dir, "settings.json") {
+            world.settings = st;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -149,6 +164,13 @@ mod tests {
         fill_from_export_files(&mut w, &dir);
         assert_eq!(w.squads[0].name, "Mine");
         assert_eq!(w.burrows[0].tiles, vec![rf_core::Pos::new(1, 2, 3)]);
+        // [round 4] nobles and settings (extra exporter fields are ignored).
+        std::fs::write(dir.join("nobles.json"), r#"[{"token":"BROKER","name":"broker","holder":-1,"entity_id":303,"mandates":[],"holder_name":"","flags":["ACTIVE"]}]"#).unwrap();
+        std::fs::write(dir.join("settings.json"), r#"{"population_cap":90,"invasions":true,"other":["VISITOR_CAP=300"]}"#).unwrap();
+        fill_from_export_files(&mut w, &dir);
+        assert_eq!(w.nobles.len(), 1);
+        assert_eq!((w.nobles[0].token.as_str(), w.nobles[0].holder), ("BROKER", -1));
+        assert_eq!(w.settings.population_cap, 90);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

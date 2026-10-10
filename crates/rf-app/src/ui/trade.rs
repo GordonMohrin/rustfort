@@ -28,16 +28,15 @@ pub fn money(v: i32) -> String {
     format!("{v}☼")
 }
 
-fn item_text(w: &World, it: &Item) -> String {
-    let mut d = if !it.name.is_empty() {
-        it.name.clone()
-    } else if !it.desc.is_empty() {
-        it.desc.clone()
-    } else {
-        super::pretty(&it.kind).to_lowercase()
-    };
-    if it.stack > 1 && !d.starts_with(char::is_numeric) {
-        d = format!("{} x{}", d, it.stack);
+fn item_text(_w: &World, it: &Item) -> String {
+    // The exporter's `desc` is DF's own description, quality marks and stack size included
+    // (`*iron bolts [25]*`, `+cherry wood bin <#15>+`).
+    if !it.desc.is_empty() {
+        return if it.name.is_empty() { it.desc.clone() } else { format!("{} ({})", it.name, it.desc) };
+    }
+    let mut d = if !it.name.is_empty() { it.name.clone() } else { super::pretty(&it.kind).to_lowercase() };
+    if it.stack > 1 {
+        d = format!("{d} [{}]", it.stack);
     }
     let q = match it.quality {
         1 => "-",
@@ -47,11 +46,7 @@ fn item_text(w: &World, it: &Item) -> String {
         5 => "☼",
         _ => "",
     };
-    if !q.is_empty() {
-        d = format!("{q}{d}{q}");
-    }
-    let _ = w;
-    d
+    format!("{q}{d}{q}")
 }
 
 /// Value of an item plus everything inside it (bins, barrels), like DF's trade list.

@@ -136,13 +136,13 @@ pub fn sheet_section(g: &mut Game, b: &Building, x: f32, mut y: f32, bw: f32, bo
     let bh = GH * s + 8.0 * s;
     let mut act = DevAct::None;
     let st = device_state(b);
-    let kind_line = match b.kind.as_str() {
-        "Trap" => trap_name(&b.subtype),
-        "Bridge" => format!("Bridge, {}", bridge_direction(&b.direction)),
-        k => super::words(k),
-    };
-    g.font.draw(&clip(&kind_line, maxc), x, y, s, col::BORDER_HI);
-    y += lh;
+    if b.kind == "Bridge" {
+        let d = bridge_direction(&b.direction);
+        let mut c = d.chars();
+        let d = c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default();
+        g.font.draw(&clip(&format!("{d} when pulled"), maxc), x, y, s, col::BORDER_HI);
+        y += lh;
+    }
     if !st.is_empty() {
         let c = if st.contains("locked") || st.contains("raised") || st.contains("forbidden") { col::TEXT_HI } else { col::TEXT_GOOD };
         g.font.draw(&clip(&format!("State: {st}"), maxc), x, y, s, c);

@@ -223,10 +223,12 @@ fn draw_picker(g: &mut Game, token: &str, r: Rect) -> Option<NAct> {
     let name = g.sim.world.nobles.iter().find(|n| n.token == token).map(position_name).unwrap_or_else(|| super::pretty(token));
     g.font.draw(&format!("Appoint {}", name.to_lowercase()), x, y, s, col::TEXT_HI);
     y += lh;
-    if let Some(sk) = skill {
-        g.font.draw(&format!("Sorted by {}", super::pretty(sk).to_lowercase()), x, y, s, col::TEXT_DIM);
-        y += lh;
-    }
+    let how = match skill {
+        Some(sk) => format!("Sorted by {}; * holds another position", super::pretty(sk).to_lowercase()),
+        None => "* holds another position".to_string(),
+    };
+    g.font.draw(&clip(&how, ((r.w - 2.0 * pad) / (8.0 * s)) as usize), x, y, s, col::TEXT_DIM);
+    y += lh;
     y += 4.0 * s;
     let holders: Vec<i32> = g.sim.world.nobles.iter().filter(|n| n.token != token).map(|n| n.holder).collect();
     let mut list: Vec<(i32, String, i32)> = g

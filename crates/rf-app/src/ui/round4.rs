@@ -154,7 +154,10 @@ pub fn draw_popup(g: &mut Game) {
     let Some(p) = g.r4.popup.clone() else { return };
     let s = g.ui.scale;
     let (sw, sh) = (screen_width(), screen_height());
-    let tw = g.font.width(&p.text, s) + 60.0 * s;
+    let bw = 16.0 * 8.0 * s;
+    let gap = 16.0 * s;
+    let n = if p.trade { 3.0 } else { 1.0 };
+    let tw = (g.font.width(&p.text, s) + 60.0 * s).max(n * bw + (n - 1.0) * gap + 48.0 * s);
     let (w, h) = (tw.clamp(420.0 * s, sw - 40.0), 132.0 * s);
     let r = Rect::new((sw - w) / 2.0, (sh - h) / 2.5, w, h);
     draw_rectangle(0.0, 0.0, sw, sh, Color::new(0.0, 0.0, 0.0, 0.25));
@@ -165,10 +168,7 @@ pub fn draw_popup(g: &mut Game) {
     y += 1.5 * GH * s + 12.0 * s;
     g.font.draw(&p.text, r.x + (w - g.font.width(&p.text, s)) / 2.0, y, s, col::TEXT);
     let bh = 26.0 * s;
-    let bw = 16.0 * 8.0 * s;
     let by = r.y + r.h - bh - 14.0 * s;
-    let gap = 16.0 * s;
-    let n = if p.trade { 3.0 } else { 1.0 };
     let mut bx = r.x + (w - n * bw - (n - 1.0) * gap) / 2.0;
     if p.trade {
         if text_button(&mut g.ui, &g.font, Rect::new(bx, by, bw, bh), "Trade", BtnState::Normal) {
@@ -281,8 +281,11 @@ pub fn draw_settings(g: &mut Game) {
     }
     y += bh + 4.0 * s;
     let pi = g.sim.population_info();
-    let note = format!("{} citizens now. Migrants stop at the cap (DF d_init POPULATION_CAP).", pi.citizens);
-    g.font.draw(&super::clip(&note, ((w - 2.0 * pad) / (8.0 * s)) as usize), x, y, s, col::TEXT_DIM);
+    let maxc = ((w - 2.0 * pad) / (8.0 * s)) as usize;
+    let note = format!("{} citizens now; migrants stop coming at the cap.", pi.citizens);
+    g.font.draw(&super::clip(&note, maxc), x, y, s, col::TEXT_DIM);
+    y += lh;
+    g.font.draw(&super::clip("DF: d_init POPULATION_CAP (0 = no cap).", maxc), x, y, s, col::TEXT_DIM);
     y += lh + 12.0 * s;
     // Invasions (DF world/d_init setting; sieges start at population 80).
     let inv = g.sim.invasions_enabled();

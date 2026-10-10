@@ -142,6 +142,7 @@ pub fn building_sheet(g: &mut Game, id: i32, r: Rect) {
     let mat = if has_mat { g.sim.world.material(b.mat).map(|m| m.name.clone()).unwrap_or_default() } else { String::new() };
     let what = match b.kind.as_str() {
         "Civzone" => "Zone".to_string(),
+        "Trap" => super::devices::trap_name(&b.subtype), // [round 4]
         k => words(k),
     };
     let title = building_title(g, &b);
@@ -359,7 +360,8 @@ pub fn building_sheet(g: &mut Game, id: i32, r: Rect) {
                 lines.push(format!("{furn} pieces of furniture inside"));
             }
             if !b.items.is_empty() {
-                lines.push(format!("{} items inside", b.items.len()));
+                let n = b.items.len();
+                lines.push(format!("{n} item{} inside", if n == 1 { "" } else { "s" }));
             }
             for l in lines {
                 g.font.draw(&clip(&l, maxc), x, y, s, col::TEXT);
