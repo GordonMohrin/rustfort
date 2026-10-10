@@ -29,6 +29,9 @@ pub struct R4Ui {
     pub trade_polled: f64,
     /// A caravan was present at the last poll (arrival = it appears).
     pub caravan_here: bool,
+    /// The first poll after start/load happened (a caravan already there is not announced,
+    /// like loading a save in DF).
+    pub polled_once: bool,
     /// The sim announced the caravan itself in the last batch (no duplicate line).
     pub sim_announced_caravan: bool,
     pub popup: Option<Popup>,
@@ -115,11 +118,12 @@ pub fn poll_trade(g: &mut Game, force: bool) {
 
 /// Once per frame: caravan arrival like DF ("A caravan from X has arrived.").
 pub fn update(g: &mut Game) {
-    poll_trade(g, g.screen == Screen::Trade);
+    poll_trade(g, g.screen == Screen::Trade || !g.r4.polled_once);
     let here = g.r4.trade.is_some();
-    if here && !g.r4.caravan_here {
+    if here && !g.r4.caravan_here && g.r4.polled_once {
         caravan_arrived(g);
     }
+    g.r4.polled_once = true;
     g.r4.caravan_here = here;
     g.r4.sim_announced_caravan = false;
 }

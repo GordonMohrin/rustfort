@@ -49,6 +49,11 @@ The defaults below are Steam DF's. Your own `interface.txt` overrides them.
 | Build | toolbar hammer: pick a category, then a building; a green/red ghost follows the mouse, click to place (farm plots: drag) | `b` |
 | Zones | toolbar zone button: pick a type and drag, or click a zone to select it | `z` |
 | Building sheet | left click a workshop, farm plot, stockpile or piece of furniture | |
+| Doors and hatches | building sheet: Lock / Unlock, Forbid / Allow passage, Pet-passable, Internal | |
+| Levers | building sheet: "Pull lever", "Link to..." then click a door, bridge, floodgate, hatch, cage, grate, bars or spikes | right click / Esc cancels linking |
+| Trade | trade depot sheet "Trade" / "Move goods to depot", or "Trade" in the caravan box | |
+| Nobles | toolbar (left group, crown) | `n` (DF's `D_NOBLES`) |
+| Settings (population cap, invasions) | Esc menu "Settings" | |
 | Work orders | toolbar (left group) | `o` |
 | Labor | toolbar (left group) | `y` |
 | Save | Esc menu "Save game" | F5 (quicksave) |
@@ -60,7 +65,9 @@ it, the box size (`5x3x2`) follows the cursor.
 
 The top bar shows pause/speed, the date (`15th Granite, 250`), the season, the **ticks/s
 actually reached** (green = on target), FPS, the sim milliseconds per frame, population, and the
-z-level (plus the elevation for imported forts). The bar at the right edge shows sky, surface
+z-level (plus the elevation for imported forts). Hover the population for citizens, children,
+the population cap, the next migrant wave and the expected caravan (`Sim::population_info`);
+the Creatures screen shows the same line above the citizens. The bar at the right edge shows sky, surface
 and underground; click it to jump. Announcements appear at the bottom left; click one that has a
 position to jump there.
 
@@ -125,6 +132,38 @@ position to jump there.
   siege, "An ambush! Curse them!", "<Name> has come!" for megabeasts) with "Center on them".
   Hostiles arriving within a day of the first belong to the same wave. Wild animals only get an
   announcement. A siege already in progress when the fort is loaded only gets an announcement.
+- **Doors, levers, bridges, traps** (round 4, `ui/devices.rs`): the building sheet shows the
+  state from the building flags (`closed, locked`, `raised`, `pulled`, `armed`). Doors and
+  hatches get Lock / Forbid passage / Pet-passable / Internal (`Sim::set_building_flag` with
+  `LOCKED`, `FORBIDDEN`, `PET_PASSABLE`, `INTERNAL`). Levers and pressure plates get "Pull lever"
+  (`Sim::pull_lever`) and "Link to..." (`Sim::link_building`; linkable targets on the current
+  level are outlined, the one under the mouse in yellow; the hint shows the mechanisms in stock,
+  DF needs 2 per link). The sheet lists the links in both directions (lever -> targets, target
+  -> levers) with their state; click one to go there. On the map the selected device's links are
+  outlined with a line to each (targets on other levels get a `z131` marker). Bridges show the
+  raise direction, traps their contents (weapons, stone, a caught creature).
+- **Trade** (round 4, `ui/trade.rs`): two columns like the Steam screen, the merchants' goods
+  (`TradeStatus::goods`) and your goods in the depot (`fort_goods`), each with DF's own item
+  description and value in ☼ (a bin counts with its contents). Click items to select; the
+  merchants' valuation (`Sim::trade(offer, request, false)`) updates with the selection,
+  "Offer" shows their reply, "Trade" commits. "Move goods to depot" lists tradeable goods
+  (top-level items, not forbidden, owned, rotten, built or artifacts) by value with a search
+  field; "Bring N to the depot" calls `Sim::move_to_depot`. When a caravan appears
+  (`Sim::trade_status`), the log says "A caravan from X has arrived." (unless the sim announced
+  it) and, if your DF `announcements.txt` gives `CARAVAN_ARRIVAL` the `BOX` (or `P`) flag, as
+  yours does, the game pauses with a box offering Trade / Go to depot / OK.
+- **Nobles** (round 4, `ui/nobles.rs`): every position of `World::nobles` with its holder and
+  mandates. How each is filled follows the vanilla dwarf entity raws: manager, bookkeeper,
+  broker, chief medical dwarf, militia commander, sheriff, captain of the guard and hammerer are
+  appointed by the fort ("Appoint" / "Replace" opens a citizen picker sorted by the position's
+  skill, `Sim::appoint`), the mayor is elected, militia captains are set in the squads screen,
+  barons and the like are appointed by the monarch.
+- **Settings** (Esc menu): population cap -10/-1/+1/+10 (`Sim::set_population_cap`, DF's
+  d_init `POPULATION_CAP`) and the invasions switch (`Sim::set_invasions`).
+- **Liquids**: water and magma use Premium's `LIQUIDS` page, one sprite per depth 1-7 (1-3
+  translucent, 4-7 opaque and darker) with the depth number, and `UNDERWATER_EDGE_*` foam on the
+  dry tiles around a pool. Tiles are redrawn every frame, so flowing water moves as the sim
+  changes it. The tooltip says e.g. "Water depth 4/7 (wading depth)" (plus salty, stagnant).
 - **Stocks** in the top bar: drink units, food units and distinct foods, recounted every second
   (red below 2 per citizen). Food = prepared meals, meat, fish, cheese, eggs and plants that
   are edible raw or cooked according to the save's plant raws; rotten and dumped items do not
@@ -145,10 +184,24 @@ save 0.07 s, 1.4 MB on disk (45.5 MB raw bincode); load 0.11 s plus 0.05 s `Sim:
 
 ## Speed model
 
-The sim runs in the main loop, inside a per-frame budget of at most 12 ms (and at most 75 % of
-a frame at `--gfps`), so rendering stays at 60 fps even at "max". At 1x/2x/5x a tick accumulator
-targets 100/200/500 ticks/s. The batch size of `Sim::run_ticks` adapts so that each call takes
-about 1 ms.
+Since round 4 the sim runs on its own thread (`simthread.rs`). The UI thread holds the `Sim`
+while it handles input and builds the frame (about 1 ms), then hands it to the worker with a tick
+allowance before the GPU flush and the vsync wait, and takes it back at the start of the next
+frame. The `Sim` is moved, never shared, so there are no locks and the sim stays deterministic.
+The worker runs `Sim::run_ticks` in chunks of about 0.5 ms and checks between chunks whether the
+UI wants it back. At "max" the allowance is unlimited; at 1x/2x/5x a tick accumulator targets
+100/200/500 ticks/s.
+
+Measured on the real fort (round-3 export, 357 units, running siege), `--speed max`, game span
+tick 60,000 to 260,000 (`RUSTFORT_MEASURE=60000,260000`), Ryzen 5 5600X with other builds
+running:
+
+| | ticks/s | frame CPU | FPS |
+|---|---|---|---|
+| sim in the frame (`--sim-inline`, the old model: 12 ms budget per frame) | 44,600-48,100 | 12.7-14.2 ms | 58-59 |
+| sim thread | 58,300-62,800 (worker busy 93 %) | 0.6-0.7 ms | 60 |
+
+`--sim-inline` (or `RUSTFORT_SIM_THREAD=0`) keeps the old model for comparisons.
 
 Vsync is on in play mode and off for screenshots. `RUSTFORT_VSYNC=0` turns it off, and the app
 then paces itself to `--gfps N` (default 60).
@@ -169,6 +222,11 @@ rustfort play --screenshot target/shots/a.png --frames 20 --view 48,48,22,1 \
   `crop:<season>`, `squads[:id]`, `assign:<position>` (citizen picker), `killlist`, `station`
   (station tool), `burrows[:id]`, `burrow-tool`, `reports[:filter]`, and `spawn-hostile`
   (test hook: the 8 non-citizens nearest the camera turn hostile, so the arrival alert fires).
+  Round 4: `trade`, `depot[:search]` (move-goods picker), `nobles`, `appoint[:TOKEN]`,
+  `settings`, `link` (link tool for the building selected with `bld:`), `caravan-popup` (the
+  arrival box without a caravan).
+- Screenshot runs print the average ticks/s and, with the sim thread, how busy the worker was;
+  `RUSTFORT_MEASURE=a,b` prints the real time from sim tick a to b.
 - `--mouse x,y` parks the cursor.
 - `--script` replays input per frame: `move`, `click`, `ldown`, `lup`, `rclick`, `mdown`,
   `mup`, `wheel n`, `key k` (also `f5`, `backspace`, `tab`), `char c`, `mods shift|ctrl|none`.
@@ -186,13 +244,17 @@ screenshots under `target/`, never in git.
 - `font.rs`: DF CP437 bitmap font.
 - `script.rs`: scripted input.
 - `bench.rs`: headless benchmark.
+- `simthread.rs`: the sim worker thread (`SimHandle` derefs to `Sim` while the UI holds it).
 - `save.rs`: save games (bincode + zstd), save list, `savebench`.
 - `ui/`: `topbar` (plus stocks, hostile counter), `toolbar` (data-driven button tables plus
   Dig/Stockpile submenus), `build` (build and zone menus, placement ghost, zone overlay),
   `building` (building sheet), `orders` (work orders), `labor` (labor grid), `panels` (unit
   sheet, tile info, citizens), `psyche` (Thoughts/Needs/Personality/Health/Relations tabs and
   DF's wording), `military` (squads screen), `burrows` (burrow menu and overlay), `reports`
-  (announcement history), `alerts` (hostile markers and the arrival pop-up) and `overlay`
-  (announcements, tooltips, Esc menu with save/load).
-- `load.rs` also fills squads, burrows and creature/weapon/armor raws from the export's side
-  files when the importer left them empty (round-2 and round-3 formats).
+  (announcement history), `alerts` (hostile markers and the arrival pop-up), `devices` (doors,
+  levers, bridges, traps, link tool and map highlight), `trade` (trade screen, move goods to
+  depot), `nobles` (nobles screen), `round4` (caravan arrival box, population lines, settings
+  page) and `overlay` (announcements, tooltips, Esc menu with save/load/settings).
+- `load.rs` also fills squads, burrows, creature/weapon/armor raws and (round 4) entities,
+  nobles, settings and historical figure names from the export's side files when the importer
+  left them empty.

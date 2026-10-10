@@ -228,7 +228,7 @@ pub fn draw_toolbar(g: &mut Game) -> f32 {
             }
             Tool::Link(_) => {
                 let n = super::devices::mechanisms(&g.sim.world);
-                top = draw_hint(g, cx, y, &format!("Link: click a bridge, door, floodgate, hatch, cage, grate, bars or spikes ({n} mechanisms in stock). Right-click cancels."));
+                top = draw_hint(g, cx, y, &format!("Link lever: click a door, bridge, floodgate, hatch, cage or grate ({n} mechanisms). Right-click cancels."));
             }
             _ => {}
         },

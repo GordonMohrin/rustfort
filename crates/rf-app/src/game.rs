@@ -1535,6 +1535,11 @@ pub async fn run(args: Args, loaded: Loaded) {
     let mut deadline = Instant::now();
     // [round 4] Average speed since the first frame (screenshot runs report it).
     let mut started: Option<(Instant, u64, f64)> = None;
+    let measure: Option<(u64, u64)> = std::env::var("RUSTFORT_MEASURE").ok().and_then(|v| {
+        let p: Vec<u64> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+        (p.len() == 2 && p[1] > p[0]).then(|| (p[0], p[1]))
+    });
+    let mut window: (Option<(Instant, u64)>, Option<f64>) = (None, None);
     // Scripted input (screenshot tests); `--mouse` alone is a script that only parks the mouse.
     let mut script = match (&args.script, args.mouse) {
         (Some(s), m) => match crate::script::Script::parse(s, m) {
@@ -1553,6 +1558,21 @@ pub async fn run(args: Args, loaded: Loaded) {
         g.after_acquire();
         if started.is_none() && frame == 2 {
             started = Some((Instant::now(), g.sim.ticks(), g.sim.busy_secs()));
+        }
+        // `RUSTFORT_MEASURE=a,b`: real time from sim tick a to tick b (same game span in any
+        // mode), printed once and at the screenshot.
+        if let Some((a, b)) = measure {
+            let t = g.sim.ticks();
+            if window.0.is_none() && t >= a {
+                window.0 = Some((Instant::now(), t));
+            }
+            if let (Some((t0, k0)), None) = (window.0, window.1) {
+                if t >= b {
+                    let secs = t0.elapsed().as_secs_f64();
+                    window.1 = Some((t - k0) as f64 / secs.max(1e-6));
+                    eprintln!("measure: ticks {k0}..{t} in {secs:.2}s = {:.0} ticks/s ({})", window.1.unwrap_or(0.0), if g.sim.threaded() { "sim thread" } else { "inline" });
+                }
+            }
         }
         let f0 = Instant::now();
         let dt = get_frame_time().min(0.1);
