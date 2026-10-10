@@ -43,7 +43,7 @@ fn add_raws(w: &mut World) {
         vec![caste("FEMALE", "cat", 5_000, &["PET", "HUNTS_VERMIN", "ADOPTS_OWNER"]), caste("MALE", "cat", 5_000, &["PET", "HUNTS_VERMIN", "ADOPTS_OWNER"])],
     ));
     w.creature_raws.push(raw("BIRD_CHICKEN", "chicken", vec![caste("FEMALE", "hen", 3_000, &["PET", "LAYS_EGGS"]), caste("MALE", "rooster", 3_000, &["PET"])]));
-    w.creature_raws.push(raw("DEER", "deer", vec![caste("FEMALE", "doe", 140_000, &["GRAZER"]), caste("MALE", "stag", 140_000, &["GRAZER"])]));
+    w.creature_raws.push(raw("DEER", "deer", vec![caste("FEMALE", "doe", 140_000, &["GRAZER", "NATURAL_ANIMAL"]), caste("MALE", "stag", 140_000, &["GRAZER", "NATURAL_ANIMAL"])]));
     w.creature_raws.push(raw("GOBLIN", "goblin", vec![caste("MALE", "goblin", 60_000, &[])]));
 }
 

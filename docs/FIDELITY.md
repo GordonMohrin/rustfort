@@ -105,6 +105,7 @@ reported as a floor (`min_tier`). Once the exporter writes the engravings into
 | Rot protection | stockpile, carried, in a job; containers do not protect outside piles | same (w:Rot) | OK |
 | Raw fish | rots everywhere | same (w:Rot) | OK |
 | Never rot | seeds, drinks, flour, fat, milk | same (w:Rot) | OK |
+| Eggs | never rot (were perishable) | "Eggs do not appear to go rotten" (w:Nest box) | FIXED r8 |
 | Plants wither, no miasma | plants wither | same (w:Rot) | OK |
 | Rot timer | 28 days, rotted away after 28 more | not given on the wiki | ESTIMATE |
 | Miasma | not simulated | rotting corpses and food make miasma, which spreads orthogonally (w:Rot) | MISSING |
@@ -204,6 +205,62 @@ reported as a floor (`min_tier`). Once the exporter writes the engravings into
 | Swimming skill | swimmers keep their heads above 4/7-6/7 water | w:Swimming | OK |
 | Temperature, freezing, steam | not simulated (Gordon's world has temperature off) | w:Temperature | MISSING |
 | Pumps, screw pumps | not simulated | w:Screw pump | MISSING |
+
+## animals.rs (round 8)
+
+| rule | Rustfort | DF (source) | class |
+|---|---|---|---|
+| Who eats | only tame grazers (caste `GRAZER`); other tame animals need no food or drink | same (w:Grazer, w:Pasture) | OK |
+| Grazer hunger | +1 per tick, death at 100 000 ("has starved to death") | same (w:Grazer) | OK |
+| GRAZER value | 20000 x 100 x (max size / 10)^-0.75, clamped 150..3 000 000 (cow 521) | same formula and table (w:Grazer) | OK |
+| Grass per bite | 1 % of a tile takes GRAZER / 100 hunger off; ten times the value needs a tenth of the grass | "A creature with ten times the grazer value needs one tenth the amount of grass" (w:Grazer) | OK |
+| Eaten-bare tile | reverts to a soil floor (soil of the tile below) | "reverted to the base layer material" (w:Grazer) | OK |
+| Grass regrowth | 1 % per 200 ticks, back to grass at 20 % | rate not given; we derive it from the rule of thumb "20000 = GRAZER x tiles" | ESTIMATE |
+| No regrowth in mountain biomes | not modelled (biome not exported) | w:Grazer, w:Pasture | MISSING |
+| Grazing start | at hunger 2 000 | not given | ESTIMATE |
+| Pastures | Pen/Pasture zone; an Animal hauling dwarf leads the animal there; it strolls inside the zone | same (w:Pasture) | OK |
+| Unpastured animals | wander anywhere (graze where they stand) | "gravitate to a meeting area" (w:Pasture) | MISSING |
+| Fleeing from enemies | pastured animals do not flee | they flee (w:Pasture) | MISSING |
+| Caged animal assigned to a pasture | uncaged and led there; the cage item stays marked occupied | uncaged and brought there (w:Pasture) | OK (cage bookkeeping: MISSING) |
+| Mating | adult tame female + male of the race on adjacent tiles, idle | same (w:Breeding) | OK |
+| Mating chance | 1/5 per 100 ticks of adjacency | not given | ESTIMATE |
+| Not interested | 5 % of animals | 5 % (w:Breeding) | OK |
+| Caps | no pregnancy at 50 of a race on the map or > 75 % children | same (w:Breeding) | OK |
+| Gestation | 6 months | 6 months for non-sentients (w:Breeding) | OK |
+| Litter | 1-3; `MULTIPLE_LITTER_RARE` 1 (1/500: 1-3) | LITTERSIZE default 1-3 (w:Creature token) | OK |
+| Young | born tame, adult at 1 year (vanilla `CHILD:1`), size from 1/10 to adult | raws BODY_SIZE by age | ESTIMATE (size) |
+| Eggs | adult `LAYS_EGGS` female claims a free nest box when ready, lays `CLUTCH_SIZE` eggs; next clutch 3 months later | same (w:Egg, w:Nest box, raws) | OK |
+| Fertile eggs | a mating fertilizes for 6 months and 2 layings; fertile eggs left in the box hatch exactly 3 months after laying | same (w:Egg) | OK |
+| Egg collection | food haulers take unforbidden eggs to food piles (they become food) | same (w:Nest box) | OK |
+| Infertile eggs in a box | do not block the box | not documented | ESTIMATE |
+| Milking | `MILKABLE` female, recharge 20 000 ticks (raws), milk into an empty bucket at the Farmer's workshop | same (w:Milking, raws) | OK |
+| Shearing | sheep, llama, alpaca; again after 300 days; wool as a body part (`ShearCreature` order now runs) | same (w:Shearing) | OK |
+| Animal walks to the workshop | the animal walks there itself while the dwarf fetches the bucket | the dwarf leads it (w:Milking) | ESTIMATE |
+| Products | 1 milk, 1 wool, 1 cheese per milk, 1 yarn per wool, 2 fish per raw fish | not given | ESTIMATE |
+| Work times | milk 200, shear 300, cheese 300, spin 300, clean fish 200, train 500, fish 600 ticks | not given | ESTIMATE |
+| Slaughter | marked animal (not a pet) led to the butcher's shop by a butcher, killed, auto "Butcher a dead animal" job | same (w:Butcher's shop, w:Pet) | OK |
+| Training levels | WildUntamed .. MasterfullyTrained, Domesticated | same names and order (w:Animal training) | OK |
+| Who can be trained | taming needs PET/PET_EXOTIC, wild animals caged; war/hunting need TRAINABLE_* and adults | same (w:Animal training) | OK |
+| Training knowledge | +10 points per training job per species | same (w:Animal training) | OK |
+| Training success | 40 % + 4 %/skill level + knowledge/20 (max 20 %), cap 95 % | thresholds not given | ESTIMATE |
+| Reverting | trained adults lose a level after 4 months without training; "reverted to a semi-wild state"; young trained once stay domesticated; bought/born tame never revert | same behaviour, timing not given (w:Animal training) | ESTIMATE (timing) |
+| Training zone | not required | war/hunting training needs an animal training zone (or pasture) | MISSING |
+| Knowledge to the civilization at caravan departure | not modelled | w:Animal training | MISSING |
+| War animals | follow their dwarf; attack hostiles within 10 tiles | same (w:War animal) | OK (range ESTIMATE) |
+| Hunting animals | follow their hunter and attack the prey | same (w:Hunting) | OK |
+| Pet adoption | idle citizen within 3 tiles of a stray pet, 1/20 per day; cats (`ADOPTS_OWNER`) choose anybody; "after adopting a new pet" | same; chance depends on preferences (w:Pet) | ESTIMATE (chance) |
+| Pets | follow the owner, cannot be slaughtered, "after interacting with a pet" 1/7 per day near the owner | same (w:Pet) | ESTIMATE (rate) |
+| Available-for-adoption toggle | every stray tame pet is available | per-animal toggle (w:Pet) | MISSING |
+| Hunting | labor Hunting, crossbow + bolts, wild butcherable prey, 1 bolt per shot, cancelled without bolts, corpse carried to the butcher | same (w:Hunting) | OK |
+| Hunting rolls | hit 30 % + 4 %/crossbow + 2 %/ambusher level, 1 + size/100 000 hits kill, range 10 | combat model, sneaking | ESTIMATE |
+| Hunting gear | reserved from the stockpile, not carried | the hunter equips crossbow, quiver, bolts | ESTIMATE |
+| Prey flees | no | wild animals flee | MISSING |
+| Fishing | labor Fishing, fishing zones preferred, else any water; pond turtles in non-natural water, cave fish/lobsters in caverns | same (w:Fishing) | OK |
+| Overfishing | 40 catches per water body per season, refilled at season change | depletion and refill at season change (w:Fishing); amount not given; permanent depletion missing | ESTIMATE |
+| Catch chance | 30 % + 5 %/Fishing level per 600-tick try | not given | ESTIMATE |
+| Prepare raw fish | Fishery, labor Fish cleaning, auto job when raw fish exists | same (w:Fishery, auto fishery standing order) | OK |
+| Cats and vermin | `HUNTS_VERMIN` cats kill a vermin 1/4 per day (rat remains, refuse) | vermin are real creatures in DF | ESTIMATE |
+| Off-map animals in the export | not simulated (80 tame animals at pos -30000 in round 5) | | ESTIMATE |
 
 ## Known gaps worth doing next (economy & society)
 

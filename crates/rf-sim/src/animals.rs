@@ -179,7 +179,8 @@ pub(crate) struct Species {
     pub vermin: bool,
     pub adopts: bool,
     pub litter_rare: bool,
-    pub butcherable: bool,
+    /// Wildlife a hunter goes after: a natural, butcherable, non-sapient animal.
+    pub huntable: bool,
     pub adult_size: i32,
     /// (caste token, caste name, sex) for newborns.
     pub castes: Vec<(String, String, i8)>,
@@ -457,7 +458,7 @@ impl Sim {
                 vermin: has("HUNTS_VERMIN"),
                 adopts: has("ADOPTS_OWNER"),
                 litter_rare: has("MULTIPLE_LITTER_RARE"),
-                butcherable: !has("NOT_BUTCHERABLE"),
+                huntable: !has("NOT_BUTCHERABLE") && has("NATURAL_ANIMAL") && !has("CAN_LEARN") && !has("CAN_SPEAK"),
                 adult_size: adult,
                 castes,
             };
@@ -596,7 +597,7 @@ impl Sim {
             return false;
         }
         let u = &self.world.units[ai.uidx];
-        u.flags.tame && !u.flags.hostile && !u.flags.dead && !u.flags.caged && !u.flags.merchant && !u.flags.inactive
+        u.flags.tame && !u.flags.hostile && !u.flags.dead && !u.flags.caged && !u.flags.merchant && !u.flags.visitor && !u.flags.inactive
     }
 
     fn an_is_adult(&self, s: usize) -> bool {
@@ -1251,7 +1252,7 @@ impl Sim {
             if st.sp != NO_SP && st.req != 0 && st.held == NONE && !u.flags.dead {
                 train += 1;
             }
-            if !u.flags.tame && !u.flags.hostile && !u.flags.caged && ai.kind == Kind::Animal && st.sp != NO_SP && self.animals.species[st.sp as usize].butcherable {
+            if !u.flags.tame && !u.flags.hostile && !u.flags.caged && ai.kind == Kind::Animal && st.sp != NO_SP && self.animals.species[st.sp as usize].huntable {
                 targets += 1;
             }
         }
@@ -1698,7 +1699,7 @@ impl Sim {
         if !want || now < self.animals.next_try.get(s).copied().unwrap_or(0) {
             return false;
         }
-        if s >= self.animals.next_try.len() {
+        if self.animals.st.len() < self.ai.len() {
             self.animals_ensure();
         }
         self.animals.next_try[s] = now + 300 + (s as u64 % 50);
@@ -1796,7 +1797,7 @@ impl Sim {
         if now < self.animals.next_try.get(s).copied().unwrap_or(0) {
             return false;
         }
-        if s >= self.animals.next_try.len() {
+        if self.animals.st.len() < self.ai.len() {
             self.animals_ensure();
         }
         self.animals.next_try[s] = now + 400 + (s as u64 % 64);
@@ -1822,7 +1823,7 @@ impl Sim {
                 continue;
             }
             let st = self.animals.st[t];
-            if st.sp == NO_SP || !self.animals.species[st.sp as usize].butcherable || st.held != NONE || now < st.retry {
+            if st.sp == NO_SP || !self.animals.species[st.sp as usize].huntable || st.held != NONE || now < st.retry {
                 continue;
             }
             let tp = self.ai[t].pos as usize;
