@@ -12,6 +12,13 @@
 //!   (Gordon's fort has Situational awareness up to 126 and Growing 150).
 //! - **Item quality** depends on the maker's skill (w:Item quality): past a high skill a maker
 //!   almost always makes at least exceptional items, and masterworks are capped at a 1/3 chance.
+//!   [metal12] Workshop products use the wiki's quality-point formula (w:Skill, "item quality
+//!   formula", [`quality_points_roll`]): `rand(0..10) + 2 x rand(0..5 level / 2)` plus the
+//!   skill's physical and mental attributes (primary / 100, the others / 250), times the focus,
+//!   +10 per matching item / material preference; 22 / 30 / 35 / 45 / 55 points for well-crafted
+//!   .. masterwork (1/3, else exceptional). Preferences are not exported yet (0). Status
+//!   penalties: dehydrated, starving and very drowsy halve level and points (each; pain, nausea,
+//!   exertion are not modelled). Meals still use the old roll.
 //! - **Military training** (w:Training): soldiers without a partner do individual drills that
 //!   improve one skill at a time; two squadmates with at least Competent (3) Fighting spar,
 //!   which trains every usable combat skill (weapon, Fighting, Wrestling, Discipline, Dodging,
@@ -24,7 +31,10 @@
 //!   consoling a stressed partner, pacifying or intimidating in an argument.
 //!
 //! # Estimates (not on the wiki, fitted to Gordon's r4 -> r5 history)
-//! - Quality roll: a floor of skill / 4 (the remainder as a chance), then up to 3 more levels,
+//! - [metal12] Which attributes feed the quality formula per skill comes from the wiki's
+//!   attribute lists; which one is primary is an estimate ([`quality_attrs`]).
+//! - Meal quality roll (`quality_roll`, used by `lifestyle.rs`): a floor of skill / 4 (the
+//!   remainder as a chance), then up to 3 more levels,
 //!   each with chance 0.55; a result of masterwork or better is a masterwork with chance 1/3,
 //!   otherwise exceptional. At skill 2 that gives 45 / 25 / 14 / 17 % ordinary .. superior
 //!   (Gordon's leather armor by skill 1-3 leatherworkers: 39 / 34 / 12 / 15 %), at 16 82 %
@@ -208,6 +218,14 @@ impl Sim {
                 (u.skill(skill), get(&u.phys_attrs, pa), get(&u.ment_attrs, ma))
             };
             let focus = self.social_rating(s, 100);
+            // [metal12] Skill penalties (w:Skill): dehydrated, starving, very drowsy -50 % each.
+            let (th, hu, sl) = self.needs_now(&self.ai[s]);
+            let mut penalty = 100;
+            for bad in [th >= crate::needs::DEHYDRATED, hu >= crate::needs::STARVING, sl >= crate::needs::VERY_DROWSY] {
+                if bad {
+                    penalty /= 2;
+                }
+            }
             let mut r = Rng::for_unit(self.seed, s, now, 0x9A11);
             let mut masterworks: Vec<i32> = Vec::new(); // [calib11-social]
             for id in first..self.next_item_id {
@@ -217,7 +235,7 @@ impl Sim {
                     continue;
                 }
                 quality = true;
-                let q = quality_points_roll(level, phys, ment, focus, 100, 0, &mut r); // [metal12]
+                let q = quality_points_roll(level, phys, ment, focus, penalty, 0, &mut r); // [metal12]
                 if it.value > 0 && q != it.quality {
                     let old = crate::trade::quality_mult(it.quality).max(1);
                     it.value = (it.value as i64 * crate::trade::quality_mult(q) / old) as i32;
