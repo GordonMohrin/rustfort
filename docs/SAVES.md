@@ -115,6 +115,20 @@ Round 11, r5 seed 1, through the save encoding (MessagePack round trip as in for
 | 20,000 | 20,000 | identical |
 | 403,200 | 403,200 | identical |
 
+Also identical: r6 seed 2 N 50,000 / M 50,000, r4 seed 3 N 100,000 / M 60,000, and through a
+real save file (`rustfort savebench`, +2,000 ticks after the load).
+
+Cost on the real fort after 20,000 ticks (`savebench`, measured while other builds and a chaos
+run loaded the machine, so absolute times are pessimistic):
+
+| | round 10 | round 11 |
+|---|---|---|
+| snapshot (raw, in the body) | | 45 MB (nav 35 MB, item index 8 MB) |
+| snapshot compressed (zstd-3 alone) | | 1.5 MB (landmark tables 0.84 MB) |
+| file | 1.9 MB | 3.4 MB |
+| `world_for_save` + save total | 0.36 s | 0.30 s + 0.51 s |
+| load + `Sim::new` | 0.43 s + 0.69 s | 0.30 s + 0.35 s (no init passes, no landmark build; the layout check is ~0.2 s of it) |
+
 Round 10 (before the snapshot), for reference:
 `cargo run -p rf-sim --release --example saveload -- --n 20000 --m 20000 --every 100` on r5:
 right after the load the `ticks`, `units` (positions and needs of every unit), `tiles`, `items`,
