@@ -265,7 +265,7 @@ Wiki pages checked: Combat, Material science, Attack, Armor, Wound, Blood, Pain,
 | Uniforms: pick up missing pieces, `KIND:SUBTYPE@MATERIAL` entries | OK | "Replace clothing", "exact matches" and partial matches are not distinguished. |
 | Wounded soldiers rest | FIXED r6 | |
 | Soldiers leave a fight at the job-cancel thirst/hunger thresholds | ESTIMATE | Wiki: fights are "do-or-die". The rule exists so an unkillable foe cannot starve the whole squad. |
-| **Civilian alert** | WRONG | Wiki Burrow: the civilian alert is "missing" in v50.07+; citizens assigned to a burrow "will only accept jobs from within their assigned burrow(s)" and still work. Rustfort's alert makes civilians mill about in the burrow with no work at all.<br>Not fixed: it needs burrow filtering in the job, haul and production searches (economy modules). |
+| **Civilian alert** | FIXED r7 | Wiki Burrow: citizens assigned to a burrow "will only accept jobs from within their assigned burrow(s)" and still work. Rustfort r7: inside the alert burrow civilians dig, build, work workshops and farm plots and haul, when the work tile and the needed items lie inside the burrow (one bitset test per candidate). Idle civilians mill about inside.<br>Still ESTIMATE: meals, drinks and beds outside the burrow are used; doctor, burial, depot and lever jobs pause under the alert. |
 | Civilians flee hostiles within 12 tiles; cornered civilians fight back | ESTIMATE | |
 
 ## Invasions
@@ -274,7 +274,7 @@ Wiki pages checked: Combat, Material science, Attack, Armor, Wound, Blood, Pain,
 |---|---|---|
 | Sieges from a population of 80 | OK | Wiki Siege: "80 members". |
 | Checked at season changes, chance 1/3 | ESTIMATE | |
-| Siege size | WRONG | Wiki: set by fort wealth (from 10 regulars at Town to 120 regulars + 40 monsters at Metropolis). Rustfort: 10 + population/8, at most 60. |
+| Siege size | FIXED r7 | Wiki Siege + Difficulty (Normal): a tier needs its population "and one of production or trade": population 20/50/80/110/140, created wealth 5k/25k/100k/200k/300k, exported wealth 500/2.5k/10k/20k/30k. Sieges from the Town tier: 10 regulars, City 40 (+5 monsters), Metropolis 120 (+40 monsters). Rustfort r7 uses these tiers.<br>ESTIMATE: created wealth = current item value; exported = goods sold this session. Monsters are not spawned yet. |
 | Sieges vs ambushes | MISSING | Wiki: 25 % of invasions are sieges on normal difficulty (50 % on hard); the rest are smaller ambushes. Rustfort only has sieges. |
 | Thieves and snatchers (kobold thieves, goblin snatchers) | MISSING | |
 | Goblins charge at once; humans sometimes camp at the map edge | OK for goblins / MISSING camps | Rustfort sieges are goblin sieges, which charge as on the wiki. |
@@ -343,7 +343,7 @@ Wiki pages checked: Combat, Material science, Attack, Armor, Wound, Blood, Pain,
 | Beasts never leave; `TRAPAVOID`; building destroyers | OK | |
 | Venom, breath, webs and syndromes | FIXED r6 (simplified) | No resistance or size dilution, no cure; the durations are estimates. |
 | Fire breath, dragonfire, secretions, contact syndromes on touch | MISSING | No temperature. |
-| **Cave-ins** | MISSING | Wiki Cave-in: tiles not supported along the X, Y and Z axes fall (diagonals, bridges and ramps below give no support). Creatures directly underneath die; the dust knocks out and throws creatures nearby. Rustfort never checks support after digging, channeling or deconstruction. |
+| **Cave-ins** | FIXED r7 | Wiki Cave-in: tiles not supported along the X, Y and Z axes fall (diagonals, bridges and ramps below give no support). Creatures directly underneath die; the dust knocks out and throws creatures nearby. Rustfort r7 (`caveins.rs`): after digging, channeling or deconstruction, a local flood fill (capped at 4096 tiles) looks for the map bottom or edge; unsupported chunks become open space, leave boulders and a floor below, kill creatures underneath, and the dust knocks out units within 2 tiles.<br>ESTIMATE: falling debris stops on floors; no dust throwing or dust thoughts. |
 
 ## Performance and determinism (round 6, real fort, 2 years with `--standdown`)
 

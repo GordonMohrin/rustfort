@@ -4,6 +4,13 @@
 //! - Invasions are checked when a season starts (DF checks at season changes), at most one
 //!   siege at a time. Sieges need a population of at least 80 (DF v50; Gordon observed sieges
 //!   from 80 citizens on). Invasions can be switched off ([`Sim::set_invasions`]); default on.
+//! - [r7] **Siege size by wealth** (wiki Siege + Difficulty, Normal): the fort reaches an
+//!   invasion tier when it meets the tier's population "and one of production or trade"
+//!   (created or exported wealth): population 20/50/80/110/140, created wealth
+//!   5 000/25 000/100 000/200 000/300 000, exported wealth 500/2 500/10 000/20 000/30 000.
+//!   Sieges start at the third tier (Town: 80 citizens, so the Pop >= 80 rule holds) with 10
+//!   regulars, then 40 regulars + 5 monsters (City) and 120 regulars + 40 monsters
+//!   (Metropolis, also the default caps of 120 soldiers and 40 monsters).
 //! - The invaders (goblins by default) arrive together at a map edge connected to the fort
 //!   ("A vile force of darkness has arrived!"), armed with their civilization's weapons
 //!   (whips, battle axes, spears, maces, short swords) and copper/bronze/iron mail shirts,
@@ -12,8 +19,10 @@
 //!   map edge and leaving the map.
 //!
 //! # Estimates
-//! - Chance per season start once the threshold is met: 1 in 3; siege size 10 + population/8
-//!   (at most 60); equipment shares (copper 45 %, bronze 25 %, iron 30 %; mail shirt 70 %,
+//! - Chance per season start once the threshold is met: 1 in 3. [r7] Created wealth is the
+//!   current value of the fort's items (DF counts the value of everything the fort made);
+//!   exported wealth is the value of the goods sold to caravans in this session. Siege
+//!   monsters (trolls, beak dogs) are not spawned yet. Equipment shares (copper 45 %, bronze 25 %, iron 30 %; mail shirt 70 %,
 //!   helm 60 %, leggings 40 %); invader skills 2-7 in the weapon, attributes 750-1250.
 
 use crate::combat::Role;
@@ -44,6 +53,26 @@ impl Invasions {
 /// Population needed for sieges (DF v50; Gordon's observation).
 pub const SIEGE_POPULATION: usize = 80;
 
+/// [r7] Invasion tier thresholds, Normal difficulty (wiki Difficulty): population, created
+/// wealth and exported wealth.
+pub const TIER_POPULATION: [usize; 5] = [20, 50, 80, 110, 140];
+pub const TIER_CREATED: [i64; 5] = [5_000, 25_000, 100_000, 200_000, 300_000];
+pub const TIER_EXPORTED: [i64; 5] = [500, 2_500, 10_000, 20_000, 30_000];
+/// [r7] Siege force per tier (regulars, monsters), wiki Siege; tiers 1 and 2 send no sieges.
+pub const SIEGE_FORCE: [(usize, usize); 5] = [(0, 0), (0, 0), (10, 0), (40, 5), (120, 40)];
+
+/// [r7] Highest invasion tier (1-5) the fort meets: its population "and one of production or
+/// trade". 0 = none.
+pub fn invasion_tier(pop: usize, created: i64, exported: i64) -> usize {
+    (0..5).rev().find(|&k| pop >= TIER_POPULATION[k] && (created >= TIER_CREATED[k] || exported >= TIER_EXPORTED[k])).map(|k| k + 1).unwrap_or(0)
+}
+
+/// [r7] Siege force (regulars, monsters) for a fort, `None` if it is not big or rich enough.
+pub fn siege_force(pop: usize, created: i64, exported: i64) -> Option<(usize, usize)> {
+    let t = invasion_tier(pop, created, exported);
+    (t >= 3).then(|| SIEGE_FORCE[t - 1])
+}
+
 const GOBLIN_WEAPONS: &[(&str, &str)] = &[
     ("ITEM_WEAPON_SPEAR", "spearman"),
     ("ITEM_WEAPON_SWORD_SHORT", "swordsman"),
@@ -67,12 +96,28 @@ impl Sim {
         !self.combat.inv.sieges.is_empty()
     }
 
-    /// Debug/UI: start a goblin siege right now (size from the population). Returns the number
-    /// of invaders that arrived (0 if no map edge connects to the fort).
+    /// Debug/UI: start a goblin siege right now (size from the fort's invasion tier, at least
+    /// the Town force of 10). Returns the number of invaders that arrived (0 if no map edge
+    /// connects to the fort).
     pub fn force_siege(&mut self) -> usize {
-        let pop = self.world.citizens().count();
-        let n = (10 + pop / 8).min(60);
+        let n = self.siege_size().unwrap_or(SIEGE_FORCE[2].0);
         self.spawn_siege("GOBLIN", n)
+    }
+
+    /// [r7] Exported wealth: value of the goods the fort sold to caravans.
+    pub fn exported_wealth(&self) -> i64 {
+        self.trade.rep.trades.iter().map(|t| t.1.max(0)).sum()
+    }
+
+    /// [r7] Created wealth (approximation: current value of the fort's items).
+    pub fn created_wealth(&self) -> i64 {
+        self.fort_wealth()
+    }
+
+    /// [r7] Number of regulars a siege would bring now (`None`: below the siege tier).
+    pub fn siege_size(&self) -> Option<usize> {
+        let pop = self.world.citizens().count();
+        siege_force(pop, self.created_wealth(), self.exported_wealth()).map(|f| f.0)
     }
 
     /// Spawn `n` invaders of `race` at a map edge connected to the fort.
@@ -239,8 +284,11 @@ impl Sim {
             inv.last_season = season;
             if !first && inv.enabled && inv.sieges.is_empty() && self.world.citizens().count() >= SIEGE_POPULATION {
                 let mut r = Rng::for_unit(self.seed, 1, now, 0x51E6);
+                // [r7] Population and created/exported wealth decide whether and how big.
                 if r.chance(1, 3) {
-                    self.force_siege();
+                    if let Some(n) = self.siege_size() {
+                        self.spawn_siege("GOBLIN", n);
+                    }
                 }
             }
         }
@@ -315,5 +363,30 @@ impl Sim {
         }
         self.combat.stats.invaders_left += 1;
         let _ = Pos::default();
+    }
+}
+
+#[cfg(test)]
+mod r7_tests {
+    use super::*;
+
+    #[test]
+    fn siege_tiers_follow_population_and_wealth() {
+        // Below 80 citizens: no siege however rich.
+        assert_eq!(siege_force(79, 10_000_000, 1_000_000), None);
+        // 80 citizens but poor (no production, no trade): no siege.
+        assert_eq!(siege_force(89, 50_000, 5_000), None);
+        // Town: 80 citizens and 100k created or 10k exported -> 10 regulars.
+        assert_eq!(siege_force(89, 100_000, 0), Some((10, 0)));
+        assert_eq!(siege_force(89, 0, 10_000), Some((10, 0)));
+        // A rich fort of 89 stays at the Town tier (population decides too).
+        assert_eq!(siege_force(89, 5_000_000, 0), Some((10, 0)));
+        // City and Metropolis.
+        assert_eq!(siege_force(110, 200_000, 0), Some((40, 5)));
+        assert_eq!(siege_force(139, 250_000, 25_000), Some((40, 5)));
+        assert_eq!(siege_force(140, 300_000, 0), Some((120, 40)));
+        assert_eq!(siege_force(200, 0, 30_000), Some((120, 40)));
+        assert_eq!(invasion_tier(20, 5_000, 0), 1);
+        assert_eq!(invasion_tier(19, 5_000_000, 0), 0);
     }
 }

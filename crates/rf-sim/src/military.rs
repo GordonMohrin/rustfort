@@ -16,12 +16,19 @@
 //!   not pulled out of bed by hostiles in sight.
 //! - **Civilians** flee from hostiles within 12 tiles; when cornered they fight back. With a
 //!   civilian alert they go to the alert burrow and stay there.
+//! - [r7] **Civilian alert work** (wiki Burrow: burrowed citizens "will only accept jobs from
+//!   within their assigned burrow(s)"): inside the alert burrow civilians keep working, but
+//!   only on jobs whose work tile and needed items lie inside the burrow (designations,
+//!   constructions, workshops, farm plots, hauling from and to burrow tiles). Membership is a
+//!   bitset over all map tiles, so the filter costs one bit test per candidate. Idle civilians
+//!   mill about inside the burrow.
 //!
 //! # Estimates
 //! - Training experience: 3 XP per 100 ticks for the weapon skill (or WRESTLING when unarmed),
 //!   1 each for DODGING, ARMOR, MELEE_COMBAT, SHIELD (with a shield).
-//! - Civilians under an alert do no jobs at all (DF lets them work inside the burrow); meals,
-//!   drinks and beds outside the burrow are still used.
+//! - [r7] Under an alert, meals, drinks and beds outside the burrow are still used (DF prefers
+//!   the burrow's own); doctor, burial, depot and lever jobs are not taken under an alert.
+//!   Hauling picks the nearest item inside the burrow over all wanted stockpile categories.
 //! - Patrol routes are not simulated (treated as Train).
 
 use crate::combat::{Role, Sub};
@@ -49,6 +56,11 @@ pub(crate) struct Military {
     pub alert_tiles: HashSet<u32>,
     pub alert_list: Vec<u32>,
     pub last_month: i32,
+    /// [r7] All tiles of the alert burrow (walkable or not), one bit per map tile.
+    pub alert_bits: Vec<u64>,
+    /// [r7] Slot whose job search is running under the alert restriction (set by
+    /// `combat_decide` right before the work searches of that unit).
+    pub cur: Option<u32>,
 }
 
 fn parse_pos(s: &str) -> Option<Pos> {
@@ -126,6 +138,7 @@ impl Sim {
     /// Decide hook: soldiers on duty, civilians under alert and the badly wounded are run by
     /// the combat module. Drinking, eating and sleeping come first.
     pub(crate) fn combat_decide(&mut self, s: usize, now: u64) -> bool {
+        self.combat.mil.cur = None; // [r7]
         if s >= self.combat.f.len() || self.needs_break(s) {
             return false;
         }
@@ -152,8 +165,86 @@ impl Sim {
             };
             self.combat.f[s].role = new;
         }
+        // [r7] Calm civilians inside the alert burrow work on burrow jobs (filtered searches).
+        if self.alert_may_work(s) {
+            self.combat.mil.cur = Some(s as u32);
+            self.ai[s].task = Task::Idle;
+            return false;
+        }
         self.ai[s].task = Task::Combat;
         self.combat_think(s, now);
+        true
+    }
+
+    /// [r7] Civilian under the alert, no threat, standing inside the burrow.
+    fn alert_may_work(&self, s: usize) -> bool {
+        let f = &self.combat.f[s];
+        f.role == Role::Civilian && f.threat == NONE && f.duty == Duty::None && self.alert_on() && self.in_alert(self.ai[s].pos as usize)
+    }
+
+    fn alert_on(&self) -> bool {
+        self.combat.mil.alert.is_some() && !self.combat.mil.alert_list.is_empty()
+    }
+
+    /// [r7] Is tile `t` part of the alert burrow?
+    #[inline]
+    pub(crate) fn in_alert(&self, t: usize) -> bool {
+        self.combat.mil.alert_bits.get(t / 64).map(|w| (w >> (t % 64)) & 1 != 0).unwrap_or(false)
+    }
+
+    /// [r7] Is unit `s` restricted to the alert burrow right now?
+    #[inline]
+    pub(crate) fn alert_restricted(&self, s: usize) -> bool {
+        !self.combat.mil.alert_bits.is_empty()
+            && self.combat.f.get(s).map(|f| f.role == Role::Civilian && f.duty == Duty::None).unwrap_or(false)
+            && self.alert_on()
+    }
+
+    /// [r7] The cheap job filter: true if unit `s` may not take work at tile `t`.
+    #[inline]
+    pub(crate) fn alert_blocks(&self, s: usize, t: usize) -> bool {
+        self.alert_restricted(s) && !self.in_alert(t)
+    }
+
+    /// [r7] Same filter for searches that do not know the unit (the item searches of the
+    /// current unit's job search, see `Military::cur`).
+    #[inline]
+    pub(crate) fn alert_blocks_cur(&self, t: usize) -> bool {
+        match self.combat.mil.cur {
+            Some(s) => self.alert_blocks(s as usize, t),
+            None => false,
+        }
+    }
+
+    /// [r7] Hauling under the alert: the nearest waiting item inside the burrow of a wanted
+    /// category (one scan over the haul list; only runs for restricted civilians).
+    pub(crate) fn alert_haul_pick(&self, want: u32, up: (usize, usize, usize), c: u32, now: u64) -> Option<(crate::Cat, i32, usize)> {
+        let mut best: Option<(i32, i32, usize, crate::Cat)> = None;
+        for (k, &id) in self.haul.iter().enumerate() {
+            let idx = self.haul_ix[k] as usize;
+            let m = &self.imeta[idx];
+            if want & m.cat.bit() == 0 || m.reserved > 0 || m.blocked_until > now || m.dead {
+                continue;
+            }
+            let Some(t) = self.world.idx(self.world.items[idx].pos) else { continue };
+            if !self.in_alert(t) {
+                continue;
+            }
+            let d = crate::manhattan(up, self.nav.xyz(t));
+            if best.map(|b| (d, id) >= (b.0, b.1)).unwrap_or(false) || self.nav.comp_near(t) != c {
+                continue;
+            }
+            best = Some((d, id, t, m.cat));
+        }
+        best.map(|b| (b.3, b.1, b.2))
+    }
+
+    /// [r7] Idle civilians under the alert mill about inside the burrow instead of wandering.
+    pub(crate) fn alert_mill(&mut self, s: usize, now: u64) -> bool {
+        if !self.alert_restricted(s) || !self.in_alert(self.ai[s].pos as usize) {
+            return false;
+        }
+        self.burrow_think(s, now);
         true
     }
 
@@ -400,7 +491,13 @@ impl Sim {
         }
         let alert = self.combat.mil.alert.is_some() && !self.combat.mil.alert_list.is_empty();
         if self.combat.f[s].threat == NONE {
-            if alert {
+            if alert && self.alert_may_work(s) {
+                // [r7] Inside the burrow: back to (burrow-filtered) work.
+                self.ai[s].task = Task::Idle;
+                self.ai[s].path.clear();
+                self.ai[s].path_i = 0;
+                self.decide(s, now);
+            } else if alert {
                 self.burrow_think(s, now);
             } else {
                 self.release(s, now);
@@ -508,12 +605,22 @@ impl Sim {
         self.combat.mil.alert = burrow_id;
         self.combat.mil.alert_tiles.clear();
         self.combat.mil.alert_list.clear();
+        self.combat.mil.alert_bits.clear(); // [r7]
+        self.combat.mil.cur = None; // [r7]
         if let Some(b) = burrow_id.and_then(|id| self.world.burrows.iter().find(|b| b.id == id)) {
             let mut tiles: Vec<u32> = b.tiles.iter().filter_map(|&p| self.world.idx(p)).filter(|&i| self.nav.walkable(i)).map(|i| i as u32).collect();
             tiles.sort_unstable();
             tiles.dedup();
             self.combat.mil.alert_tiles = tiles.iter().copied().collect();
             self.combat.mil.alert_list = tiles;
+            // [r7] Bitset of every burrow tile (jobs may target walls, e.g. digging).
+            let mut bits = vec![0u64; self.world.tiles.len().div_ceil(64)];
+            for &p in &b.tiles {
+                if let Some(i) = self.world.idx(p) {
+                    bits[i / 64] |= 1 << (i % 64);
+                }
+            }
+            self.combat.mil.alert_bits = bits;
         }
         let on = self.combat.mil.alert.is_some() && !self.combat.mil.alert_list.is_empty();
         let now = self.ticks;

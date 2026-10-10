@@ -89,6 +89,7 @@ mod rng;
 pub mod moods; // [moods]
 pub mod health; // [moods]
 pub mod caverns; // [moods]
+pub mod caveins; // [r7] cave-ins after digging and deconstruction
 mod syndrome; // [audit-combat] forgotten beast venom, breath and webs
 pub use caverns::{BeastRecord, CavernLayer, CavernReport}; // [moods]
 pub use health::{HealthInfo, HealthReport}; // [moods]
@@ -1627,13 +1628,14 @@ impl Sim {
             self.wander(s, now, &mut r);
             return;
         }
-        if self.health_decide(s, now) {
+        let restricted = self.alert_restricted(s); // [r7] civilian alert: burrow jobs only
+        if !restricted && self.health_decide(s, now) {
             return; // [moods] doctors and caretakers
         }
-        if self.defense_try_job(s, now) {
+        if !restricted && self.defense_try_job(s, now) {
             return; // [defense] Pull the Lever
         }
-        if self.society_decide(s, now) {
+        if !restricted && self.society_decide(s, now) {
             return; // [society] burial, depot hauling, broker
         }
         if self.construct_try(s, now) {
@@ -1667,6 +1669,9 @@ impl Sim {
     }
 
     fn wander(&mut self, s: usize, now: u64, r: &mut Rng) {
+        if self.alert_mill(s, now) {
+            return; // [r7] civilian alert: stay inside the burrow
+        }
         if !self.zones.is_empty() {
             let pos = self.ai[s].pos as usize;
             let (x, y, z) = self.nav.xyz(pos);
@@ -2193,6 +2198,9 @@ impl Sim {
                 if !job.access || job.claimed != NONE || job.blocked_until > now || labors & job.kind.labor() == 0 {
                     continue;
                 }
+                if self.alert_blocks(s, job.tile as usize) {
+                    continue; // [r7] civilian alert: designations inside the burrow only
+                }
                 let d = manhattan(up, self.nav.xyz(job.tile as usize));
                 if (d, j) >= best {
                     continue;
@@ -2426,6 +2434,9 @@ impl Sim {
             if c != usize::MAX {
                 self.after_tile_change(c);
             }
+        }
+        if matches!(d, Dig::Dig | Dig::Channel | Dig::Ramp | Dig::UpStair | Dig::DownStair | Dig::UpDownStair) {
+            self.cavein_check(&changed); // [r7] unsupported terrain falls
         }
         if !self.nav.walkable(drop_tile) {
             drop_tile = self.ai[s].pos as usize;
@@ -2784,11 +2795,25 @@ impl Sim {
             return false;
         }
         let up = self.nav.xyz(pos);
-        let bests = self.haul_best_per_cat(want, up, c, now); // [perf] one scan, same result
+        let restricted = self.alert_restricted(s); // [r7] civilian alert
+        let bests = if restricted { [perf::NO_HAUL; 17] } else { self.haul_best_per_cat(want, up, c, now) }; // [perf] one scan, same result
         while want != 0 {
-            let Some(cat) = Sim::haul_pick(&bests, want) else { return false }; // [perf]
-            let (id, t) = (bests[cat as usize].1, bests[cat as usize].2); // [perf]
+            let (cat, id, t) = if restricted {
+                // [r7] Only items lying inside the burrow, stored inside the burrow.
+                match self.alert_haul_pick(want, up, c, now) {
+                    Some(b) => b,
+                    None => return false,
+                }
+            } else {
+                let Some(cat) = Sim::haul_pick(&bests, want) else { return false }; // [perf]
+                (cat, bests[cat as usize].1, bests[cat as usize].2) // [perf]
+            };
             let dest = match self.store_dest(id, cat, self.nav.xyz(t), c) { // [industry] bins/barrels
+                Some(d) if restricted && !self.in_alert(d as usize) => {
+                    self.store_release(id); // [r7] destination outside the burrow
+                    want &= !cat.bit();
+                    continue;
+                }
                 Some(d) => d,
                 None => {
                     want &= !cat.bit();
