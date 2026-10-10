@@ -131,6 +131,44 @@ fn real_export_matches_manifest() {
         assert!(!m.stress_cutoffs.is_empty());
     }
 
+    // round-4 data (exporter rev 2026-10-10c and later)
+    if m.count("entities").is_some() {
+        assert!(rep.settings, "round-4 export without settings.json");
+        assert!(w.settings.population_cap > 0 && w.settings.strict_population_cap > 0);
+        // the fort's civ and site government are Own; every relation is a known word
+        assert!(w.entities.iter().any(|e| e.id == w.meta.civ_id && e.relation == "Own" && e.kind == "Civilization"));
+        assert!(w.entities.iter().any(|e| e.id == w.meta.group_id && e.relation == "Own"));
+        assert!(w.entities.iter().all(|e| ["Own", "Peace", "War", "Unknown"].contains(&e.relation.as_str())));
+        // nobles: the fort government has positions, holders are exported units
+        assert!(w.nobles.iter().any(|n| n.entity_id == w.meta.group_id));
+        for n in w.nobles.iter().filter(|n| n.holder >= 0) {
+            assert!(w.unit(n.holder).is_some(), "noble {} holder {} not exported", n.token, n.holder);
+        }
+        // links are symmetric and point at buildings; levers link to something they operate
+        for b in &w.buildings {
+            for l in &b.links {
+                let o = w.building(*l).unwrap_or_else(|| panic!("building {} links to missing {l}", b.id));
+                assert!(o.links.contains(&b.id), "link {} -> {l} one-sided", b.id);
+            }
+            if b.kind == "Bridge" {
+                assert!(["N", "S", "E", "W", "RETRACT"].contains(&b.direction.as_str()), "bridge {} dir {}", b.id, b.direction);
+                assert!(b.flags.iter().any(|f| f == "RAISED" || f == "LOWERED"));
+            }
+            if b.kind == "Door" {
+                assert!(b.flags.iter().any(|f| f == "OPEN" || f == "CLOSED"), "door {} {:?}", b.id, b.flags);
+            }
+        }
+        assert_eq!(rep.building_links as i64, m.count("building_links").unwrap_or(0));
+        // hist fig names cover every relationship target and squad member figure
+        let hf: std::collections::HashSet<i32> = w.hist_figs.iter().map(|h| h.id).collect();
+        for u in &w.units {
+            for r in u.relationships.iter().filter(|r| r.hist_fig_id >= 0) {
+                assert!(hf.contains(&r.hist_fig_id), "unit {} relationship hf {} has no name", u.id, r.hist_fig_id);
+            }
+        }
+        assert!(w.hist_figs.iter().all(|h| !h.name.is_empty()));
+    }
+
     // it is a fort: citizens exist, stand inside the map on walkable tiles (most of them)
     if m.map_complete {
         assert!(rep.citizens > 0);

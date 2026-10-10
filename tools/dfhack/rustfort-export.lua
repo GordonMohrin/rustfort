@@ -22,13 +22,16 @@
 -- Files: manifest.json tiletypes.json materials.json map/zNNN.bin units.jsonl items.jsonl buildings.jsonl
 --        plants.jsonl creatures.json + (round 2) work_orders.jsonl plant_raws.json burrows.json squads.json
 --        + (round 3) creature_raws.json weapon_raws.json armor_raws.json
+--        + (round 4) entities.json nobles.json settings.json hist_figs.json caravans.json diplomats.json
 
 local VERSION = 1
 -- round 2 (2026-10-10a): work orders, workshop jobs, crops, plant raws, mods, gaits
 -- round 3 (2026-10-10b): needs/emotions/values/relationships/wounds/blood, creature/weapon/armor raws,
 --                        material mechanics, squads with orders/uniforms/schedule, burrow tile lists,
 --                        corpse creature tokens, heavy aquifer tile flag
-local SCRIPT_REV = '2026-10-10b'
+-- round 4 (2026-10-10c): building flags/links/direction + trap contents, entities, nobles + mandates, settings,
+--                        hist fig names, caravans, diplomats
+local SCRIPT_REV = '2026-10-10c'
 
 -- ------------------------------------------------------------------------------------------- args
 local args = { ... }
@@ -778,9 +781,15 @@ local function q(f, u) local ok, r = pcall(f, u) return ok and r or false end
 -- ---- round 3: psychology, relationships, wounds
 local r3 = { needs = 0, emotions = 0, values = 0, relationships = 0, wounds = 0, invaders = 0 }
 local FORT_CIV = try(function() return df.global.plotinfo.civ_id end) or -1
+-- round 4: every historical figure referenced by units, relationships, deities, squads, nobles -> hist_figs.json
+local HF_REF = {}
+local function hf_ref(id) if id and id >= 0 then HF_REF[id] = true end end
+-- round 4: entities seen on the map (invaders, merchants, visitors) -> entities.json
+local CIV_SEEN = {}
 local function needs_json(p)
   local out = {}
   for _, n in ipairs(p.needs) do
+    hf_ref(n.deity_id)
     out[#out + 1] = jobj({ 'id', ja(df.need_type[n.id] or tostring(n.id)), 'deity_id', ji(n.deity_id),
                            'focus_level', ji(n.focus_level), 'need_level', ji(n.need_level) })
   end
@@ -841,6 +850,7 @@ local function relationships_json(u)
     local key = kind .. ':' .. hfid
     if seen[key] then return end
     seen[key] = true
+    hf_ref(hfid)
     local uid, uid_any, dead = hf_unit(hfid)
     local kv = { 'kind', ja(kind), 'hist_fig_id', ji(hfid), 'unit_id', ji(uid), 'unit_id_any', ji(uid_any), 'dead', jb(dead) }
     if extra then for i = 1, #extra do kv[#kv + 1] = extra[i] end end
@@ -985,6 +995,8 @@ local function unit_json(u)
   -- the entity a hostile unit belongs to (invaders, raiders); -1 for wildlife, undead without civ and our own
   local invader_civ = -1
   if hostile and u.civ_id >= 0 and u.civ_id ~= FORT_CIV then invader_civ = u.civ_id; r3.invaders = r3.invaders + 1 end
+  hf_ref(u.hist_figure_id)
+  if u.civ_id >= 0 then CIV_SEEN[u.civ_id] = (CIV_SEEN[u.civ_id] or 0) + 1 end
   local size_raw = try(function() return u.body.size_info.size_cur end) or 0
   local focus = try(function() return soul.personality.current_focus end) or 0
   local undistracted = try(function() return soul.personality.undistracted_focus end) or 0
@@ -1190,6 +1202,195 @@ local function building_jobs(bld)
   counts.building_jobs = (counts.building_jobs or 0) + #jobs
   return jobs
 end
+-- ---- round 4: building states, mechanism links, trap contents
+local r4 = { links = 0, levers = 0, locked_doors = 0, raised_bridges = 0, traps = 0, loaded_traps = 0, caged_units = 0,
+             doors = 0, bridges = 0 }
+local building_state   -- (defined in the block below; its helpers stay block-local: Lua allows 200 locals per chunk)
+do
+  -- DF 53.16 door_flags: forbidden (UI "Locked" = Gordon's "forbidden door"), unused_02 (was "internal"),
+  -- taken_by_invaders, used_by_intruder, closed, operated_by_mechanisms; DF 53 has no pet-passable bit
+  local DOOR_FLAG = { forbidden = 'LOCKED', unused_02 = 'INTERNAL', taken_by_invaders = 'TAKEN_BY_INVADERS',
+                      used_by_intruder = 'USED_BY_INTRUDER', operated_by_mechanisms = 'OPERATED_BY_MECHANISMS' }
+  -- building_bridgest.T_direction: Retracting -1, Left 0, Right 1, Up 2, Down 3 (map: up = north)
+  local BRIDGE_DIR = { [-1] = 'RETRACT', [0] = 'W', [1] = 'E', [2] = 'N', [3] = 'S' }
+  local GR = df.general_ref_type
+  local REF_TRIGGER, REF_TARGET, REF_HOLDER = GR.BUILDING_TRIGGER, GR.BUILDING_TRIGGERTARGET, GR.BUILDING_HOLDER
+  local REF_CONTAINS_UNIT = GR.CONTAINS_UNIT
+  local IT = df.item_type
+  -- names of the set bits of a building flag word: mapped (map) or uppercased; unnamed set bits as BIT<n>
+  local function bits_upper(bf, map, out, nbits)
+    pcall(function()
+      for k, v in pairs(bf) do
+        if type(k) == 'string' and v == true then
+          if map and map[k] then out[#out + 1] = map[k]
+          elseif not k:match('^unused') then out[#out + 1] = k:upper() end
+        end
+      end
+    end)
+    pcall(function()
+      local w = bf.whole
+      if type(w) == 'number' then
+        for i = 0, (nbits or 16) - 1 do
+          if w & (1 << i) ~= 0 and bf._type[i] == nil then out[#out + 1] = 'BIT' .. i end
+        end
+      end
+    end)
+    table.sort(out)
+  end
+  -- ids referenced by an item's general refs of one type (building, unit)
+  local function item_refs(it, rt)
+    local out = {}
+    pcall(function()
+      for _, r in ipairs(it.general_refs) do
+        if r:getType() == rt then out[#out + 1] = (rt == REF_CONTAINS_UNIT) and r.unit_id or r.building_id end
+      end
+    end)
+    return out
+  end
+  -- jobj key/value list: flags, links, direction (+ extras) of one building
+  function building_state(bld, t)
+    local fl, dir = {}, ''
+    local targets, triggers, seen_t, seen_g = {}, {}, {}, {}
+    local caged, trap_items = {}, {}
+    local ext = {}
+    local function add(s) fl[#fl + 1] = s end
+    -- mechanism links: the mechanisms built into a building carry BUILDING_TRIGGERTARGET (in a lever/plate:
+    -- the building it operates) or BUILDING_TRIGGER (in a target: the lever/plate that operates it)
+    local n_cage, n_boulder, n_weapon = 0, 0, 0
+    pcall(function()
+      for _, ci in ipairs(bld.contained_items) do
+        local it = ci.item
+        for _, b in ipairs(item_refs(it, REF_TARGET)) do
+          if b ~= bld.id and not seen_t[b] then seen_t[b] = true; targets[#targets + 1] = b end
+        end
+        for _, b in ipairs(item_refs(it, REF_TRIGGER)) do
+          if b ~= bld.id and not seen_g[b] then seen_g[b] = true; triggers[#triggers + 1] = b end
+        end
+        local ity = it:getType()
+        if ity == IT.CAGE then
+          n_cage = n_cage + 1
+          for _, uid in ipairs(item_refs(it, REF_CONTAINS_UNIT)) do caged[#caged + 1] = ji(uid) end
+        elseif ity == IT.BOULDER then n_boulder = n_boulder + 1
+        elseif ity == IT.WEAPON or ity == IT.TRAPCOMP then n_weapon = n_weapon + 1
+        end
+        if t == BT.Trap or t == BT.Weapon or ity == IT.CAGE then
+          trap_items[#trap_items + 1] = jobj({ 'id', ji(it.id), 'kind', ja(IT[ity] or tostring(ity)),
+            'subtype', js(subtype_token(ity, try(function() return it:getSubtype() end) or -1)), 'use_mode', ji(ci.use_mode) })
+        end
+      end
+    end)
+    -- levers/plates also list their mechanisms in linked_mechanisms (those items are held by the target building)
+    pcall(function()
+      for _, it in ipairs(bld.linked_mechanisms) do
+        for _, b in ipairs(item_refs(it, REF_HOLDER)) do
+          if b ~= bld.id and not seen_t[b] then seen_t[b] = true; targets[#targets + 1] = b end
+        end
+      end
+    end)
+    if t == BT.Door or t == BT.Hatch then
+      r4.doors = r4.doors + 1
+      local d = bld.door_flags
+      bits_upper(d, DOOR_FLAG, fl, 16)
+      for i = #fl, 1, -1 do if fl[i] == 'CLOSED' then table.remove(fl, i) end end
+      add(d.closed and 'CLOSED' or 'OPEN')
+      if d.forbidden then r4.locked_doors = r4.locked_doors + 1 end
+      ext = { 'close_timer', ji(try(function() return bld.close_timer end) or 0) }
+    elseif t == BT.Bridge then
+      r4.bridges = r4.bridges + 1
+      local g = bld.gate_flags
+      bits_upper(g, nil, fl, 16)
+      if not g.raised then add('LOWERED') else r4.raised_bridges = r4.raised_bridges + 1 end
+      dir = BRIDGE_DIR[bld.direction] or tostring(bld.direction)
+      ext = { 'timer', ji(bld.timer), 'material_amount', ji(try(function() return bld.material_amount end) or 0) }
+    elseif t == BT.Floodgate or t == BT.GrateWall or t == BT.GrateFloor or t == BT.BarsVertical or t == BT.BarsFloor then
+      pcall(function()
+        local g = bld.gate_flags
+        bits_upper(g, nil, fl, 16)
+        if not g.closed then add('OPEN') end
+      end)
+    elseif t == BT.Weapon then
+      pcall(function()
+        local g = bld.gate_flags
+        bits_upper(g, nil, fl, 16)
+        if not g.retracted then add('EXTENDED') end
+      end)
+      if n_weapon > 0 then add('LOADED') end
+    elseif t == BT.Trap then
+      r4.traps = r4.traps + 1
+      local tt = df.trap_type[bld.trap_type] or ''
+      local ready = (try(function() return bld.ready_timeout end) or 0) == 0
+      if not ready then add('RESETTING') end
+      if tt == 'Lever' then
+        r4.levers = r4.levers + 1
+        if bld.state ~= 0 then add('ACTIVE') end
+      elseif tt == 'PressurePlate' then
+        local trig = {}
+        pcall(function()
+          local p = bld.plate_info
+          for k, v in pairs(p.flags) do
+            if v == true and type(k) == 'string' then
+              add('PLATE_' .. k:upper())
+              local lo = try(function() return p[k .. '_min'] end)
+              if lo then trig[#trig + 1] = ('%s:%d-%d'):format(k, lo, p[k .. '_max']) end
+            end
+          end
+        end)
+        table.sort(trig)
+        dir = table.concat(trig, ',')
+        if ready then add('ACTIVE') end
+        pcall(function()
+          local p = bld.plate_info
+          ext = { 'plate', jobj({ 'unit_min', ji(p.unit_min), 'unit_max', ji(p.unit_max), 'water_min', ji(p.water_min),
+            'water_max', ji(p.water_max), 'magma_min', ji(p.magma_min), 'magma_max', ji(p.magma_max),
+            'track_min', ji(p.track_min), 'track_max', ji(p.track_max) }) }
+        end)
+      elseif tt == 'TrackStop' then
+        pcall(function()
+          local ts = bld.track_stop_info
+          bits_upper(ts.track_flags, nil, fl, 8)
+          local dx, dy = ts.dump_x_shift, ts.dump_y_shift
+          if dx ~= 0 or dy ~= 0 then dir = (dy < 0 and 'N' or dy > 0 and 'S' or '') .. (dx < 0 and 'W' or dx > 0 and 'E' or '') end
+          ext = { 'friction', ji(ts.friction) }
+        end)
+      else
+        -- armed = loaded and not resetting. Cage trap: an empty cage; stone-fall trap: a boulder;
+        -- weapon trap: weapons / trap components
+        local loaded = (tt == 'CageTrap' and n_cage > 0 and #caged == 0) or (tt == 'StoneFallTrap' and n_boulder > 0)
+                       or (tt == 'WeaponTrap' and n_weapon > 0)
+        if loaded then add('LOADED'); r4.loaded_traps = r4.loaded_traps + 1 end
+        if tt == 'CageTrap' and #caged > 0 then add('FULL') end
+        if loaded and ready then add('ACTIVE') end
+      end
+      local tk = { 'trap_state', ji(bld.state), 'ready_timeout', ji(bld.ready_timeout), 'fill_timer', ji(bld.fill_timer) }
+      for i = 1, #tk do ext[#ext + 1] = tk[i] end
+    elseif t == BT.Well then
+      pcall(function() bits_upper(bld.well_flags, nil, fl, 16) end)
+      ext = { 'bucket_z', ji(try(function() return bld.bucket_z end) or -1) }
+    elseif t == BT.TradeDepot then
+      pcall(function() bits_upper(bld.trade_flags, nil, fl, 32) end)
+      if try(function() return bld.accessible end) then add('ACCESSIBLE') end
+    elseif t == BT.Support then
+      pcall(function() bits_upper(bld.support_flags, nil, fl, 16) end)
+    end
+    -- rf_core::Building::links: a trigger lists its targets, a target its triggers; both explicit in the extras
+    local links = {}
+    for _, b in ipairs(targets) do links[#links + 1] = b end
+    for _, b in ipairs(triggers) do if not seen_t[b] then links[#links + 1] = b end end
+    r4.links = r4.links + #targets
+    local function jl(l) local o = {} for i = 1, #l do o[i] = ji(l[i]) end return jarr(o) end
+    local fj = {}
+    for i = 1, #fl do fj[i] = ja(fl[i]) end
+    r4.caged_units = r4.caged_units + #caged
+    local kv = { 'flags', jarr(fj), 'links', jl(links), 'direction', ja(dir),
+                 -- extras
+                 'link_targets', jl(targets), 'link_triggers', jl(triggers) }
+    if #trap_items > 0 then kv[#kv + 1] = 'trap_items'; kv[#kv + 1] = jarr(trap_items) end
+    if #caged > 0 then kv[#kv + 1] = 'caged_units'; kv[#kv + 1] = jarr(caged) end
+    for i = 1, #ext do kv[#kv + 1] = ext[i] end
+    return kv
+  end
+end
+
 local PILE_CATS = { 'animals', 'food', 'furniture', 'corpses', 'refuse', 'stone', 'ammo', 'coins', 'bars_blocks', 'gems',
                     'finished_goods', 'leather', 'cloth', 'wood', 'weapons', 'armor', 'sheet' }
 local function building_json(bld)
@@ -1231,6 +1432,9 @@ local function building_json(bld)
   local name = try(function() return bld.name end) or ''
   -- only the queues of workshops and furnaces (other buildings' bld.jobs hold hauling/planting jobs DF generates)
   local jobs = (t == BT.Workshop or t == BT.Furnace) and building_jobs(bld) or {}
+  -- round 4: state flags, mechanism links, bridge direction, trap contents
+  local okst, state = pcall(building_state, bld, t)
+  if not okst then warn('building_state', state); state = { 'flags', '[]', 'links', '[]', 'direction', '""' } end
   local crops = {}
   if t == BT.FarmPlot then
     for s = 0, 3 do
@@ -1244,7 +1448,7 @@ local function building_json(bld)
                 'center', jpos(bld.centerx, bld.centery, bld.z), 'mat', ji(palidx(bld.mat_type, bld.mat_index)),
                 'stage', ji(stage), 'built', jb(stage >= maxst), 'owner', ji(owner), 'name', js(name),
                 'stockpile', stockpile, 'extents', jarr(ext), 'items', jarr(items), 'jobs', jarr(jobs),
-                'crops', jarr(crops) })
+                'crops', jarr(crops), table.unpack(state) })
 end
 
 local function export_buildings()
@@ -1516,6 +1720,7 @@ local function squad_json(s)
     if pos.occupant >= 0 then
       local hf = df.historical_figure.find(pos.occupant)
       uid = hf and hf.unit_id or -1
+      hf_ref(pos.occupant)
     end
     mem[#mem + 1] = ji(uid)
     hfs[#hfs + 1] = ji(pos.occupant)
@@ -1796,6 +2001,413 @@ local function export_item_raws()
   counts.armor_raws = #ao
 end
 
+-- ------------------------------------------------------------------------------------------- society (round 4)
+-- entities.json, nobles.json, settings.json, hist_figs.json, caravans.json, diplomats.json
+local soc = { entities = 0, nobles = 0, mandates = 0, hist_figs = 0, caravans = 0, diplomats = 0, merchant_events = 0 }
+local export_society   -- defined in the block below (helpers block-local: 200-locals limit)
+do
+  local function race_token(ri)
+    if ri == nil or ri < 0 then return '' end
+    return try(function() return raws.creatures.all[ri].creature_id end) or ''
+  end
+  local function tname(nm, eng) return try(dfhack.translation.translateName, nm, eng) or '' end
+  local function jil(l) local o = {} for i = 1, #l do o[i] = ji(l[i]) end return jarr(o) end
+  local function vec_ids(v) local o = {} pcall(function() for _, x in ipairs(v) do o[#o + 1] = x end end) return o end
+
+  -- merchant history events at our site: which entities have sent caravans here (DF: history_event_merchantst)
+  local MERCHANT_SOURCES = {}   -- [entity id] = { n, first_year, last_year }
+  local function scan_merchant_events()
+    phase = 'history'
+    local T = df.history_event_type.MERCHANT
+    local i = 0
+    while true do
+      local ev = df.global.world.history.events   -- re-fetched after every yield; the vector only grows
+      if i >= #ev then break end
+      pcall(function()
+        local e = ev[i]
+        if e:getType() == T and e.site == SITE_ID then
+          local m = MERCHANT_SOURCES[e.source]
+          if not m then m = { 0, e.year, e.year }; MERCHANT_SOURCES[e.source] = m end
+          m[1] = m[1] + 1
+          if e.year < m[2] then m[2] = e.year end
+          if e.year > m[3] then m[3] = e.year end
+          soc.merchant_events = soc.merchant_events + 1
+        end
+      end)
+      i = i + 1
+      if i % 1000 == 0 then phase_detail = i .. '/' .. #ev; checkpoint() end
+    end
+  end
+
+  local function diplomacy_of(e)
+    local out = {}
+    pcall(function()
+      for _, s in ipairs(e.relations.diplomacy.state) do
+        out[s.group_id] = { relation = s.relation, flags = set_flags(s.flags, true), war = s.war_event_collection }
+      end
+    end)
+    return out
+  end
+  local function export_entities()
+    phase = 'entities'
+    local pi = df.global.plotinfo
+    local civ_id, grp_id = pi.civ_id, pi.group_id
+    local civ = df.historical_entity.find(civ_id)
+    local grp = df.historical_entity.find(grp_id)
+    local dip_civ = civ and diplomacy_of(civ) or {}
+    local dip_grp = grp and diplomacy_of(grp) or {}
+    local why, ids = {}, {}
+    local function want(id, reason)
+      if id == nil or id < 0 then return end
+      if not why[id] then why[id] = {}; ids[#ids + 1] = id end
+      why[id][reason] = true
+    end
+    want(civ_id, 'own'); want(grp_id, 'own')
+    for id in pairs(dip_civ) do want(id, 'diplomacy') end
+    for id in pairs(dip_grp) do want(id, 'diplomacy') end
+    pcall(function() for _, c in ipairs(pi.caravans) do want(c.entity, 'caravan') end end)
+    pcall(function() for _, d in ipairs(pi.dip_meeting_info) do want(d.civ_id, 'diplomat') end end)
+    for id in pairs(MERCHANT_SOURCES) do want(id, 'trade') end
+    for id in pairs(CIV_SEEN) do want(id, 'units') end
+    pcall(function()
+      for _, e in ipairs(df.global.world.entities.all) do
+        if e.type == df.historical_entity_type.Civilization then want(e.id, 'civilization') end
+      end
+    end)
+    table.sort(ids)
+    local caravan_of = {}
+    pcall(function() for _, c in ipairs(pi.caravans) do caravan_of[c.entity] = true end end)
+    local out = {}
+    for i = 1, #ids do
+      local id = ids[i]
+      local ok, s = pcall(function()
+        local e = df.historical_entity.find(id)
+        if not e then return nil end
+        local relation, d = 'Unknown', dip_civ[id] or dip_grp[id]
+        if id == civ_id or id == grp_id then relation = 'Own'
+        elseif d then relation = (d.relation == 1) and 'War' or 'Peace' end
+        local parent = -1
+        pcall(function()
+          for _, l in ipairs(e.entity_links) do
+            if l.type == df.entity_entity_link_type.PARENT then parent = l.target end
+          end
+        end)
+        local deities = vec_ids(e.relations.deities)
+        for _, h in ipairs(deities) do hf_ref(h) end
+        local reasons = {}
+        for r in pairs(why[id]) do reasons[#reasons + 1] = r end
+        table.sort(reasons)
+        local rj = {}
+        for _, r in ipairs(reasons) do rj[#rj + 1] = ja(r) end
+        local m = MERCHANT_SOURCES[id]
+        return jobj({ 'id', ji(id), 'name', js(tname(e.name, true)), 'race', ja(race_token(e.race)),
+                      'kind', ja(df.historical_entity_type[e.type] or tostring(e.type)), 'relation', ja(relation),
+                      'trades', jb(m ~= nil or caravan_of[id] == true),
+                      -- extras
+                      'name_native', js(tname(e.name, false)), 'parent', ji(parent), 'reasons', jarr(rj),
+                      'diplomacy_flags', jarr(d and d.flags or {}), 'war_event_collection', ji(d and d.war or -1),
+                      'caravans_sent', ji(m and m[1] or 0), 'first_caravan_year', ji(m and m[2] or -1),
+                      'last_caravan_year', ji(m and m[3] or -1), 'units_on_map', ji(CIV_SEEN[id] or 0),
+                      'hostility_level', ji(try(function() return e.hostility_level end) or 0),
+                      'siege_tier', ji(try(function() return e.siege_tier end) or 0), 'deities', jil(deities) })
+      end)
+      if ok and s then out[#out + 1] = s elseif not ok then warn('entity', s) end
+      if i % 8 == 0 then checkpoint() end
+    end
+    write_file(OUT .. '/entities.json', '[\n' .. table.concat(out, ',\n') .. '\n]\n')
+    soc.entities = #out
+  end
+
+  -- mandates as DF-like text: "Make 1 spear", "Make 2 crowns (gold)", "Ban export of steel bars"
+  local function mandate_text(m)
+    local mode = df.mandate_type[m.mode] or tostring(m.mode)
+    local def = try(dfhack.items.getSubtypeDef, m.item_type, m.item_subtype)
+    local one = def and def.name or (df.item_type[m.item_type] or 'item'):lower():gsub('_', ' ')
+    local many = def and (try(function() return def.name_plural end) or one) or (one .. 's')
+    local mat = ''
+    if m.mat_type >= 0 then
+      local mi = try(dfhack.matinfo.decode, m.mat_type, m.mat_index)
+      mat = mi and (try(function() return mi:toString() end) or '') or ''
+    end
+    if mode == 'Export' then return 'Ban export of ' .. (mat ~= '' and (mat .. ' ') or '') .. many end
+    local noun = (m.amount_total == 1) and one or many
+    local s = (mode == 'Make' and 'Make ' or (mode .. ': ')) .. m.amount_total .. ' ' .. noun
+    if mat ~= '' then s = s .. ' (' .. mat .. ')' end
+    return s
+  end
+  local function mandate_detail(m)
+    return jobj({ 'text', js(mandate_text(m)), 'mode', ja(df.mandate_type[m.mode] or tostring(m.mode)),
+                  'item_type', ja(item_type_name(m.item_type)), 'item_subtype', js(subtype_token(m.item_type, m.item_subtype)),
+                  'mat', js(mat_token(m.mat_type, m.mat_index)), 'amount_total', ji(m.amount_total),
+                  'amount_remaining', ji(m.amount_remaining), 'timeout_counter', ji(m.timeout_counter),
+                  'timeout_limit', ji(m.timeout_limit),
+                  'punishment_hammerstrikes', ji(try(function() return m.punishment.hammerstrikes end) or 0),
+                  'punishment_prison_time', ji(try(function() return m.punishment.prison_time end) or 0) })
+  end
+  local function export_nobles()
+    phase = 'nobles'
+    local pi = df.global.plotinfo
+    -- mandates per issuing unit
+    local mand = {}
+    pcall(function()
+      for _, m in ipairs(df.global.world.mandates.all) do
+        local uid = m.unit and m.unit.id or -1
+        mand[uid] = mand[uid] or {}
+        table.insert(mand[uid], m)
+      end
+    end)
+    local attached = {}
+    local out = {}
+    for _, eid in ipairs({ pi.group_id, pi.civ_id }) do
+      local e = df.historical_entity.find(eid)
+      if e then
+        local pos_by_id = {}
+        pcall(function() for _, p in ipairs(e.positions.own) do pos_by_id[p.id] = p end end)
+        -- the first assignment of a holder whose position can issue mandates (mandate_max > 0) gets the mandates
+        local rows = {}
+        for _, a in ipairs(e.positions.assignments) do
+          local ok, row = pcall(function()
+            local p = pos_by_id[a.position_id]
+            local hfid = a.histfig
+            hf_ref(hfid)
+            local uid, uid_any = -1, -1
+            local hf = hfid >= 0 and df.historical_figure.find(hfid) or nil
+            if hf then uid, uid_any = hf_unit(hfid) end
+            local name = p and p.name[0] or ''
+            pcall(function()
+              if hf and hf.sex == 0 and p.name_female[0] ~= '' then name = p.name_female[0] end
+              if hf and hf.sex == 1 and p.name_male[0] ~= '' then name = p.name_male[0] end
+            end)
+            local resp = {}
+            pcall(function()
+              for k, v in pairs(p.responsibilities) do if v == true then resp[#resp + 1] = ja(tostring(k)) end end
+            end)
+            table.sort(resp)
+            return { a = a, p = p, uid = uid, uid_any = uid_any, hfid = hfid, hf = hf, name = name, resp = resp,
+                     can_mandate = p and (try(function() return p.mandate_max end) or 0) > 0 }
+          end)
+          if ok then rows[#rows + 1] = row else warn('noble', row) end
+        end
+        for _, r in ipairs(rows) do
+          local texts, details = {}, {}
+          if r.uid_any >= 0 and mand[r.uid_any] and not attached[r.uid_any] and r.can_mandate then
+            attached[r.uid_any] = true
+            for _, m in ipairs(mand[r.uid_any]) do
+              texts[#texts + 1] = js(mandate_text(m))
+              details[#details + 1] = mandate_detail(m)
+              soc.mandates = soc.mandates + 1
+            end
+          end
+          local p, a = r.p, r.a
+          local function pv(f) return ji(try(function() return p[f] end) or 0) end
+          out[#out + 1] = jobj({ 'token', ja(p and p.code or ''), 'name', js(r.name), 'holder', ji(r.uid), 'entity_id', ji(eid),
+            'mandates', jarr(texts),
+            -- extras
+            'holder_hf', ji(r.hfid), 'holder_unit_any', ji(r.uid_any),
+            'holder_name', js(r.hf and tname(r.hf.name, true) or ''), 'assignment_id', ji(a.id), 'position_id', ji(a.position_id),
+            'squad_id', ji(try(function() return a.squad_id end) or -1), 'responsibilities', jarr(r.resp),
+            'flags', jarr(p and set_flags(p.flags, true) or {}), 'precedence', pv('precedence'), 'number', pv('number'),
+            'mandate_max', pv('mandate_max'), 'demand_max', pv('demand_max'),
+            'required_bedroom', pv('required_bedroom'), 'required_office', pv('required_office'),
+            'required_dining', pv('required_dining'), 'required_tomb', pv('required_tomb'),
+            'required_boxes', pv('required_boxes'), 'required_cabinets', pv('required_cabinets'),
+            'required_racks', pv('required_racks'), 'required_stands', pv('required_stands'),
+            'mandates_detail', jarr(details) })
+        end
+      end
+      checkpoint()
+    end
+    -- mandates of units that hold no mandate position any more (DF keeps them running)
+    for uid, list in pairs(mand) do
+      if not attached[uid] then note(('nobles: %d mandate(s) of unit %d not attached to a position'):format(#list, uid)) end
+    end
+    write_file(OUT .. '/nobles.json', '[\n' .. table.concat(out, ',\n') .. '\n]\n')
+    soc.nobles = #out
+  end
+
+  -- settings.json: d_init (population caps, world features) + the save's difficulty settings (DF 50+)
+  local function export_settings()
+    phase = 'settings'
+    local other = {}
+    local function kv(k, v) other[#other + 1] = js(k .. '=' .. tostring(v)) end
+    local dw = df.global.d_init.dwarf
+    local ff = df.global.d_init.feature.flags
+    local fe = ff._enum or df.d_init_flags4
+    local function feat(name) return try(function() return ff[fe[name]] end) and true or false end
+    local cd = df.global.plotinfo.main.custom_difficulty
+    local enemies = enum_name(cd, 'difficulty_enemies')
+    local sieges_flag = try(function() return cd.flags.sieges end) and true or false
+    -- difficulty "Enemies: Off" disables invasions; "Custom" uses the sieges flag; Normal/Hard have sieges
+    local invasions = enemies ~= 'Off' and (enemies ~= 'Custom' or sieges_flag)
+    kv('DIFFICULTY_ENEMIES', enemies)
+    kv('DIFFICULTY_ECONOMY', enum_name(cd, 'difficulty_economy'))
+    for _, k in ipairs({ 'visitor_cap', 'baby_cap_percent', 'specific_seed_cap', 'fortress_seed_cap', 'graze_coefficient',
+                         'cull_dead_units_at', 'maximum_embark_dim' }) do
+      pcall(function() kv(k:upper(), dw[k]) end)
+    end
+    pcall(function()
+      for i = 0, #ff - 1 do
+        local nm = fe[i]
+        if nm and not tostring(nm):match('^UNUSED') then kv('FEATURE_' .. nm, ff[i] and 'true' or 'false') end
+      end
+    end)
+    -- every difficulty field: scalars as KEY=value, arrays as KEY=a,b,c, flags as KEY=true/false
+    local keys = {}
+    pcall(function() for k in pairs(cd) do keys[#keys + 1] = k end end)
+    table.sort(keys)
+    for _, k in ipairs(keys) do
+      pcall(function()
+        local v = cd[k]
+        if k == 'difficulty_enemies' or k == 'difficulty_economy' then return end   -- written above by name
+        if type(v) == 'number' then kv(k:upper(), v)
+        elseif k == 'flags' then
+          for i = 0, 31 do local nm = v._type[i]; if nm then kv('FLAG_' .. nm:upper(), v[nm] and 'true' or 'false') end end
+        elseif type(v) == 'userdata' then
+          local a = {}
+          for j = 0, #v - 1 do a[#a + 1] = tostring(v[j]) end   -- static arrays: indexing past the end raises
+          kv(k:upper(), table.concat(a, ','))
+        end
+      end)
+    end
+    pcall(function()
+      local m = df.global.plotinfo.main
+      for _, k in ipairs({ 'traffic_cost_high', 'traffic_cost_normal', 'traffic_cost_low', 'traffic_cost_restricted' }) do kv(k:upper(), m[k]) end
+    end)
+    local s = jobj({ 'population_cap', ji(dw.population_cap), 'strict_population_cap', ji(dw.strict_population_cap),
+                     'baby_cap', ji(dw.baby_cap_absolute), 'invasions', jb(invasions), 'temperature', jb(feat('TEMPERATURE')),
+                     'weather', jb(feat('WEATHER')), 'cave_ins', jb(feat('CAVEINS')), 'other', jarr(other),
+                     -- extras
+                     'baby_cap_percent', ji(dw.baby_cap_percent), 'visitor_cap', ji(dw.visitor_cap),
+                     'artifacts', jb(feat('ARTIFACTS')), 'difficulty_enemies', ja(enemies),
+                     'source', ja('d_init.dwarf, d_init.feature.flags, plotinfo.main.custom_difficulty') })
+    write_file(OUT .. '/settings.json', s .. '\n')
+    checkpoint()
+  end
+
+  -- caravans.json (rf_core::Caravan) and diplomats.json
+  local function export_trade()
+    phase = 'trade'
+    local pi = df.global.plotinfo
+    local depots = {}
+    pcall(function()
+      for _, b in ipairs(df.global.world.buildings.all) do
+        if b:getType() == BT.TradeDepot then
+          depots[#depots + 1] = { id = b.id, acc = try(function() return b.accessible end) and true or false }
+        end
+      end
+    end)
+    table.sort(depots, function(a, b) if a.acc ~= b.acc then return a.acc end return a.id < b.id end)
+    local depot = depots[1] and depots[1].id or -1
+    local merchants, diplomat_units = {}, {}
+    pcall(function()
+      for _, u in ipairs(df.global.world.units.active) do
+        if q(dfhack.units.isMerchant, u) then
+          merchants[u.civ_id] = merchants[u.civ_id] or {}
+          table.insert(merchants[u.civ_id], u.id)
+        end
+        if q(dfhack.units.isDiplomat, u) then diplomat_units[#diplomat_units + 1] = u end
+      end
+    end)
+    local cars = {}
+    pcall(function()
+      for _, c in ipairs(pi.caravans) do
+        local ok, s = pcall(function()
+          local e = df.historical_entity.find(c.entity)
+          return jobj({ 'entity_id', ji(c.entity), 'civ', js(e and tname(e.name, true) or ''), 'race', ja(e and race_token(e.race) or ''),
+            'state', ja(enum_name(c, 'trade_state')), 'leaves_in', ji(c.time_remaining * 10), 'depot', ji(depot),
+            'goods', jil(vec_ids(c.goods)), 'animals', jil(vec_ids(c.animals)), 'merchants', jil(merchants[c.entity] or {}),
+            'import_value', ji(c.import_value), 'export_value', ji(c.export_value_total), 'mood', ji(c.mood),
+            'flags', jarr(set_flags(c.flags, true)),
+            -- extras
+            'time_remaining', ji(c.time_remaining), 'depot_notified', ji(c.depot_notified),
+            'export_value_personal', ji(c.export_value_personal), 'offer_value', ji(c.offer_value),
+            'haggle_fail_count', ji(c.haggle_fail_count), 'civ_native', js(e and tname(e.name, false) or '') })
+        end)
+        if ok then cars[#cars + 1] = s else warn('caravan', s) end
+      end
+    end)
+    write_file(OUT .. '/caravans.json', '[\n' .. table.concat(cars, ',\n') .. '\n]\n')
+    soc.caravans = #cars
+    local dips, seen = {}, {}
+    pcall(function()
+      for _, d in ipairs(pi.dip_meeting_info) do
+        hf_ref(d.diplomat_id); hf_ref(d.associate_id)
+        local uid = hf_unit(d.diplomat_id)
+        if uid >= 0 then seen[uid] = true end
+        dips[#dips + 1] = jobj({ 'civ_id', ji(d.civ_id), 'diplomat_hf', ji(d.diplomat_id), 'diplomat_unit', ji(uid),
+          'associate_hf', ji(d.associate_id), 'associate_unit', ji(d.associate_id >= 0 and hf_unit(d.associate_id) or -1),
+          'flags', jarr(set_flags(d.flags, true)), 'source', ja('meeting') })
+      end
+    end)
+    for _, u in ipairs(diplomat_units) do
+      if not seen[u.id] then
+        hf_ref(u.hist_figure_id)
+        dips[#dips + 1] = jobj({ 'civ_id', ji(u.civ_id), 'diplomat_hf', ji(u.hist_figure_id), 'diplomat_unit', ji(u.id),
+          'associate_hf', '-1', 'associate_unit', '-1', 'flags', '[]', 'source', ja('unit') })
+      end
+    end
+    write_file(OUT .. '/diplomats.json', '[\n' .. table.concat(dips, ',\n') .. '\n]\n')
+    soc.diplomats = #dips
+    counts.trade_depots = #depots
+    checkpoint()
+  end
+
+  -- hist_figs.json: rf_core::HistFigName for every referenced historical figure (written last: collects the refs)
+  local function export_hist_figs()
+    phase = 'hist_figs'
+    -- the civ's and the fort government's deities
+    pcall(function()
+      for _, eid in ipairs({ df.global.plotinfo.civ_id, df.global.plotinfo.group_id }) do
+        local e = df.historical_entity.find(eid)
+        for _, h in ipairs(e.relations.deities) do hf_ref(h) end
+        for _, h in ipairs(e.relations.worship) do hf_ref(h) end
+      end
+    end)
+    local ids = {}
+    for id in pairs(HF_REF) do ids[#ids + 1] = id end
+    table.sort(ids)
+    local out = {}
+    for i = 1, #ids do
+      local ok, s = pcall(function()
+        local h = df.historical_figure.find(ids[i])
+        if not h then return nil end
+        local uid, uid_any, dead = hf_unit(h.id)
+        local name = tname(h.name, true)
+        local race = race_token(h.race)
+        if name == '' then name = try(function() return raws.creatures.all[h.race].name[0] end) or race:lower() end
+        local spheres = {}
+        pcall(function()
+          for _, sp in ipairs(h.info.metaphysical.spheres) do spheres[#spheres + 1] = ja(df.sphere_type[sp] or tostring(sp)) end
+        end)
+        if #spheres == 0 then
+          pcall(function()
+            for _, sp in ipairs(h.info.spheres.spheres) do spheres[#spheres + 1] = ja(df.sphere_type[sp] or tostring(sp)) end
+          end)
+        end
+        return jobj({ 'id', ji(h.id), 'name', js(name), 'race', ja(race), 'alive', jb(not dead), 'unit_id', ji(uid),
+                      -- extras
+                      'name_native', js(tname(h.name, false)), 'unit_id_any', ji(uid_any), 'sex', ji(h.sex),
+                      'born_year', ji(h.born_year), 'died_year', ji(h.died_year), 'civ_id', ji(h.civ_id),
+                      'deity', jb(try(function() return h.flags.deity end) or false),
+                      'profession', ja(df.profession[h.profession] or ''), 'spheres', jarr(spheres) })
+      end)
+      if ok and s then out[#out + 1] = s elseif not ok then warn('hist_fig', s) end
+      if i % 32 == 0 then phase_detail = i .. '/' .. #ids; checkpoint() end
+    end
+    write_file(OUT .. '/hist_figs.json', '[\n' .. table.concat(out, ',\n') .. '\n]\n')
+    soc.hist_figs = #out
+  end
+
+  function export_society()
+    scan_merchant_events()
+    export_entities()
+    export_nobles()
+    export_settings()
+    export_trade()
+    export_hist_figs()      -- last: entities/nobles/diplomats add references
+  end
+end
+
 -- ------------------------------------------------------------------------------------------- mods
 -- active mods of the loaded save in load order (the raws object loader DF used for this save;
 -- the same source DFHack's script-manager reads): "id:numeric_version"
@@ -1832,6 +2444,7 @@ local function main()
   export_burrows_squads()
   export_creature_raws()   -- after units/items (races seen), before the materials: adds the tissue materials
   export_item_raws()
+  export_society()         -- round 4: entities, nobles, settings, caravans, diplomats, hist figs (last: collects refs)
   phase = 'materials'
   local mats = {}
   local i = 1
@@ -1857,6 +2470,11 @@ local function main()
   note('relationships: family from histfig_links (+ siblings via the parents), friends/acquaintances from hf_visual: kind from love (Friend >= 50, CloseFriend >= 75, KindredSpirit 100, Grudge < 0 = estimate) and meet_count (LongTermAcquaintance >= 30)')
   note('wounds: one entry per wound layer; severity = surface_perc x 100 (estimate), raw DF values in the extras')
   note('volumes (unit body_size, caste body_size, weapon size/two_handed/minimum_size) are cm3 as in the raws = DF memory x 10')
+  note(('round 4 buildings: %d doors (%d locked = door_flags.forbidden), %d bridges (%d raised), %d traps (%d levers, %d loaded), %d mechanism links, %d caged units')
+       :format(r4.doors, r4.locked_doors, r4.bridges, r4.raised_bridges, r4.traps, r4.levers, r4.loaded_traps, r4.links, r4.caged_units))
+  note(('round 4 society: %d entities, %d noble assignments, %d mandates, %d hist figs, %d caravans, %d diplomats, %d merchant events at this site')
+       :format(soc.entities, soc.nobles, soc.mandates, soc.hist_figs, soc.caravans, soc.diplomats, soc.merchant_events))
+  note('caravans: leaves_in = time_remaining x 10 ticks (DFHack caravan.lua: 120 per day); trades = sent a caravan here (history MERCHANT events) or has one now')
 end
 
 local function finish()
@@ -1867,10 +2485,14 @@ local function finish()
   local cnt = {}
   counts.unit_needs, counts.unit_emotions, counts.unit_values = r3.needs, r3.emotions, r3.values
   counts.unit_relationships, counts.unit_wounds = r3.relationships, r3.wounds
+  counts.entities, counts.nobles, counts.mandates, counts.hist_figs = soc.entities, soc.nobles, soc.mandates, soc.hist_figs
+  counts.caravans, counts.diplomats, counts.building_links = soc.caravans, soc.diplomats, r4.links
+  counts.levers, counts.locked_doors, counts.traps = r4.levers, r4.locked_doors, r4.traps
   for _, k in ipairs({ 'units', 'citizens', 'items', 'buildings', 'plants', 'materials', 'tiletypes', 'tiles', 'z_exported',
                        'work_orders', 'plant_raws', 'building_jobs', 'farm_plots', 'burrows', 'squads',
                        'burrow_tiles', 'creature_raws', 'weapon_raws', 'armor_raws', 'unit_needs', 'unit_emotions',
-                       'unit_values', 'unit_relationships', 'unit_wounds' }) do
+                       'unit_values', 'unit_relationships', 'unit_wounds', 'entities', 'nobles', 'mandates', 'hist_figs',
+                       'caravans', 'diplomats', 'building_links', 'levers', 'locked_doors', 'traps', 'trade_depots' }) do
     cnt[#cnt + 1] = k
     cnt[#cnt + 1] = ji(counts[k] or 0)
   end

@@ -111,6 +111,9 @@ pub struct World {
     pub settings: GameSettings,
     #[serde(default)]
     pub hist_figs: Vec<HistFigName>,
+    /// Merchant caravans present when the export was made (DF `plotinfo.caravans`).
+    #[serde(default)]
+    pub caravans: Vec<Caravan>,
 }
 
 impl World {

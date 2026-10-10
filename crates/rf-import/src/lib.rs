@@ -10,11 +10,14 @@
 //! Optional files are loaded when present: round 2 (`work_orders.jsonl`, `plant_raws.json`) and
 //! round 3 (`creature_raws.json`, `weapon_raws.json`, `armor_raws.json`, and `squads.json` /
 //! `burrows.json` into `World::squads` / `World::burrows`; the round-2 layout of the last two
-//! loads as well).
+//! loads as well) and round 4 (`entities.json`, `nobles.json`, `settings.json`, `hist_figs.json`,
+//! `caravans.json` into `World::entities` / `nobles` / `settings` / `hist_figs` / `caravans`;
+//! building flags, mechanism links and directions come with `buildings.jsonl`).
 
 use rf_core::{
-    tile_flags, ArmorRaw, Building, Burrow, Calendar, CreatureRaw, Dims, Item, MaterialInfo, Meta, Plant, Pos, Shape, Squad,
-    Tile, TiletypeInfo, TiletypeTable, TtMaterial, TtSpecial, Unit, WeaponRaw, World, NO_MAT,
+    tile_flags, ArmorRaw, Building, Burrow, Calendar, Caravan, CreatureRaw, Dims, EntityInfo, GameSettings, HistFigName, Item,
+    MaterialInfo, Meta, NoblePosition, Plant, Pos, Shape, Squad, Tile, TiletypeInfo, TiletypeTable, TtMaterial, TtSpecial, Unit,
+    WeaponRaw, World, NO_MAT,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -66,6 +69,15 @@ pub struct ImportReport {
     pub burrows: usize,
     /// Sum of `Burrow::tiles` (0 for round-2 exports, which only had tile counts).
     pub burrow_tiles: usize,
+    /// Round-4 data (0 / false when the export predates it).
+    pub entities: usize,
+    pub nobles: usize,
+    pub hist_figs: usize,
+    pub caravans: usize,
+    /// `settings.json` was present (else `World::settings` holds DF's defaults, see [`default_settings`]).
+    pub settings: bool,
+    /// Mechanism links from levers/pressure plates to the buildings they operate.
+    pub building_links: usize,
     pub warnings: Vec<String>,
     pub seconds: f64,
 }
@@ -114,12 +126,76 @@ pub struct SquadInfo {
     pub positions: i32,
 }
 
+/// A diplomat or outpost liaison of `diplomats.json` (round 4; not part of rf-core).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DiplomatInfo {
+    /// Entity the diplomat speaks for.
+    pub civ_id: i32,
+    pub diplomat_hf: i32,
+    /// Unit on the map, -1 if not here (any more).
+    pub diplomat_unit: i32,
+    pub associate_hf: i32,
+    pub associate_unit: i32,
+    /// `meeting` (DF `plotinfo.dip_meeting_info`) or `unit` (a diplomat unit without a meeting).
+    pub source: String,
+    pub flags: Vec<String>,
+}
+
+/// A mandate of `nobles.json` (`mandates_detail` extra of a noble position; round 4).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MandateInfo {
+    /// Text as in `NoblePosition::mandates`, e.g. `Make 1 spear`, `Ban export of spears`.
+    pub text: String,
+    /// `Export`, `Make`, `Guild`.
+    pub mode: String,
+    pub item_type: String,
+    pub item_subtype: String,
+    pub mat: String,
+    pub amount_total: i32,
+    pub amount_remaining: i32,
+    /// DF counts the mandate down; at `timeout_limit` the noble punishes.
+    pub timeout_counter: i32,
+    pub timeout_limit: i32,
+    /// Holder unit of the issuing position.
+    pub noble: i32,
+    pub position: String,
+}
+
 /// Optional extra data of an export that has no place in `rf_core::World` yet.
 #[derive(Clone, Debug, Default)]
 pub struct Extras {
     pub burrows: Vec<BurrowInfo>,
     pub squads: Vec<SquadInfo>,
     pub mods: Vec<ModInfo>,
+    /// Round 4: diplomats / liaisons and the mandates with their numbers.
+    pub diplomats: Vec<DiplomatInfo>,
+    pub mandates: Vec<MandateInfo>,
+}
+
+/// A nobles.json entry: rf_core::NoblePosition plus the mandate details.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+struct RawNoble {
+    #[serde(flatten)]
+    noble: NoblePosition,
+    mandates_detail: Vec<MandateInfo>,
+}
+
+/// DF's defaults for an export without `settings.json` (d_init.txt of DF 53: population cap 200,
+/// strict cap 220, baby cap 1000 absolute; invasions, temperature, weather and cave-ins on).
+pub fn default_settings() -> GameSettings {
+    GameSettings {
+        population_cap: 200,
+        strict_population_cap: 220,
+        baby_cap: 1000,
+        invasions: true,
+        temperature: true,
+        weather: true,
+        cave_ins: true,
+        other: Vec::new(),
+    }
 }
 
 /// Read `burrows.json`, `squads.json` and the manifest's `mods_detail` (all optional; missing
@@ -145,6 +221,14 @@ pub fn load_extras(dir: &Path) -> Extras {
             .collect(),
         squads: squads.into_iter().map(RawSquad::info).collect(),
         mods: load_manifest(dir).map(|m| m.mods_detail).unwrap_or_default(),
+        diplomats: opt(&dir.join("diplomats.json")),
+        mandates: opt::<Vec<RawNoble>>(&dir.join("nobles.json"))
+            .into_iter()
+            .flat_map(|n| {
+                let (holder, token) = (n.noble.holder, n.noble.token);
+                n.mandates_detail.into_iter().map(move |m| MandateInfo { noble: holder, position: token.clone(), ..m })
+            })
+            .collect(),
     }
 }
 
@@ -624,6 +708,15 @@ pub fn load_export(dir: &Path) -> Result<(World, ImportReport), ImportError> {
     if count_only_burrows > 0 {
         w.add("burrows", format!("{count_only_burrows} burrows without tile lists (round-2 export); imported with no tiles"));
     }
+    // Round-4 files (optional): civilizations, nobles, settings, historical figure names, caravans.
+    let entities: Vec<EntityInfo> = optional(dir, "entities.json", "entities", &mut w);
+    let nobles: Vec<NoblePosition> =
+        optional::<Vec<RawNoble>>(dir, "nobles.json", "nobles", &mut w).into_iter().map(|n| n.noble).collect();
+    let has_settings = dir.join("settings.json").exists();
+    let settings: GameSettings =
+        if has_settings { optional(dir, "settings.json", "settings", &mut w) } else { default_settings() };
+    let hist_figs: Vec<HistFigName> = optional(dir, "hist_figs.json", "hist_figs", &mut w);
+    let caravans: Vec<Caravan> = optional(dir, "caravans.json", "caravans", &mut w);
 
     let mut world = World {
         meta: Meta {
@@ -662,6 +755,12 @@ pub fn load_export(dir: &Path) -> Result<(World, ImportReport), ImportError> {
         armor_raws,
         squads,
         burrows,
+        entities,
+        nobles,
+        settings,
+        hist_figs,
+        caravans,
+        // keeps this compiling when other rounds add World fields
         ..Default::default()
     };
     validate(&mut world, &manifest, &mut w);
@@ -682,6 +781,12 @@ pub fn load_export(dir: &Path) -> Result<(World, ImportReport), ImportError> {
         squads: world.squads.len(),
         burrows: world.burrows.len(),
         burrow_tiles: world.burrows.iter().map(|b| b.tiles.len()).sum(),
+        entities: world.entities.len(),
+        nobles: world.nobles.len(),
+        hist_figs: world.hist_figs.len(),
+        caravans: world.caravans.len(),
+        settings: has_settings,
+        building_links: trigger_links(&world),
         warnings: {
             let mut list = w.finish();
             for n in &manifest.notes {
@@ -692,6 +797,51 @@ pub fn load_export(dir: &Path) -> Result<(World, ImportReport), ImportError> {
         seconds: t0.elapsed().as_secs_f64(),
     };
     Ok((world, report))
+}
+
+/// A lever or pressure plate: the buildings whose `links` point at what they operate.
+pub fn is_trigger(b: &Building) -> bool {
+    b.kind == "Trap" && (b.subtype == "Lever" || b.subtype == "PressurePlate")
+}
+
+/// Number of mechanism links from levers/pressure plates (the manifest's `building_links`).
+fn trigger_links(world: &World) -> usize {
+    world.buildings.iter().filter(|b| is_trigger(b)).map(|b| b.links.len()).sum()
+}
+
+/// Round 4: mechanism links must point at existing buildings and be symmetric (a lever lists
+/// its targets, a target lists its levers).
+fn repair_links(world: &mut World, w: &mut Warnings) {
+    use std::collections::{BTreeSet, HashMap};
+    let index: HashMap<i32, usize> = world.buildings.iter().enumerate().map(|(i, b)| (b.id, i)).collect();
+    let mut dangling = 0usize;
+    for b in &mut world.buildings {
+        let id = b.id;
+        let before = b.links.len();
+        let mut seen = BTreeSet::new();
+        b.links.retain(|l| *l != id && index.contains_key(l) && seen.insert(*l));
+        dangling += before - b.links.len();
+    }
+    if dangling > 0 {
+        w.add("buildings", format!("{dangling} mechanism links to missing buildings (or duplicates) dropped"));
+    }
+    let mut missing = Vec::new();
+    for b in &world.buildings {
+        for l in &b.links {
+            let other = &world.buildings[index[l]];
+            if !other.links.contains(&b.id) {
+                missing.push((index[l], b.id));
+            }
+        }
+    }
+    if !missing.is_empty() {
+        w.add("buildings", format!("{} one-sided mechanism links made symmetric", missing.len()));
+        for (i, id) in missing {
+            if !world.buildings[i].links.contains(&id) {
+                world.buildings[i].links.push(id);
+            }
+        }
+    }
 }
 
 /// Repair references that would make other crates index out of bounds, and compare the
@@ -779,6 +929,13 @@ fn validate(world: &mut World, m: &Manifest, w: &mut Warnings) {
     if bad_tiles > 0 {
         w.add("burrows", format!("{bad_tiles} burrow tiles outside the map dropped"));
     }
+    // Round-4 data: mechanism links, noble holders that are not on the map.
+    repair_links(world, w);
+    let unit_ids: std::collections::HashSet<i32> = world.units.iter().map(|u| u.id).collect();
+    let gone = world.nobles.iter().filter(|n| n.holder >= 0 && !unit_ids.contains(&n.holder)).count();
+    if gone > 0 {
+        w.add("nobles", format!("{gone} noble holders are not among the exported units"));
+    }
     let cit = world.units.iter().filter(|u| u.flags.citizen && !u.flags.dead).count();
     let farm_plots = world.buildings.iter().filter(|b| b.kind == "FarmPlot").count();
     let building_jobs = world.buildings.iter().map(|b| b.jobs.len()).sum::<usize>();
@@ -806,6 +963,16 @@ fn validate(world: &mut World, m: &Manifest, w: &mut Warnings) {
         ("unit_values", sum(|u| u.values.len())),
         ("unit_relationships", sum(|u| u.relationships.len())),
         ("unit_wounds", sum(|u| u.wounds.len())),
+        ("entities", world.entities.len()),
+        ("nobles", world.nobles.len()),
+        ("mandates", world.nobles.iter().map(|n| n.mandates.len()).sum()),
+        ("hist_figs", world.hist_figs.len()),
+        ("caravans", world.caravans.len()),
+        ("building_links", trigger_links(world)),
+        ("levers", world.buildings.iter().filter(|b| b.kind == "Trap" && b.subtype == "Lever").count()),
+        ("traps", world.buildings.iter().filter(|b| b.kind == "Trap").count()),
+        ("locked_doors", world.buildings.iter().filter(|b| b.flags.iter().any(|f| f == "LOCKED")).count()),
+        ("trade_depots", world.buildings.iter().filter(|b| b.kind == "TradeDepot").count()),
     ] {
         if let Some(want) = m.count(key) {
             if want != got as i64 {
@@ -853,6 +1020,12 @@ pub fn write_export(world: &World, dir: &Path) -> Result<(), ImportError> {
     write_json("armor_raws.json", to_json(&world.armor_raws))?;
     write_json("squads.json", to_json(&world.squads))?;
     write_json("burrows.json", to_json(&world.burrows))?;
+    // Round-4 files (optional for the importer; always written here).
+    write_json("entities.json", to_json(&world.entities))?;
+    write_json("nobles.json", to_json(&world.nobles))?;
+    write_json("settings.json", to_json(&world.settings))?;
+    write_json("hist_figs.json", to_json(&world.hist_figs))?;
+    write_json("caravans.json", to_json(&world.caravans))?;
     let plane = world.dims.x as usize * world.dims.y as usize;
     for z in 0..world.dims.z as usize {
         let mut buf = Vec::with_capacity(plane * TILE_RECORD_BYTES);
@@ -893,6 +1066,12 @@ pub fn write_export(world: &World, dir: &Path) -> Result<(), ImportError> {
         ("unit_values", world.units.iter().map(|u| u.values.len()).sum()),
         ("unit_relationships", world.units.iter().map(|u| u.relationships.len()).sum()),
         ("unit_wounds", world.units.iter().map(|u| u.wounds.len()).sum()),
+        ("entities", world.entities.len()),
+        ("nobles", world.nobles.len()),
+        ("mandates", world.nobles.iter().map(|n| n.mandates.len()).sum()),
+        ("hist_figs", world.hist_figs.len()),
+        ("caravans", world.caravans.len()),
+        ("building_links", trigger_links(world)),
     ] {
         counts.insert(k.to_string(), v as i64);
     }
@@ -1486,5 +1665,177 @@ mod tests {
         assert_eq!(b.stockpile.unwrap().categories, vec!["food"]);
         let b2: Building = serde_json::from_str(r#"{"id":6,"kind":"Bed","stockpile":null,"extents":[]}"#).unwrap();
         assert!(b2.stockpile.is_none());
+    }
+
+    /// A synthetic world with round-4 data, modelled on Trussroads: a locked door into the trap
+    /// corridor, the gate bridge with its lever, a loaded weapon trap, civilizations, nobles with a
+    /// mandate, settings, historical figure names and a caravan at the depot.
+    fn round4_world() -> World {
+        let mut w = World::synthetic(24, 24, 10);
+        let b = |id: i32, kind: &str, subtype: &str, x: i16, flags: &[&str], links: &[i32], dir: &str| Building {
+            id,
+            kind: kind.into(),
+            subtype: subtype.into(),
+            x1: x,
+            y1: 3,
+            x2: x,
+            y2: 3,
+            z: 5,
+            built: true,
+            flags: flags.iter().map(|s| s.to_string()).collect(),
+            links: links.to_vec(),
+            direction: dir.into(),
+            ..Default::default()
+        };
+        w.buildings.push(b(600, "Door", "", 2, &["LOCKED", "CLOSED"], &[], ""));
+        w.buildings.push(b(601, "Trap", "Lever", 4, &["ACTIVE"], &[602], ""));
+        w.buildings.push(b(602, "Bridge", "", 6, &["HAS_SUPPORT", "RAISED"], &[601], "S"));
+        w.buildings.push(Building { items: vec![1], ..b(603, "Trap", "WeaponTrap", 8, &["LOADED", "ACTIVE"], &[], "") });
+        w.buildings.push(b(604, "TradeDepot", "", 10, &["TRADER_REQUESTED"], &[], ""));
+        let e = |id: i32, race: &str, kind: &str, relation: &str, trades: bool| EntityInfo {
+            id,
+            name: format!("Entity {id}"),
+            race: race.into(),
+            kind: kind.into(),
+            relation: relation.into(),
+            trades,
+        };
+        w.entities = vec![
+            e(29, "DWARF", "Civilization", "Own", true),
+            e(303, "DWARF", "SiteGovernment", "Own", false),
+            e(35, "HUMAN", "Civilization", "Peace", true),
+            e(39, "GOBLIN", "Civilization", "War", false),
+        ];
+        let first = w.units[0].id;
+        w.nobles = vec![
+            NoblePosition {
+                token: "MAYOR".into(),
+                name: "mayor".into(),
+                holder: first,
+                entity_id: 303,
+                mandates: vec!["Ban export of spears".into()],
+            },
+            NoblePosition { token: "BROKER".into(), name: "broker".into(), holder: -1, entity_id: 303, mandates: vec![] },
+        ];
+        w.settings = GameSettings {
+            population_cap: 90,
+            strict_population_cap: 120,
+            baby_cap: 120,
+            invasions: true,
+            temperature: false,
+            weather: true,
+            cave_ins: true,
+            other: vec!["DIFFICULTY_ENEMIES=Normal".into(), "ENEMY_POP_TRIGGER=20,50,80,110,140".into()],
+        };
+        w.hist_figs = vec![
+            HistFigName { id: 40, name: "Mondul the Dead".into(), race: "DWARF".into(), alive: true, unit_id: -1 },
+            HistFigName { id: 3893, name: "Amost Castlelancers".into(), race: "DWARF".into(), alive: true, unit_id: first },
+        ];
+        w.caravans = vec![Caravan {
+            entity_id: 35,
+            civ: "Entity 35".into(),
+            race: "HUMAN".into(),
+            state: "AtDepot".into(),
+            leaves_in: 12_000,
+            depot: 604,
+            goods: vec![1, 2],
+            mood: 100,
+            ..Default::default()
+        }];
+        w
+    }
+
+    #[test]
+    fn round4_data_round_trip() {
+        let w = round4_world();
+        let dir = temp_dir("round4");
+        write_export(&w, &dir).unwrap();
+        let (got, rep) = load_export(&dir).unwrap();
+        assert!(rep.warnings.is_empty(), "{:?}", rep.warnings);
+        assert_eq!((rep.entities, rep.nobles, rep.hist_figs, rep.caravans, rep.building_links), (4, 2, 2, 1, 1));
+        assert!(rep.settings);
+        let door = got.building(600).unwrap();
+        assert!(door.flags.iter().any(|f| f == "LOCKED"));
+        let lever = got.building(601).unwrap();
+        assert!(is_trigger(lever) && lever.links == vec![602] && lever.flags == vec!["ACTIVE"]);
+        let bridge = got.building(602).unwrap();
+        assert_eq!((bridge.links.clone(), bridge.direction.as_str()), (vec![601], "S"));
+        assert!(bridge.flags.iter().any(|f| f == "RAISED"));
+        assert_eq!(got.entities.iter().filter(|e| e.relation == "War").count(), 1);
+        assert!(got.entities.iter().any(|e| e.race == "HUMAN" && e.trades));
+        assert_eq!(got.nobles[0].mandates, vec!["Ban export of spears"]);
+        assert_eq!(got.nobles[1].holder, -1);
+        assert_eq!((got.settings.population_cap, got.settings.temperature, got.settings.invasions), (90, false, true));
+        assert_eq!(got.settings.other.len(), 2);
+        assert_eq!(got.hist_figs[1].unit_id, got.units[0].id);
+        assert_eq!((got.caravans[0].state.as_str(), got.caravans[0].depot, got.caravans[0].leaves_in), ("AtDepot", 604, 12_000));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn export_without_round4_files_gets_df_defaults() {
+        let w = round4_world();
+        let dir = temp_dir("noround4");
+        write_export(&w, &dir).unwrap();
+        for f in ["entities.json", "nobles.json", "settings.json", "hist_figs.json", "caravans.json"] {
+            std::fs::remove_file(dir.join(f)).unwrap();
+        }
+        let (got, rep) = load_export(&dir).unwrap();
+        assert!(got.entities.is_empty() && got.nobles.is_empty() && got.hist_figs.is_empty() && got.caravans.is_empty());
+        assert!(!rep.settings);
+        // DF's d_init defaults, so an older export keeps migrants and invasions
+        assert_eq!((got.settings.population_cap, got.settings.invasions, got.settings.temperature), (200, true, true));
+        // the manifest counts the round-4 lists, so the importer reports the difference
+        assert!(rep.warnings.iter().any(|w| w.contains("entities: manifest says 4, imported 0")), "{:?}", rep.warnings);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn round4_links_are_repaired() {
+        let mut w = round4_world();
+        // a dangling link, a self link, a duplicate, and a one-sided link (target does not list the lever)
+        w.buildings.iter_mut().find(|b| b.id == 601).unwrap().links = vec![602, 602, 601, 9999, 600];
+        let dir = temp_dir("round4links");
+        write_export(&w, &dir).unwrap();
+        let (got, rep) = load_export(&dir).unwrap();
+        assert_eq!(got.building(601).unwrap().links, vec![602, 600]);
+        assert_eq!(got.building(600).unwrap().links, vec![601]);
+        let all = rep.warnings.join("\n");
+        assert!(all.contains("links to missing buildings") && all.contains("made symmetric"), "{all}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn exporter_style_round4_lines_parse() {
+        // Lines as the Lua exporter writes them (rev 2026-10-10c), extras included.
+        let b: Building = serde_json::from_str(r#"{"id":11814,"kind":"Bridge","subtype":"","x1":103,"y1":100,"x2":103,"y2":100,"z":131,"center":{"x":103,"y":100,"z":131},"mat":101,"stage":3,"built":true,"owner":-1,"name":"","stockpile":null,"extents":[],"items":[1182366,921623],"jobs":[],"crops":[],"flags":["HAS_SUPPORT","LOWERED"],"links":[11808],"direction":"S","link_targets":[],"link_triggers":[11808],"timer":0,"material_amount":1}"#).unwrap();
+        assert_eq!((b.links.clone(), b.direction.as_str(), b.flags.len()), (vec![11808], "S", 2));
+        let t: Building = serde_json::from_str(r#"{"id":11753,"kind":"Trap","subtype":"WeaponTrap","x1":94,"y1":99,"x2":94,"y2":99,"z":128,"items":[926057,919630,1165898,921590],"flags":["ACTIVE","LOADED"],"links":[],"direction":"","link_targets":[],"link_triggers":[],"trap_items":[{"id":926057,"kind":"WEAPON","subtype":"ITEM_WEAPON_AXE_BATTLE","use_mode":2}],"trap_state":0,"ready_timeout":0,"fill_timer":0}"#).unwrap();
+        assert!(t.flags.iter().any(|f| f == "LOADED") && t.items.len() == 4);
+        let e: EntityInfo = serde_json::from_str(r#"{"id":35,"name":"The Mindful Realms","race":"HUMAN","kind":"Civilization","relation":"Peace","trades":true,"name_native":"x","parent":-1,"reasons":["civilization","diplomacy","trade","units"],"diplomacy_flags":["ALLIES"],"war_event_collection":-1,"caravans_sent":12,"first_caravan_year":264,"last_caravan_year":275,"units_on_map":23,"hostility_level":0,"siege_tier":0,"deities":[]}"#).unwrap();
+        assert!(e.trades && e.relation == "Peace");
+        let n: RawNoble = serde_json::from_str(r#"{"token":"MAYOR","name":"mayor","holder":13937,"entity_id":303,"mandates":["Ban export of spears"],"holder_hf":3893,"holder_unit_any":13937,"holder_name":"Amost Castlelancers","assignment_id":7,"position_id":7,"squad_id":-1,"responsibilities":["MEET_WORKERS"],"flags":[],"precedence":0,"number":1,"mandate_max":1,"demand_max":1,"required_bedroom":0,"mandates_detail":[{"text":"Ban export of spears","mode":"Export","item_type":"WEAPON","item_subtype":"ITEM_WEAPON_SPEAR","mat":"","amount_total":1,"amount_remaining":1,"timeout_counter":10,"timeout_limit":19515,"punishment_hammerstrikes":2,"punishment_prison_time":1}]}"#).unwrap();
+        assert_eq!((n.noble.holder, n.mandates_detail[0].timeout_limit), (13937, 19515));
+        let s: GameSettings = serde_json::from_str(r#"{"population_cap":90,"strict_population_cap":120,"baby_cap":120,"invasions":true,"temperature":false,"weather":true,"cave_ins":true,"other":["DIFFICULTY_ENEMIES=Normal"],"baby_cap_percent":1000,"visitor_cap":300,"artifacts":true,"difficulty_enemies":"Normal","source":"x"}"#).unwrap();
+        assert_eq!((s.population_cap, s.temperature), (90, false));
+        let h: HistFigName = serde_json::from_str(r#"{"id":40,"name":"Mondul the Dead","race":"DWARF","alive":true,"unit_id":-1,"name_native":"x","unit_id_any":-1,"sex":1,"born_year":-1,"died_year":-1,"civ_id":-1,"deity":true,"profession":"NONE","spheres":["DEATH"]}"#).unwrap();
+        assert!(h.alive && h.unit_id == -1);
+        let c: Caravan = serde_json::from_str(r#"{"entity_id":29,"civ":"The Channels of Direction","race":"DWARF","state":"Leaving","leaves_in":0,"depot":11168,"goods":[1,2,3],"animals":[5,6],"merchants":[],"import_value":29536,"export_value":0,"mood":100,"flags":[],"time_remaining":0,"depot_notified":0}"#).unwrap();
+        assert_eq!((c.state.as_str(), c.goods.len(), c.depot), ("Leaving", 3, 11168));
+        let d: DiplomatInfo = serde_json::from_str(r#"{"civ_id":29,"diplomat_hf":4056,"diplomat_unit":18290,"associate_hf":-1,"associate_unit":-1,"flags":[],"source":"meeting"}"#).unwrap();
+        assert_eq!(d.diplomat_unit, 18290);
+    }
+
+    #[test]
+    fn extras_read_round4_diplomats_and_mandates() {
+        let dir = temp_dir("extras4");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("diplomats.json"), r#"[{"civ_id":29,"diplomat_hf":4056,"diplomat_unit":18290,"associate_hf":-1,"associate_unit":-1,"flags":[],"source":"meeting"}]"#).unwrap();
+        std::fs::write(dir.join("nobles.json"), r#"[{"token":"MAYOR","holder":13937,"entity_id":303,"mandates":["Make 1 spear"],"mandates_detail":[{"text":"Make 1 spear","mode":"Make","amount_total":1,"amount_remaining":1}]},{"token":"BROKER","holder":-1}]"#).unwrap();
+        let x = load_extras(&dir);
+        assert_eq!(x.diplomats.len(), 1);
+        assert_eq!(x.mandates.len(), 1);
+        assert_eq!((x.mandates[0].noble, x.mandates[0].position.as_str(), x.mandates[0].mode.as_str()), (13937, "MAYOR", "Make"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

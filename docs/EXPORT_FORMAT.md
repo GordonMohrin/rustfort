@@ -31,6 +31,12 @@ export/<fort>/
   creature_raws.json rf_core::CreatureRaw array: expanded bodies, attacks (round 3, optional)
   weapon_raws.json   rf_core::WeaponRaw array: weapons, ammo, trap components (round 3, optional)
   armor_raws.json    rf_core::ArmorRaw array: armor, helms, gloves, shoes, pants, shields (round 3, optional)
+  entities.json      rf_core::EntityInfo array: own civ + site government, contacts, wars, trade partners (round 4, optional)
+  nobles.json        rf_core::NoblePosition array with mandates (round 4, optional)
+  settings.json      rf_core::GameSettings: population caps, invasions, temperature, ... (round 4, optional)
+  hist_figs.json     rf_core::HistFigName array: every referenced historical figure (round 4, optional)
+  caravans.json      rf_core::Caravan array: merchant caravans (round 4, optional)
+  diplomats.json     diplomats / outpost liaisons (round 4, optional; rf_import::load_extras)
   progress.json      exporter status, rewritten about once per second (not imported)
   error.json         only if the export aborted (not imported)
   export.lock        only while an export is running
@@ -468,3 +474,136 @@ Extras: `positions`, `leader_position`, `barracks` (building ids of `squad.rooms
 
 - `stress_cutoffs` (see psychology), `max_slice_by_phase` (longest frame slice per exporter phase in ms).
 - New `counts`: `creature_raws`, `weapon_raws`, `armor_raws`, `burrow_tiles`, `unit_needs`, `unit_emotions`, `unit_values`, `unit_relationships`, `unit_wounds`. The importer compares all of them (and `squads`, `burrows`) with what it loaded.
+
+
+## Additions for round 4 (still format v1)
+
+Written by exporter rev `2026-10-10c` and later. Everything is optional for the importer: an older export loads with empty lists, buildings without `flags`/`links`/`direction`, and `World::settings` = DF's defaults (`rf_import::default_settings()`: population cap 200, strict cap 220, baby cap 1000, invasions/temperature/weather/cave-ins on; `ImportReport::settings` is then false). The new `World` fields are `entities`, `nobles`, `settings`, `hist_figs` and `caravans` (`rf_core::Caravan`, added to rf-core in round 4); the new `Building` fields come in through serde.
+
+| file | content |
+|---|---|
+| `buildings.jsonl` | new fields `flags`, `links`, `direction`; extras `link_targets`, `link_triggers`, `trap_items`, `caged_units` and per-type raw values |
+| `entities.json` | `rf_core::EntityInfo` for the fort's civ and site government, every entity in their diplomacy lists, every civilization of the world, caravan/diplomat/trade-partner entities and the civs of units on the map |
+| `nobles.json` | `rf_core::NoblePosition` for every position assignment of the fort's site government and its civilization, with mandates |
+| `settings.json` | `rf_core::GameSettings` from `d_init` and the save's difficulty settings |
+| `hist_figs.json` | `rf_core::HistFigName` for every referenced historical figure |
+| `caravans.json` | `rf_core::Caravan` per entry of `plotinfo.caravans` |
+| `diplomats.json` | diplomats and liaisons (`rf_import::DiplomatInfo`, via `load_extras`) |
+| `manifest.json` | new `counts` keys (see below) |
+
+### buildings.jsonl: flags, links, direction
+
+`flags` are DF building state bits under Rustfort names, per building type (DF 53.16 field names in brackets). Unnamed set bits are written as `BIT<n>`.
+
+| building | `flags` |
+|---|---|
+| `Door`, `Hatch` | `door_flags`: `LOCKED` (= `forbidden`, the door sheet's **Lock** button; Gordon's "forbidden doors" that steer invaders into the trap corridor), `CLOSED` or `OPEN` (`closed`), `OPERATED_BY_MECHANISMS`, `TAKEN_BY_INVADERS`, `USED_BY_INTRUDER`, `INTERNAL` (`unused_02`, DF 0.47's "internal"; never set in DF 53). **DF 53 has no pet-passable bit** on doors (`door_flags` has 6 named bits), so `PET_PASSABLE` is never exported. Extra `close_timer`. |
+| `Bridge` | `gate_flags`: `RAISED` (else `LOWERED`), `RAISING`, `LOWERING`, `COLLAPSING`, `HAS_SUPPORT`. `direction` = `building_bridgest.direction`: `W` (Left, 0), `E` (Right, 1), `N` (Up, 2), `S` (Down, 3), `RETRACT` (-1). A raised drawbridge is a wall; a raised retracting bridge is open space (wiki "Bridge"). Extras `timer`, `material_amount`. |
+| `Floodgate`, `GrateWall`, `GrateFloor`, `BarsVertical`, `BarsFloor` | `gate_flags`: `CLOSED` (else `OPEN`), `CLOSING`, `OPENING`, `COLLAPSING`, `HAS_SUPPORT` |
+| `Weapon` (upright spikes) | `gate_flags`: `RETRACTED` (else `EXTENDED`), `RETRACTING`, `UNRETRACTING`; `LOADED` if it holds weapons |
+| `Trap` / `Lever` | `ACTIVE` = pulled (`state` != 0; each pull toggles it and toggles all linked buildings) |
+| `Trap` / `PressurePlate` | `PLATE_UNITS`, `PLATE_WATER`, `PLATE_MAGMA`, `PLATE_TRACK`, `PLATE_CITIZENS`, `PLATE_RESETS` (`plate_info.flags`); `ACTIVE` when ready; `direction` = the enabled triggers with their ranges, e.g. `units:50000-200000,water:1-7`; extra `plate` (all min/max) |
+| `Trap` / `CageTrap`, `StoneFallTrap`, `WeaponTrap` | `LOADED`: an empty cage / a boulder / at least one weapon or trap component built in; `FULL`: the cage holds a creature; `RESETTING`: `ready_timeout` > 0; `ACTIVE` = armed = loaded and not resetting |
+| `Trap` / `TrackStop` | `track_flags` uppercased; `direction` = dump direction (`N`, `SE`, ...); extra `friction` |
+| all traps | extras `trap_state`, `ready_timeout`, `fill_timer` |
+| `Well` | `well_flags`: `LOWERING`, `JUST_RAISED`; extra `bucket_z` |
+| `TradeDepot` | `trade_flags`: `TRADER_REQUESTED`, `ANYONE_CAN_TRADE`; `ACCESSIBLE` (`accessible`, set by DF when wagons can reach it) |
+| `Support` | `support_flags` uppercased |
+
+`links` are mechanism links (DF: a mechanism item built into each end). The exporter reads the general refs of the items in `contained_items`: `BUILDING_TRIGGERTARGET` (the item sits in a lever/plate and names the building it operates) and `BUILDING_TRIGGER` (the item sits in the target and names the lever/plate), plus `linked_mechanisms` of levers/plates (each item is held by its target). So a lever lists its targets, a target its levers/plates (extras `link_targets` / `link_triggers` keep the two directions apart). The importer drops links to missing buildings, self links and duplicates and makes one-sided links symmetric, with a warning each. `rf_import::is_trigger(b)` = lever or pressure plate.
+
+Trap contents: `items` (as before, `contained_items`) now also has the extra `trap_items` for traps, upright spikes and anything holding a cage: `[{"id", "kind", "subtype", "use_mode"}]` (`use_mode` 2 = built-in part, 0 = loaded item such as the cage or boulder). Creatures in cages (cage traps and built cages): extra `caged_units` from the cage's `CONTAINS_UNIT` refs.
+
+```json
+{"id":11808,"kind":"Trap","subtype":"Lever","x1":86,"y1":97,"z":128, ...,"flags":[],"links":[11814],"direction":"","link_targets":[11814],"link_triggers":[],"trap_state":0,"ready_timeout":0,"fill_timer":0}
+{"id":11814,"kind":"Bridge","subtype":"","x1":103,"y1":100,"z":131, ...,"flags":["HAS_SUPPORT","LOWERED"],"links":[11808],"direction":"S","link_targets":[],"link_triggers":[11808],"timer":0,"material_amount":1}
+{"id":11753,"kind":"Trap","subtype":"WeaponTrap", ...,"items":[926057,919630,1165898,921590],"flags":["ACTIVE","LOADED"],"links":[],"direction":"","trap_items":[{"id":926057,"kind":"WEAPON","subtype":"ITEM_WEAPON_AXE_BATTLE","use_mode":2}, ...]}
+```
+
+Trussroads (10.10.2026, year 277): 130 doors (127 closed, none locked at the time), 2 bridges each with a lever (the gate bridge "Hoftor" 11814 at (103,100,131), lever 11808 at (86,97,128), lowered; bridge 10972 at z121, lever 10973 pulled, raised), 79 loaded traps (25 weapon traps with 59 weapons/trap components, 23 cage traps, 31 stone-fall traps; 57 of them on z131 = the "Fallenschnecke"), 1 trade depot.
+
+### entities.json
+
+`rf_core::EntityInfo`:
+
+| field | source |
+|---|---|
+| `id`, `name` | `historical_entity.id`, English `translateName(name, true)` (extra `name_native`) |
+| `race` | creature token of `entity.race` (`""` for entities without race, e.g. religions) |
+| `kind` | `df.historical_entity_type`: `Civilization`, `SiteGovernment`, `NomadicGroup`, `Religion`, `Guild`, ... |
+| `relation` | `Own` for `plotinfo.civ_id` and `plotinfo.group_id`; else the entity's entry in the civ's `relations.diplomacy.state` (falling back to the site government's): `relation` 1 = `War`, 0 = `Peace`; `Unknown` if neither lists it (no contact) |
+| `trades` | the entity sent a caravan to this site (history events of type `MERCHANT` with `site` = the fort) or has one in `plotinfo.caravans` now |
+
+Extras: `parent` (the civ of a site government, from `entity_links` type PARENT), `reasons` (why it is listed: `own`, `diplomacy`, `civilization`, `caravan`, `diplomat`, `trade`, `units`), `diplomacy_flags` (e.g. `ALLIES`), `war_event_collection`, `caravans_sent`, `first_caravan_year`, `last_caravan_year` (from the merchant events), `units_on_map` (units with that `civ_id`), `hostility_level`, `siege_tier`, `deities` (historical figure ids).
+
+Trussroads: 58 entities. Own: the Channels of Direction (dwarves, civ 29, 44 caravans since year 212) and the Urns of Rhyme (site government 303). War: 3 civilizations (goblins 31 and 39, the sieging civ 39; elves 37). Peace: humans 35 (`ALLIES`, 12 caravans since 264), kobolds 33, and 25 other site governments. The goblin *site governments* are listed at peace while their civilizations are at war; this is DF's data (invaders carry the civ id).
+
+### nobles.json
+
+`rf_core::NoblePosition` per `entity.positions.assignments` entry of the site government and then the civilization (so a position with several holders, like militia captains, has several entries):
+
+| field | source |
+|---|---|
+| `token` | `entity_position.code`: `MAYOR`, `MANAGER`, `BROKER`, `BOOKKEEPER`, `CHIEF_MEDICAL_DWARF`, `MILITIA_COMMANDER`, `MILITIA_CAPTAIN`, `EXPEDITION_LEADER`, `BARON`, `MONARCH`, `OUTPOST_LIAISON`, ... |
+| `name` | `name[0]`, or `name_female[0]` / `name_male[0]` by the holder's sex (`baroness`, `king`) |
+| `holder` | unit id of the assignment's historical figure if alive and on the map, else -1 (vacant or away; extra `holder_hf` tells which) |
+| `entity_id` | the site government or the civilization |
+| `mandates` | text of every mandate the holder issued (`world.mandates.all`, matched by `mandate.unit`), only on the holder's first position that may issue mandates (`mandate_max` > 0). Text: `Make 1 spear`, `Make 3 crowns (gold)`, `Ban export of spears`, `Guild: ...` |
+
+Extras: `holder_hf`, `holder_unit_any`, `holder_name`, `assignment_id`, `position_id`, `squad_id`, `responsibilities` (e.g. `TRADE`, `ACCOUNTING`, `MANAGE_PRODUCTION`, `HEALTH_MANAGEMENT`, `LAW_ENFORCEMENT`, `MEET_WORKERS`), `flags`, `precedence`, `number`, `mandate_max`, `demand_max`, `required_bedroom`, `required_office`, `required_dining`, `required_tomb`, `required_boxes`, `required_cabinets`, `required_racks`, `required_stands` (room value / furniture demands), and `mandates_detail` (`rf_import::MandateInfo`: `mode` = `Export`/`Make`/`Guild`, `item_type`, `item_subtype`, `mat`, `amount_total`, `amount_remaining`, `timeout_counter`, `timeout_limit`, `punishment_hammerstrikes`, `punishment_prison_time`). Mandates whose issuer holds no mandate position are listed in `notes`.
+
+Trussroads: 21 fort assignments (mayor = expedition leader Amost Castlelancers, manager = dungeon master, bookkeeper, chief medical dwarf, 9 militia captains; **broker, hammerer, champion, sheriff, captain of the guard and militia commander vacant**) and 12 civ assignments (king, counts, barons, general, diplomat, outpost liaison; none on the map). One mandate: the mayor's `Ban export of spears`.
+
+### settings.json
+
+`rf_core::GameSettings`:
+
+| field | source |
+|---|---|
+| `population_cap`, `strict_population_cap`, `baby_cap` | `d_init.dwarf.population_cap`, `strict_population_cap`, `baby_cap_absolute`: the values the running game uses (DF 50+ fills `d_init` from `prefs/d_init.txt` / the in-game settings) |
+| `invasions` | difficulty `Enemies` (`plotinfo.main.custom_difficulty.difficulty_enemies`): `Off` = false; `Custom` = the `sieges` flag; `Normal`/`Hard` = true |
+| `temperature`, `weather`, `cave_ins` | `d_init.feature.flags` (`d_init_flags4`) `TEMPERATURE`, `WEATHER`, `CAVEINS` |
+| `other` | `KEY=value` strings: `DIFFICULTY_ENEMIES`, `DIFFICULTY_ECONOMY`, `VISITOR_CAP`, `BABY_CAP_PERCENT`, `SPECIFIC_SEED_CAP`, `FORTRESS_SEED_CAP`, `GRAZE_COEFFICIENT`, `CULL_DEAD_UNITS_AT`, `MAXIMUM_EMBARK_DIM`, every `FEATURE_<d_init flag>`, every field of `custom_difficulty` uppercased (arrays comma-separated, e.g. `ENEMY_POP_TRIGGER=20,50,80,110,140`; flags as `FLAG_SIEGES=false`; `INVASION_UNIT_CAP`, `MIN_RAIDS_BEFORE_SIEGE`, `SIEGE_FREQUENCY`, `MANDATE_PERIOD`, `FORT_DIG_SPEED`, ...) and the traffic costs |
+
+Extras: `baby_cap_percent`, `visitor_cap`, `artifacts` (`FEATURE_ARTIFACTS`: strange moods), `difficulty_enemies`, `source`.
+
+Trussroads: population cap **90**, strict cap 120, baby cap 120 (1000 %), **temperature off**, weather and cave-ins on, artifacts on, enemies `Normal` (siege population triggers 20/50/80/110/140, invasion unit cap 140), economy `Normal`.
+
+### hist_figs.json
+
+`rf_core::HistFigName` for every historical figure the export references: the units themselves (`Unit::hist_fig_id`), every `Relationship::hist_fig_id` (family, friends, deities), prayer needs (`Need::deity_id`), squad members, noble holders, diplomats, and the deities/worship of the fort's civ and site government.
+
+| field | source |
+|---|---|
+| `name` | English `translateName(hf.name, true)` as DF shows it (`Kikrost Pillarworked`, deities like `Mondul the Dead`); the race name for unnamed figures. Extra `name_native` |
+| `race` | creature token of `hf.race` |
+| `alive` | `died_year == -1` |
+| `unit_id` | the figure's unit if alive and on the map (as `Relationship::unit_id`), else -1; extra `unit_id_any` = `hf.unit_id` |
+
+Extras: `sex`, `born_year`, `died_year`, `civ_id`, `deity` (`hf.flags.deity`), `profession`, `spheres` (deities: `info.metaphysical.spheres`, e.g. `DEATH`, `WEALTH`).
+
+Trussroads: 163 figures (135 alive, 94 on the map, 28 dead; 7 worshipped deities).
+
+### caravans.json and diplomats.json
+
+`rf_core::Caravan` per `plotinfo.caravans` entry (DF keeps a leaving caravan in the list for a while):
+
+| field | source |
+|---|---|
+| `entity_id`, `civ`, `race` | `caravan.entity` and that entity's English name and race |
+| `state` | `df.caravan_state.T_trade_state`: `None`, `Approaching`, `AtDepot`, `Leaving`, `Stuck` |
+| `leaves_in` | **ticks**: `time_remaining` × 10 (DFHack's `caravan` script counts 120 per day = 1 200 ticks) |
+| `depot` | the trade depot building id (an `ACCESSIBLE` one first), -1 = none |
+| `goods`, `animals` | `caravan.goods` (item ids), `caravan.animals` (unit ids of pack animals/wagons) |
+| `merchants` | active units with `dfhack.units.isMerchant` and the caravan's civ |
+| `import_value`, `export_value`, `mood`, `flags` | `import_value`, `export_value_total`, `mood`, the set `flags` bits |
+
+Extras: `time_remaining`, `depot_notified`, `export_value_personal`, `offer_value`, `haggle_fail_count`, `civ_native`.
+
+`diplomats.json` (read by `rf_import::load_extras` as `DiplomatInfo`): one entry per `plotinfo.dip_meeting_info` (`civ_id`, `diplomat_hf` = `diplomat_id`, `associate_hf`, their units, `flags`, `source: "meeting"`) and per active diplomat unit without a meeting (`source: "unit"`).
+
+At the first probe of 10.10.2026 a dwarven caravan (civ 29) was `Leaving` with 560 goods and 2 animals, and the outpost liaison was on the map for a meeting; both had left before the export, so the Trussroads export has 0 caravans and 0 diplomats. The caravan code path is therefore only tested with synthetic data.
+
+### manifest.json: round-4 keys
+
+New `counts`: `entities`, `nobles`, `mandates`, `hist_figs`, `caravans`, `diplomats`, `building_links` (lever/plate → target links), `levers`, `locked_doors`, `traps`, `trade_depots`. The importer compares all of them except `diplomats` with what it loaded. New phases in `max_slice_by_phase`: `history` (the merchant-event scan, 1 000 events per check), `entities`, `nobles`, `settings`, `trade`, `hist_figs`.

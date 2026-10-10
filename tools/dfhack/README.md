@@ -3,7 +3,7 @@
 | script | purpose |
 |---|---|
 | `rustfort-export.lua` | Exports the loaded fort into `export/<fort>/` (format: `docs/EXPORT_FORMAT.md`). Read-only. |
-| `rustfort-verify.lua` | Spot-checks an export against the live game: sampled tiles, 3 citizens, counts, work orders, workshop job counts, farm crops, mods. Read-only. |
+| `rustfort-verify.lua` | Spot-checks an export against the live game: sampled tiles, 3 citizens, counts, work orders, workshop job counts, farm crops, mods; since round 4 also door/bridge/lever/trap states and links, noble positions, entity relations, settings. Read-only. |
 
 Both scripts are for DF 53.16 with DFHack 53.16-r2.
 
@@ -139,6 +139,38 @@ Measured on Trussroads (10.10.2026, year 275, during and after a goblin siege; G
 
 Verification (`spotcheck`, see below), a `--skip-map` export followed directly by `rustfort-verify.lua` (270 ticks apart): **unit psychology fields 90/90** (needs, emotions, values, family and visual relationship counts, wound layers, blood, squad/position, civ of 10 units incl. a troglodyte and 3 demons), **squads 9/9** (positions, members, routine), **burrow tiles 32/32** (16 burrow tiles plus 16 neighbours, through `isAssignedTile`), **burrows 2/2** (tile count via `isAssignedBlockTile`), **corpse tokens 8/8**, **creature bodies 5/5** (DWARF, GOBLIN, HUMAN, ELF, CAT: castes/parts/layers/attacks/adult size), **material mechanics 5/5**, item raw counts 1/1. Against the full export: tiles 375/375, **aquifer flags 20/20** (10 aquifer tiles + 10 random). About 10 800 ticks after the full export the squads had all left the `Ready` alert and wounds had healed, which `compare` shows as differences.
 
+## Round 4 (rev 2026-10-10c): building states, links, society, settings
+
+The exporter now also writes (format: `docs/EXPORT_FORMAT.md`, "Additions for round 4"):
+
+- `buildings.jsonl`: `flags` (doors `LOCKED`/`OPEN`/`CLOSED`, bridges `RAISED`/`LOWERED`, levers `ACTIVE` = pulled, traps `LOADED`/`ACTIVE`/`RESETTING`/`FULL`, floodgates and grates `OPEN`, pressure plate triggers, depot `ACCESSIBLE`), `links` (mechanism links in both directions), `direction` (bridge raise direction, plate trigger ranges, track-stop dump direction), extras `trap_items` and `caged_units`.
+- `entities.json` (own civ and site government, contacts with relation `Own`/`Peace`/`War`, trade partners), `nobles.json` (positions, holders, mandates), `settings.json` (population caps, invasions, temperature, weather, cave-ins, all difficulty values), `hist_figs.json` (names of every referenced historical figure), `caravans.json`, `diplomats.json`.
+
+Where the data comes from in DF 53.16 / DFHack 53.16-r2:
+
+| data | source |
+|---|---|
+| door lock | `building_doorst.door_flags.forbidden` (= the door sheet's Lock; DF 53 has no pet-passable bit, `unused_02` was "internal") |
+| bridges, floodgates, grates, spikes | `gate_flags` (`raised`/`raising`/`lowering` for bridges, `closed` for floodgates/grates, `retracted` for spikes), `building_bridgest.direction` (Left/Right/Up/Down/Retracting) |
+| levers, traps | `building_trapst.trap_type`, `state` (lever pulled), `ready_timeout`, `plate_info`, `track_stop_info`, `contained_items` (cage/boulder/weapons) |
+| links | general refs `BUILDING_TRIGGERTARGET` / `BUILDING_TRIGGER` of the mechanisms in `contained_items`, and `linked_mechanisms` |
+| relations | `historical_entity.relations.diplomacy.state[i]` (`group_id`, `relation` 0 = peace, 1 = war, `flags`) of the civ and the site government |
+| trade partners | history events of type `MERCHANT` at the fort's site (31 857 events scanned, 1 000 per budget check), `plotinfo.caravans` |
+| nobles | `entity.positions.own` / `.assignments` (`histfig`, `squad_id`), `world.mandates.all` |
+| settings | `d_init.dwarf` (caps), `d_init.feature.flags` (`d_init_flags4`), `plotinfo.main.custom_difficulty` (`difficultyst`) |
+| caravans, diplomats | `plotinfo.caravans` (`trade_state`, `time_remaining`, `goods`, `animals`), `plotinfo.dip_meeting_info` |
+
+Measured on Trussroads (10.10.2026, year 277, game running; one of the two runs overlapped with a Rust build on the same machine):
+
+| | value |
+|---|---|
+| total export time | 21.8-27.9 s wall, 14.1-14.9 s Lua inside DF, 452-476 frames |
+| longest slice | 32 ms in every phase without parallel load (the round-4 phases `history`, `entities`, `nobles`, `settings`, `trade`, `hist_figs` stay at 31-32 ms); 47 ms in the map/plants phases while `cargo` was compiling |
+| exported (round 4) | 130 doors, 2 bridges with 2 levers (2 links), 81 traps (79 loaded: 25 weapon traps with 59 weapons, 23 cage traps, 31 stone-fall traps; 57 on z131), 58 entities (3 civs at war), 33 noble assignments with 1 mandate, 163 historical figures, settings (population cap 90, temperature off) |
+| import (`rf-import`, release) | 0.06 s, no count mismatches |
+
+Verification right after the export (`spotcheck`, the verify script reads other paths where DF has one: the raw `door_flags.whole` / `gate_flags.whole` bits, the lever's `linked_mechanisms` → `getHolderBuilding`, `dfhack.units.getNoblePositions` per citizen): **tiles 375/375, doors 128/130** (2 doors had opened/closed by then), **bridges 2/2, levers with links 2/2, traps loaded 79/79, noble positions 16/16, entity relations 32/32**, settings 1/1, caravan and mandate counts 1/1 each, plus all round-2/3 checks (orders 43/43, farm crops 56/56, squads 9/9, burrows, creature bodies, mechanics).
+
 ## Spot check against the live game
 
 ```bash
@@ -164,6 +196,7 @@ The verify script uses plain field access, `getTileType`, `getPlantAtTile` and `
 - FEATURE tiles take the init-feature material when available, else `RAW_ADAMANTINE` (local) or `SLADE` (global).
 - For GRASS tiles, the grass event with the largest amount wins. 2–3 grass tiles per export have no event and get no material.
 - Dead units (about 400 in `units.all`) and off-map items are not exported; the counts are in `notes`.
+- Round 4: `leaves_in` = `time_remaining` × 10 ticks (DFHack's `caravan` script: 120 per day); `trades` = the entity sent a caravan to this site or has one now (DF has no "trade partner" flag); `invasions` from the difficulty setting `Enemies` (Off/Normal/Hard/Custom + `sieges` flag); `LOCKED` = `door_flags.forbidden`.
 - Round 3 estimates: relationship kinds from `love`/`meet_count` (wiki thresholds; `Grudge` = love < 0 is a guess, Trussroads has none), wound `severity` = `surface_perc` × 100. Emotions with emotion `ANYTHING` and thought `None` (about 40 %) are exported as DF stores them.
 - Not exported yet:
   - jobs outside workshop/furnace queues (hauling, digging, planting), zones' detailed settings, stockpile item filters below category level, squad ammunition and supplies, patrol routes
