@@ -357,6 +357,8 @@ pub(crate) struct Fighter {
     pub scars: Vec<Wound>,
     pub listed_bleed: bool,
     pub listed_wound: bool,
+    /// [audit-combat] Helpless from a syndrome (paralysis, unconsciousness, webs) until.
+    pub syn_until: u64,
 }
 
 impl Default for Fighter {
@@ -387,6 +389,7 @@ impl Default for Fighter {
             scars: Vec::new(),
             listed_bleed: false,
             listed_wound: false,
+            syn_until: 0,
         }
     }
 }
@@ -470,6 +473,11 @@ const LOG_MAX: usize = 2000;
 const CONTACT_K: f32 = 50.0;
 /// Sight radius of wild hostiles and monsters (estimate) and of fleeing civilians.
 pub(crate) const SIGHT: i32 = 20;
+
+/// [audit-combat] `cap` for sibling modules.
+pub(crate) fn cap_pub(s: &str) -> String {
+    cap(s)
+}
 
 fn cap(s: &str) -> String {
     let mut c = s.chars();
@@ -1938,7 +1946,7 @@ impl Sim {
         self.combat.f[s].wounds.iter().map(|w| w.pain).sum()
     }
 
-    fn check_pain(&mut self, s: usize, now: u64) {
+    pub(crate) fn check_pain(&mut self, s: usize, now: u64) {
         let b = self.combat.f[s].body;
         if b == u16::MAX || self.combat.bodies[b as usize].nopain {
             return;
@@ -2161,10 +2169,10 @@ impl Sim {
             if b != u16::MAX && self.combat.f[s].uncon_until > now {
                 let thr = pain_threshold(self.attr(s, "WILLPOWER", 1000));
                 if self.pain_of(s) <= thr && self.combat.f[s].blood * 2 >= self.combat.f[s].blood_max {
-                    self.combat.f[s].uncon_until = now;
+                    self.combat.f[s].uncon_until = now.max(self.combat.f[s].syn_until); // [audit-combat] syndromes
                     self.ai[s].wake = self.ai[s].wake.min(now + 1);
                 } else {
-                    self.combat.f[s].uncon_until = now + 200;
+                    self.combat.f[s].uncon_until = (now + 200).max(self.combat.f[s].syn_until);
                 }
             }
             self.sync_wounds(s);
@@ -2308,7 +2316,11 @@ impl Sim {
         if ps.dist(pt) <= 1 {
             let f = &self.combat.f[s];
             if now >= f.next_atk {
+                let wounds0 = self.combat.stats.wounds; // [audit-combat]
                 let killed = self.attack(s, t, now);
+                if !self.caverns.powers.is_empty() {
+                    self.syndrome_after_attack(s, t, wounds0, now); // [audit-combat] venom
+                }
                 let agi = self.attr(s, "AGILITY", 1000);
                 // Estimate: prepare + recover + 4 ticks, faster with agility.
                 let base = 3 + 3 + 4;
@@ -2349,6 +2361,9 @@ impl Sim {
 
     /// Hostiles and retaliating creatures.
     fn fighter_think(&mut self, s: usize, now: u64) {
+        if !self.caverns.powers.is_empty() && self.syndrome_breath(s, now) {
+            return; // [audit-combat] forgotten beast breath and webs
+        }
         if self.pursue(s, now) {
             return;
         }
