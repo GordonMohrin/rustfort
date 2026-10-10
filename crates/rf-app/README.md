@@ -307,6 +307,18 @@ position to jump there.
   (`Sim::order_squad`). "+ Assign" opens a citizen picker (best weapon skill first), "Remove"
   empties a position, "+ Create squad" makes a new one. Right-click or Esc during Station/Kill
   returns to the squads.
+  [app9] Tabs below the orders: *Members*; *Equipment* (DF's per-position uniform screen: the
+  positions with worn and missing pieces, and for the selected position one row per slot
+  (body, head, legs, hands, feet, shield, weapon) with `<` `>` for the item (none, any, or a type
+  from the save's armor/weapon raws) and a material button (any, metal, steel, iron, bronze,
+  copper, leather, wood, bone); *Use squad uniform* clears the override, *Copy to all positions*;
+  `Sim::set_squad_uniform`, `Sim::squad_equipment`); *Ammunition* (entries with amount
+  -100/-10/+10/+100, material class, combat/training flags, remove, "+ bolts"/"+ arrows"/...
+  from the ammo raws; rounds carried per member; `Sim::set_squad_ammo`); *Patrol and barracks*
+  (route waypoints; *New route (pick on map)*: click waypoints, Enter finishes
+  (`Sim::order_squad_patrol`), right-click removes the last, Esc cancels; *Patrol*, *Show route*
+  (drawn on the map with numbered waypoints), *Clear route*; barracks zones with checkboxes,
+  `Sim::set_squad_barracks`).
 - **Burrows** (`Shift+u`): the burrow list with tile and unit counts; burrow tiles of the
   current z-level are drawn as a colored overlay (the selected burrow with its outline), like
   DF only while the menu is open. "+ New burrow" and drag a box (3D like digging) creates one
@@ -314,7 +326,11 @@ position to jump there.
   (`Sim::set_civilian_alert`); the top bar then says "Civilian alert: <burrow>".
 - **Reports** (`Shift+n`): every announcement of the session with its game date, newest first,
   filtered by All / Combat / Deaths / Jobs / Info, plus the combat log (`Sim::combat_log`).
-  Click a line with `»` to jump there.
+  Click a line with `»` to jump there. [app9] *Combat reports* groups the combat lines per fight
+  like DF: a line joins an open fight (last line at most 600 ticks ago) that shares a
+  participant (citizens and other creatures by name, unnamed ones as "the goblin lasher"), else it
+  starts a new one. The list shows "Urist McAxe and 2 more vs Snang", date, lines and deaths;
+  the right side the fight's lines and *Go there*.
 - **Hostiles**: hostile creatures (`Sim::hostiles`) get a pulsing red frame with a `!` badge
   (not when caged); creatures with open wounds get a blood drop. The top bar counts the
   hostiles; click the counter to center on the next one. When new hostiles arrive, Rustfort
@@ -322,6 +338,27 @@ position to jump there.
   siege, "An ambush! Curse them!", "<Name> has come!" for megabeasts) with "Center on them".
   Hostiles arriving within a day of the first belong to the same wave. Wild animals only get an
   announcement. A siege already in progress when the fort is loaded only gets an announcement.
+  [app9] When the sim spots a raid in the same frame, its line names the box ("Thief! Protect
+  the hoard from skulking filth!", "Snatcher! Protect the children!"); whether a box opens,
+  the game pauses or the camera recenters follows the announcement settings. Hidden raiders
+  stay invisible until spotted.
+- **Announcement boxes and settings** ([app9], `ui/round9.rs`): every sim line is matched to an
+  announcement type (siege, ambush, thief, snatcher, abducted, megabeast, citizen/pet/enemy
+  death, migrants, caravan, visitor, petition, mood, artifact, birth, animals, tantrum, justice,
+  nobles, ghosts, cave-in, traps, destroyed buildings, job cancellations, other). Each type has
+  DF's flags `BOX` (a box that pauses), `P`, `R` and `D_D` (shown in the announcement lines; the
+  Reports keep every line). The defaults come from `%APPDATA%/Bay 12 Games/Dwarf
+  Fortress/prefs/announcements.txt`, then the install's `prefs/` and `data/init/` files (the
+  first DF token of the type that is found); Esc > Settings > *Announcements...* changes them
+  and `saves/settings.json` keeps the changes. Boxes queue ("1 of 5"; from the fifth on, more of
+  the same type fold into "... and N more"); Enter or Esc closes the front box, *Close all*
+  every box, *Go there* centers on it.
+- **Petitions** ([app9]): a pending visitor petition (`Sim::petitions`) opens a box with Accept /
+  Deny / Petitions / Later (if the PETITION type has a box) and shows a blinking "Petitions (n)"
+  badge at the top left. The petitions screen lists all petitions (pending first) with role,
+  request, location, age and days left (28-day timeout) and answers with
+  `Sim::answer_petition`; *Show visitor* selects the visitor. Temple and guildhall petitions of
+  religions and guilds are listed too.
 - **Doors, levers, bridges, traps** (round 4, `ui/devices.rs`): the building sheet shows the
   state from the building flags (`closed, locked`, `raised`, `pulled`, `armed`). Doors and
   hatches get Lock / Forbid passage / Pet-passable / Internal (`Sim::set_building_flag` with
@@ -349,7 +386,13 @@ position to jump there.
   skill, `Sim::appoint`), the mayor is elected, militia captains are set in the squads screen,
   barons and the like are appointed by the monarch.
 - **Settings** (Esc menu): population cap -10/-1/+1/+10 (`Sim::set_population_cap`, DF's
-  d_init `POPULATION_CAP`) and the invasions switch (`Sim::set_invasions`).
+  d_init `POPULATION_CAP`) and the invasions switch (`Sim::set_invasions`); [app9]
+  *Announcements...* opens the announcement settings.
+- **Skills** ([app9]): the unit sheet's Skills tab lists DF's skill names with the level
+  ("Legendary +2 Miner", "High Master Axe Dwarf"), an experience bar towards the next level
+  (DF: 500 + 100 x level) and a tooltip with the token and "x / y experience to <level>"; the
+  wheel scrolls. Tooltips of the toolbar, pause and speed buttons show the key and DF's binding
+  name.
 - **Liquids**: water and magma use Premium's `LIQUIDS` page, one sprite per depth 1-7 (1-3
   translucent, 4-7 opaque and darker) with the depth number, and `UNDERWATER_EDGE_*` foam on the
   dry tiles around a pool. Tiles are redrawn every frame, so flowing water moves as the sim
@@ -433,6 +476,13 @@ rustfort play --screenshot target/shots/a.png --frames 20 --view 48,48,22,1 \
   `convict[:crime]`, `objects`, `world[:tab]`, `minimap`, and the test hooks `fake-locations`
   (a tavern and a temple on the first meeting areas) and `fake-crimes` (two open and one closed
   case).
+- Round 9: `petitions`, `announcements` (settings page), `squad-tab:<1|2|3>` (Equipment,
+  Ammunition, Patrol and barracks; with `squads:<id>`), `eq-pos:<n>`, `patrol-tool` (a made-up
+  3-point route around the camera), `fights` (Reports > Combat reports), and the test hooks
+  `fake-petition[:performer|scholar|mercenary|slayer]` (a visitor arrives and the sim runs up to
+  40 days until it petitions), `fake-raid[:thief|snatcher|ambush|abducted|death|mood]` (a sim-like
+  line through the announcement path), `force-raid[:siege|ambush|thief|snatcher]`
+  (`Sim::force_raid`) and `fake-fights` (two made-up fights).
 - Round 6: `--menu` shows the title screen even with `--screenshot` (the script can click on,
   and the frame count continues into the game); `--menu-page load|exports|import|settings`
   opens a page; `--menu-page import:go` starts the import as soon as DF answers (end-to-end
@@ -466,6 +516,9 @@ screenshots under `target/`, never in git.
 - `save.rs`: save games (bincode + zstd), save list, `savebench`; (round 6) tagged autosaves and
   their rotation.
 - `ui/help.rs` (round 6): controls overview and first-time hints.
+- Round 9: `ui/round9.rs` (announcement types and settings, box queue, raid boxes, petitions,
+  squad equipment/ammo/patrol/barracks tabs, patrol tool and route overlay, combat reports per
+  fight, DF skill names and experience bars).
 - Round 8: `ui/round8.rs` (state, pickers, `--ui` states, Esc, stockpile link tool and map
   lines), `ui/workdetails.rs` (Labor tabs: work details, kitchen), `ui/stockpile_ed.rs`,
   `ui/animals.rs`, `ui/places.rs` (Places, Justice, Objects, World), `ui/minimap.rs`.
