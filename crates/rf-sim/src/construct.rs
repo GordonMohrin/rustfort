@@ -15,7 +15,8 @@
 //!     ramp top;
 //!   - DF 53 keeps the building material in the world with `flags.construction` (the export
 //!     shows the blocks of every construction at its tile), so removing gives the item back.
-//!   - Placement: a flat floor or open space, not hidden, no construction there yet, no building
+//!   - Placement: walls, ramps, stairs and fortifications on a flat floor or open space, floors
+//!     and tracks over open space; not hidden, no construction there yet, no building
 //!     (stockpiles and zones are fine), no deep water or magma. Open space needs support: a
 //!     solid tile below, or a wall or floor next to it (a planned construction next to it counts
 //!     at designation time, so lines can be built out from an edge; at build time the support
@@ -130,6 +131,8 @@ pub struct ConstructReport {
     pub suspended: u64,
     /// Searches that found no building material.
     pub no_material: u64,
+    /// Workers that could not reach an item or a site.
+    pub path_failures: u64,
     pub engravings: usize,
     /// Items waiting for a garbage dump.
     pub dump_waiting: usize,
@@ -443,6 +446,10 @@ impl Sim {
             Shape::Empty => true,
             _ => return false,
         };
+        // DF: floors and tracks go over open space; on a floor one carves a track instead.
+        if !open && matches!(k, ConstructionKind::Floor | ConstructionKind::Track) {
+            return false;
+        }
         if t.liquid_depth() >= 4 || (t.is_magma() && t.liquid_depth() > 0) {
             return false;
         }
@@ -785,7 +792,7 @@ impl Sim {
         let it = &self.world.items[idx];
         let f = &it.flags;
         let m = &self.imeta[idx];
-        !m.dead && !m.hauling && m.reserved == 0 && !f.forbid && f.on_ground && !f.in_job && !f.construction && !f.in_building && it.container < 0 && it.holder < 0 && it.building < 0
+        !m.dead && !m.hauling && m.reserved == 0 && m.blocked_until <= self.ticks && !f.forbid && f.on_ground && !f.in_job && !f.construction && !f.in_building && it.container < 0 && it.holder < 0 && it.building < 0
     }
 
     fn cx_dump_goals(&self, c: u32, near: (usize, usize, usize)) -> Goals {
@@ -1225,13 +1232,17 @@ impl Sim {
     /// [path_failed hook] The worker could not reach the item or the site.
     pub(crate) fn construct_path_failed(&mut self, s: usize, j: u32, now: u64) {
         self.cx_ensure(s);
+        self.cx.stats.path_failures += 1;
         if let Some(job) = self.cx.jobs.get(j as usize).copied() {
             if job.live {
-                if self.cx.phase[s] == PH_FETCH && job.item >= 0 {
+                let fetch = self.cx.phase[s] == PH_FETCH && job.item >= 0;
+                if fetch {
                     if let Some(&i) = self.item_idx.get(&job.item) {
                         self.imeta[i as usize].blocked_until = now + rf_core::TICKS_PER_DAY as u64;
                     }
-                } else {
+                }
+                // A construction looks for other material at once; everything else waits a day.
+                if !(fetch && matches!(job.kind, CK::Build(_))) {
                     self.cx.jobs[j as usize].blocked_until = now + rf_core::TICKS_PER_DAY as u64;
                 }
             }

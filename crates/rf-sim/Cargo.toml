@@ -29,3 +29,7 @@ path = "examples/fort.rs"
 [[example]]
 name = "defense" # [defense] sieges against the real fort's doors, bridges and traps
 path = "examples/defense.rs"
+
+[[example]]
+name = "construct" # [construct] constructions, smoothing, engraving, dumping on the real fort
+path = "examples/construct.rs"
