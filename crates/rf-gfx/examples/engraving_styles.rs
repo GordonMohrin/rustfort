@@ -11,7 +11,6 @@
 //! Writes one PNG per style (A..F) plus `styles_sheet.png` and `quality.png`.
 
 use image::{Rgba, RgbaImage};
-use std::f32::consts::PI;
 
 const T: i32 = 32;
 const SS: i32 = 4;
