@@ -113,7 +113,7 @@ pub fn scan(path: &Path, from: usize, to: usize) -> GamelogEvents {
             bump("moods");
         } else if line.contains("has created a masterpiece") {
             bump("masterpieces");
-        } else if line.contains(" has created ") && line.ends_with('!') {
+        } else if line.contains(" has created ") && line.contains(", a") && line.contains('!') {
             bump("artifacts");
         } else if line.contains("throws a tantrum") || line.contains("is throwing a tantrum") {
             bump("tantrums");

@@ -203,6 +203,16 @@ fn measure(a: &World, b: &World, years: f64, value: &dyn Fn(&Item) -> f64) -> Me
         let v = value(it);
         wealth += v;
         if it.id > max_a {
+            if !matches!(g, "drink" | "meal" | "plant" | "seed" | "other_food" | "refuse" | "boulder" | "log" | "gem" | "other") {
+                put(&mut m, "quality.new_durable_items", 1.0);
+                put(&mut m, "quality.new_masterwork", if it.quality == 5 { 1.0 } else { 0.0 });
+                put(&mut m, "quality.new_exceptional_or_better", if it.quality >= 4 && it.quality <= 5 { 1.0 } else { 0.0 });
+                put(&mut m, "quality.new_sum", it.quality.min(5) as f64);
+            }
+            if g == "craft" {
+                put(&mut m, "quality.craft_new_masterwork", if it.quality == 5 { 1.0 } else { 0.0 });
+                put(&mut m, "quality.craft_new_sum", it.quality.min(5) as f64);
+            }
             put(&mut m, &format!("new.{g}"), it.stack.max(1) as f64);
             put(&mut m, &format!("newkind.{}", it.kind), it.stack.max(1) as f64);
             wealth_new += v;
@@ -212,6 +222,15 @@ fn measure(a: &World, b: &World, years: f64, value: &dyn Fn(&Item) -> f64) -> Me
         }
     }
     put(&mut m, "stock.items_total", b.items.len() as f64);
+    if let Some(n) = m.get("quality.new_durable_items").copied() {
+        let q = m.get("quality.new_sum").copied().unwrap_or(0.0);
+        m.insert("quality.new_mean".into(), q / n.max(1.0));
+        m.remove("quality.new_sum");
+    }
+    if let Some(q) = m.remove("quality.craft_new_sum") {
+        let n = m.get("new.craft").copied().unwrap_or(0.0);
+        m.insert("quality.craft_new_mean".into(), q / n.max(1.0));
+    }
     put(&mut m, "wealth.items", wealth);
     put(&mut m, "wealth.new_items", wealth_new);
     put(&mut m, "wealth.new_items_without_stored_value", zero_value_new as f64);
@@ -262,7 +281,10 @@ fn measure(a: &World, b: &World, years: f64, value: &dyn Fn(&Item) -> f64) -> Me
         put(&mut m, "tile.deconstructed", removed as f64);
         put(&mut m, "tile.smoothed", smoothed as f64);
     }
-    put(&mut m, "tile.engravings_added", b.engravings.len() as f64 - a.engravings.len() as f64);
+    if !a.engravings.is_empty() || b.engravings.is_empty() {
+        // (Exports before round 5 have no engravings, so the change is unknown there.)
+        put(&mut m, "tile.engravings_added", b.engravings.len() as f64 - a.engravings.len() as f64);
+    }
     put(
         &mut m,
         "tile.trees_lost",
@@ -324,6 +346,15 @@ fn measure(a: &World, b: &World, years: f64, value: &dyn Fn(&Item) -> f64) -> Me
 
 // ------------------------------------------------------------------ simulation
 
+struct Opts {
+    invasions: bool,
+    standdown: bool,
+    standing: bool,
+    /// After a fight, go back to the squads' schedules of the start export (Gordon's routine,
+    /// e.g. constant training) instead of `Off duty` for everyone.
+    restore: bool,
+}
+
 struct RunOut {
     seed: u64,
     metrics: Metrics,
@@ -333,12 +364,24 @@ struct RunOut {
 }
 
 /// Run Rustfort from `start` for `ticks` with the `bench --standdown` player emulation.
-fn run_seed(start: &World, ticks: u64, seed: u64, invasions: bool, standdown: bool, years: f64) -> RunOut {
+fn run_seed(start: &World, ticks: u64, seed: u64, opt: &Opts, years: f64) -> RunOut {
+    let (invasions, standdown) = (opt.invasions, opt.standdown);
     let mut sim = Sim::new(start.clone(), seed);
+    if opt.standing {
+        // Gordon's food-watch scripts add brew/cook orders when stocks run low; the sim's
+        // fallback standing orders are the closest equivalent (brew, cook, barrels, pots).
+        sim.set_standing_orders(true);
+    }
     if !invasions {
         sim.set_invasions(false);
     }
     let mut calm_since: Option<u64> = None;
+    let routine: Vec<(i32, String, bool)> = start
+        .squads
+        .iter()
+        .map(|q| (q.id, q.schedule.clone(), q.orders.iter().any(|o| o.eq_ignore_ascii_case("Train"))))
+        .collect();
+    let mut alerted = false;
     let mut deaths: BTreeMap<String, usize> = BTreeMap::new();
     let mut death_citizens = 0usize;
     let t0 = Instant::now();
@@ -353,18 +396,31 @@ fn run_seed(start: &World, ticks: u64, seed: u64, invasions: bool, standdown: bo
                 sim.unit_status(id).activity != "Lurk"
                     && sim.world.unit(id).map(|u| cits.iter().any(|&c| c.dist(u.pos) <= 30 && sim.reachable(u.pos, c))).unwrap_or(false)
             });
-            if threat && sim.world.squads.iter().all(|q| q.schedule.eq_ignore_ascii_case("Off duty")) {
+            let idle = if opt.restore { !alerted } else { sim.world.squads.iter().all(|q| q.schedule.eq_ignore_ascii_case("Off duty")) };
+            if threat && idle {
                 let ids: Vec<i32> = sim.world.squads.iter().map(|q| q.id).collect();
                 for id in ids {
                     sim.set_squad_schedule(id, "Ready");
                 }
+                alerted = true;
             }
             if threat {
                 calm_since = None;
             } else {
                 let since = *calm_since.get_or_insert(done);
                 let on_duty = sim.world.squads.iter().any(|q| !q.schedule.eq_ignore_ascii_case("Off duty") || !q.orders.is_empty());
-                if on_duty && done - since >= rf_core::TICKS_PER_DAY as u64 {
+                if opt.restore {
+                    if alerted && done - since >= rf_core::TICKS_PER_DAY as u64 {
+                        for (id, sched, train) in &routine {
+                            sim.order_squad(*id, rf_sim::SquadOrder::Cancel);
+                            sim.set_squad_schedule(*id, sched);
+                            if *train {
+                                sim.order_squad(*id, rf_sim::SquadOrder::Train);
+                            }
+                        }
+                        alerted = false;
+                    }
+                } else if on_duty && done - since >= rf_core::TICKS_PER_DAY as u64 {
                     let ids: Vec<i32> = sim.world.squads.iter().map(|q| q.id).collect();
                     for id in ids {
                         sim.order_squad(id, rf_sim::SquadOrder::Cancel);
@@ -427,6 +483,12 @@ fn run_seed(start: &World, ticks: u64, seed: u64, invasions: bool, standdown: bo
     m.insert("ev.beasts".into(), sim.cavern_report().beasts.len() as f64);
     m.insert("ev.trades".into(), tr.trades.len() as f64);
     m.insert("perf.ticks_per_s".into(), ticks as f64 / secs.max(1e-9));
+    for (label, n) in sim.production_report().jobs_done {
+        *m.entry(format!("simjob.{label}")).or_insert(0.0) += n as f64;
+    }
+    for (kind, n) in sim.industry_report().made {
+        *m.entry(format!("simmade.{kind}")).or_insert(0.0) += n as f64;
+    }
     RunOut { seed, metrics: m, secs, hash: sim.state_hash(), deaths }
 }
 
@@ -437,7 +499,7 @@ fn verdict(real: f64, sims: &[f64]) -> (&'static str, f64) {
         return ("-", f64::NAN);
     }
     let mut s = sims.to_vec();
-    s.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    s.sort_by(|a, b| a.total_cmp(b));
     let (lo, hi, med) = (s[0], s[s.len() - 1], s[s.len() / 2]);
     let ratio = if real.abs() > 1e-9 { med / real } else { f64::NAN };
     let tol = (0.25 * real.abs()).max(2.0);
@@ -484,10 +546,17 @@ fn main() {
     let jobs: usize = get("--jobs").and_then(|s| s.parse().ok()).unwrap_or(3).max(1);
     let invasions = !flag("--no-invasions");
     let standdown = !flag("--no-standdown");
+    let opts = Opts { invasions, standdown, standing: flag("--standing-orders"), restore: flag("--restore-schedules") };
 
     let t0 = Instant::now();
-    let a = load(&from);
+    let mut a = load(&from);
     let b = load(&to);
+    if !from.join("settings.json").exists() && to.join("settings.json").exists() {
+        // Exports before round 4 have no d_init settings; the importer's defaults (no
+        // population cap) would flood the fort with migrants. Gordon's caps did not change.
+        println!("note: {} has no settings.json; using the caps of {}", from.display(), to.display());
+        a.settings = b.settings.clone();
+    }
     let dt_cal = (b.calendar.year - a.calendar.year) as i64 * rf_core::TICKS_PER_YEAR as i64 + (b.calendar.year_tick - a.calendar.year_tick) as i64;
     let ticks: u64 = get("--ticks").and_then(|s| s.parse().ok()).unwrap_or(dt_cal.max(0) as u64);
     let years = ticks as f64 / TICKS_PER_YEAR;
@@ -504,6 +573,10 @@ fn main() {
         t0.elapsed().as_secs_f64()
     );
     let mut real = measure(&a, &b, years, &|it: &Item| it.value.max(0) as f64);
+    let start = measure(&a, &a, years, &|it: &Item| it.value.max(0) as f64);
+    real.insert("start.dig_designations".into(), a.tiles.iter().filter(|t| t.desig != 0).count() as f64);
+    real.insert("start.active_work_orders".into(), a.work_orders.iter().filter(|o| o.active).count() as f64);
+    real.insert("start.queued_workshop_jobs".into(), a.buildings.iter().map(|b| b.jobs.len()).sum::<usize>() as f64);
     if let (Some(gl), Some(f), Some(t)) = (get("--gamelog"), get("--gl-from"), get("--gl-to")) {
         let ev = gamelog::scan(Path::new(&gl), f.parse().unwrap_or(0), t.parse().unwrap_or(0));
         println!("gamelog lines {f}..{t}: {} seasons crossed, {} loads", ev.seasons, ev.loads);
@@ -519,8 +592,8 @@ fn main() {
     let mut outs: Vec<RunOut> = Vec::new();
     for chunk in seeds.chunks(jobs) {
         let res: Vec<RunOut> = std::thread::scope(|sc| {
-            let a = &a;
-            let hs: Vec<_> = chunk.iter().map(|&s| sc.spawn(move || run_seed(a, ticks, s, invasions, standdown, years))).collect();
+            let (a, opts) = (&a, &opts);
+            let hs: Vec<_> = chunk.iter().map(|&s| sc.spawn(move || run_seed(a, ticks, s, opts, years))).collect();
             hs.into_iter().map(|h| h.join().expect("sim thread")).collect()
         });
         for r in &res {
@@ -544,34 +617,40 @@ fn main() {
     for o in &outs {
         keys.extend(o.metrics.keys().cloned());
     }
-    let order = ["pop.", "ev.", "stress.", "xp.", "stock.", "new.", "wealth.", "bld.", "tile.", "pile.", "newkind.", "xpskill.", "perf."];
-    let mut rows: Vec<(String, f64, Vec<f64>, &'static str, f64)> = Vec::new();
+    let order = [
+        "start.", "pop.", "ev.", "stress.", "xp.", "stock.", "new.", "quality.", "wealth.", "bld.", "tile.", "pile.", "newkind.", "xpskill.",
+        "simjob.", "simmade.", "perf.",
+    ];
+    let mut rows: Vec<(String, f64, f64, Vec<f64>, &'static str, f64)> = Vec::new();
     for pre in order {
         for k in keys.iter().filter(|k| k.starts_with(pre)) {
-            let r = real.get(k).copied().unwrap_or(if k.starts_with("ev.") || k.starts_with("perf.") { f64::NAN } else { 0.0 });
+            let sim_only = ["ev.", "perf.", "simjob.", "simmade.", "start."].iter().any(|p| k.starts_with(p));
+            let r = real.get(k).copied().unwrap_or(if sim_only || k == "tile.engravings_added" { f64::NAN } else { 0.0 });
             let s: Vec<f64> = outs.iter().map(|o| o.metrics.get(k).copied().unwrap_or(0.0)).collect();
             // Skip per-kind rows that are tiny on both sides.
-            if (pre == "newkind." || pre == "xpskill.") && r.abs() < 20.0 && s.iter().all(|v| v.abs() < 20.0) {
+            if (pre == "newkind." || pre == "xpskill." || pre == "simjob." || pre == "simmade.") && !(r.abs() >= 20.0) && s.iter().all(|v| v.abs() < 20.0) {
                 continue;
             }
-            let (v, ratio) = verdict(r, &s);
-            rows.push((k.clone(), r, s, v, ratio));
+            let (v, ratio) = if k.starts_with("start.") { ("-", f64::NAN) } else { verdict(r, &s) };
+            let s = if k.starts_with("start.") { vec![f64::NAN; s.len()] } else { s };
+            let st = if k.starts_with("start.") { r } else { start.get(k).copied().unwrap_or(f64::NAN) };
+            rows.push((k.clone(), st, r, s, v, ratio));
         }
     }
     println!();
-    println!("{:<44} {:>10} {:>10} {:>10} {:>10}  {:<9} {:>6}", "metric", "DF real", "sim min", "sim med", "sim max", "verdict", "ratio");
+    println!("{:<44} {:>9} {:>10} {:>10} {:>10} {:>10}  {:<9} {:>6}", "metric", "DF start", "DF real", "sim min", "sim med", "sim max", "verdict", "ratio");
     let mut md = String::new();
-    md.push_str("| metric | DF real | sim min | sim median | sim max | verdict | sim/DF |\n|---|---|---|---|---|---|---|\n");
-    for (k, r, s, v, ratio) in &rows {
+    md.push_str("| metric | DF start | DF end / change | sim min | sim median | sim max | verdict | sim/DF |\n|---|---|---|---|---|---|---|---|\n");
+    for (k, st, r, s, v, ratio) in &rows {
         let mut t = s.clone();
-        t.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        t.sort_by(|a, b| a.total_cmp(b));
         let (lo, med, hi) = (t[0], t[t.len() / 2], t[t.len() - 1]);
         let rs = if ratio.is_nan() { "-".to_string() } else { format!("{ratio:.2}") };
-        println!("{:<44} {:>10} {:>10} {:>10} {:>10}  {:<9} {:>6}", k, fmt(*r), fmt(lo), fmt(med), fmt(hi), v, rs);
-        md.push_str(&format!("| {k} | {} | {} | {} | {} | {v} | {rs} |\n", fmt(*r), fmt(lo), fmt(med), fmt(hi)));
+        println!("{:<44} {:>9} {:>10} {:>10} {:>10} {:>10}  {:<9} {:>6}", k, fmt(*st), fmt(*r), fmt(lo), fmt(med), fmt(hi), v, rs);
+        md.push_str(&format!("| {k} | {} | {} | {} | {} | {} | {v} | {rs} |\n", fmt(*st), fmt(*r), fmt(lo), fmt(med), fmt(hi)));
     }
-    let n_in = rows.iter().filter(|r| r.3 == "in range" || r.3 == "close").count();
-    let n_cmp = rows.iter().filter(|r| r.3 != "-").count();
+    let n_in = rows.iter().filter(|r| r.4 == "in range" || r.4 == "close").count();
+    let n_cmp = rows.iter().filter(|r| r.4 != "-").count();
     println!("\n{n_in} of {n_cmp} metrics in range or close; total {:.1}s", t0.elapsed().as_secs_f64());
     if let Some(p) = get("--md") {
         std::fs::write(&p, md).expect("write --md");
