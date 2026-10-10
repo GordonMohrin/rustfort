@@ -73,7 +73,9 @@ per-run counters and job state that are not saved. The full state hash differs f
 100 ticks on: **unit AI tasks, paths, job claims and workshop jobs in progress restart from Idle**
 after a load (a dwarf walking to a job picks one again). After 20,000 more ticks both runs have
 the same citizens alive (82), dead units (16), petitions and moods; item counts differ by under
-0.5 %. So a reload continues the fort closely, not bit-identically.
+0.5 %. One year, reload, one more year (`--n 403200 --m 403200`): 87 vs 90 citizens alive, 135 vs
+121 dead units, 5 / 5 moods, 21 / 21 petitions, items within 0.5 %, i.e. inside the spread of
+different seeds. So a reload continues the fort closely, not bit-identically.
 
 Not saved yet (next steps for exact continuation): the job lists (`Sim::jobs`, production
 workshop jobs), unit tasks/paths/carried hauls, caravans in progress (`trade`), animal module
