@@ -39,7 +39,7 @@ pub fn draw_ui(g: &mut Game) {
     if let Some((t, p)) = g.ui.tooltip.take() {
         let lines: Vec<(String, Color)> = t.split('\n').map(|l| (l.to_string(), col::TEXT)).collect();
         tooltip_box(g, &lines, p, true);
-    } else if !g.ui.over_ui && !g.menu_open && g.alert.is_none() && g.r4.popup.is_none() && g.screen == Screen::None && !matches!(g.tool, Tool::Build(_)) {
+    } else if !g.ui.over_ui && !g.menu_open && g.alert.is_none() && g.r4.popup.is_none() && g.screen == Screen::None && !matches!(g.tool, Tool::Build(_) | Tool::Construct(_)) {
         map_tooltip(g);
     }
 }
@@ -67,7 +67,7 @@ fn map_tooltip(g: &mut Game) {
     let mut lines: Vec<(String, Color)> = Vec::new();
     for u in w.units.iter().filter(|u| u.pos == p && !u.flags.dead).take(3) {
         let hostile = g.hostiles.binary_search(&u.id).is_ok();
-        let tag = if hostile { if u.flags.caged { " (hostile, caged)" } else { " (hostile)" } } else { "" };
+        let tag = if hostile { if u.flags.caged { " (hostile, caged)" } else { " (hostile)" } } else if u.flags.caged { " (caged)" } else { "" };
         lines.push((format!("{}, {}{tag}", unit_name(u), unit_profession(u)), if hostile { col::TEXT_BAD } else { col::TEXT_HI }));
     }
     for b in w.buildings.iter().filter(|b| b.contains(p)).take(2) {
@@ -78,14 +78,24 @@ fn map_tooltip(g: &mut Game) {
             format!("{} zone", super::words(&b.subtype))
         } else {
             let t = super::building::building_title(g, b);
-            if b.built { t } else { format!("{t} (construction)") }
+            if b.kind == "Construction" {
+                t
+            } else if b.kind == "Bridge" && b.flags.iter().any(|f| f == "RAISED") {
+                format!("{t} (raised)") // [round 5]
+            } else if b.built {
+                t
+            } else {
+                format!("{t} (construction)")
+            }
         };
         lines.push((n, col::TEXT_GOOD));
     }
     let items: Vec<&rf_core::Item> = w.items.iter().filter(|it| it.pos == p && it.flags.on_ground).collect();
     for it in items.iter().take(4) {
         let d = if !it.desc.is_empty() { it.desc.clone() } else { super::pretty(&it.kind).to_lowercase() };
-        lines.push((super::clip(&d, 48), col::TEXT));
+        // [round 5] forbidden / dump / hidden
+        let d = format!("{}{}", super::clip(&d, 48), super::round5::item_tags(it));
+        lines.push((d, if it.flags.forbid { Color::from_rgba(230, 120, 110, 255) } else { col::TEXT }));
     }
     if items.len() > 4 {
         lines.push((format!("... and {} more items", items.len() - 4), col::TEXT_DIM));
@@ -94,6 +104,18 @@ fn map_tooltip(g: &mut Game) {
     if let Some(t) = w.tile(p) {
         if t.desig != 0 {
             desc.push_str(&format!(" [{:?}]", t.dig()));
+        }
+        // [round 5] detailing and traffic designations
+        if t.flags & rf_core::tile_flags::DESIG_ENGRAVE != 0 {
+            desc.push_str(" [engrave]");
+        } else if t.flags & rf_core::tile_flags::DESIG_SMOOTH != 0 {
+            desc.push_str(" [smooth]");
+        }
+        match t.traffic() {
+            1 => desc.push_str(" [low traffic]"),
+            2 => desc.push_str(" [high traffic]"),
+            3 => desc.push_str(" [restricted]"),
+            _ => {}
         }
     }
     lines.push((desc, col::TEXT_DIM));

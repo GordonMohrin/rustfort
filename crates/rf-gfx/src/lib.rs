@@ -630,6 +630,20 @@ impl Gfx {
         terrain::building(self, world, b, p, out)
     }
 
+    /// [round 5] The occupied cage a caught creature sits in (`ITEM_CAGE_*_OCCUPIED`), in the
+    /// cage's material (`mat` = the cage item's or the cage trap's material; stone and unknown
+    /// materials use the wooden look like loose cages do). The renderer draws it under the
+    /// creature, which it draws a little smaller so the frame stays visible, then the bars.
+    pub fn cage_sprite(&self, world: &World, mat: u16) -> Option<Sprite> {
+        let fam = match mat_class(world.material(mat)) {
+            MatClass::Metal => 1,
+            MatClass::Glass => 2,
+            _ => 0,
+        };
+        let s = self.terrain_t.bld.cage_occupied[fam].or(self.terrain_t.bld.cage_occupied[0])?;
+        Some(self.recolor(s, world, mat))
+    }
+
     /// Footprint (w, h) in tiles of a building kind/subtype as DF builds it: 3x3 workshops and
     /// furnaces, 1x1 quern/millstone, 5x5 trade depot and siege workshop, 1x1 otherwise
     /// (variable-size buildings like bridges and farm plots report 1x1; the user drags them).

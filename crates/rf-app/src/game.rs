@@ -67,6 +67,14 @@ pub enum Tool {
     SquadKill(i32),
     /// [round 4] Click a bridge/door/floodgate/hatch/... to link it to this lever or plate.
     Link(i32),
+    /// [round 5] Build > Constructions: drag a rectangle (one level).
+    Construct(rf_sim::ConstructionKind),
+    /// [round 5] Smooth / engrave / carve: drag a box (may span levels).
+    Detail(rf_sim::DetailKind),
+    /// [round 5] Traffic designation: drag a box.
+    Traffic(rf_sim::Traffic),
+    /// [round 5] Item designations (claim, forbid, dump, melt, hide): drag a box.
+    ItemDes(crate::ui::round5::ItemDes),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -77,6 +85,12 @@ pub enum Submenu {
     Build,
     Zone,
     Burrow,
+    /// [round 5] Smooth / engrave / carve.
+    Smooth,
+    /// [round 5] Traffic designations.
+    Traffic,
+    /// [round 5] Item designations.
+    Items,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -359,7 +373,7 @@ pub struct Game {
     pub screen: Screen,
     /// `Sim::build_options()`, refreshed when the build menu opens.
     pub build_opts: Vec<BuildOption>,
-    /// Selected category in the build menu (index into `build_categories()`).
+    /// Selected category in the build menu (index into `ui::build::menu_categories()`).
     pub build_cat: usize,
     /// Cached `Sim::can_place` answer for (option, a, b).
     pub build_check: Option<(usize, Pos, Pos, Result<(), String>)>,
@@ -395,6 +409,8 @@ pub struct Game {
     /// Worker busy time at the last frame (seconds).
     busy_prev: f64,
     pub r4: crate::ui::round4::R4Ui,
+    /// [round 5] Construction/detailing/traffic/item tools, cage lookups.
+    pub r5: crate::ui::round5::R5Ui,
 }
 
 pub fn ordinal(d: i32) -> String {
@@ -538,6 +554,7 @@ impl Game {
             released_at_tick: 0,
             busy_prev: 0.0,
             r4: Default::default(),
+            r5: Default::default(),
         };
         g.reset_hostiles();
         g.build_opts = g.sim.build_options();
@@ -635,7 +652,7 @@ impl Game {
                     self.open_build();
                     let i = v.parse::<usize>().ok().or_else(|| self.build_opts.iter().position(|o| o.label == v || o.subtype == v || o.kind == v));
                     if let Some(i) = i.filter(|&i| i < self.build_opts.len()) {
-                        let cats = crate::ui::build::build_categories(&self.build_opts);
+                        let cats = crate::ui::build::menu_categories(&self.build_opts);
                         self.build_cat = cats.iter().position(|c| *c == self.build_opts[i].category).unwrap_or(0);
                         self.tool = Tool::Build(i);
                     }
@@ -761,6 +778,43 @@ impl Game {
                 }
                 "caravan-popup" => {
                     self.r4.popup = Some(crate::ui::round4::Popup { title: "Caravan".into(), text: "A caravan from the mountainhomes has arrived.".into(), trade: true, pos: None });
+                }
+                // [round 5] tools and tabs for screenshots/tests
+                "construct" => {
+                    self.open_build();
+                    let cats = crate::ui::build::menu_categories(&self.build_opts);
+                    self.build_cat = cats.iter().position(|c| *c == crate::ui::round5::CONSTR_CAT).unwrap_or(0);
+                    if let Some(c) = crate::ui::round5::CONSTRUCTIONS.iter().find(|c| format!("{:?}", c.kind).eq_ignore_ascii_case(v) || c.label.eq_ignore_ascii_case(v)) {
+                        self.tool = Tool::Construct(c.kind);
+                    }
+                }
+                "smooth" => {
+                    crate::ui::round5::open_smooth(self);
+                    if let Some(e) = crate::ui::round5::DETAIL_MENU.iter().find(|e| format!("{:?}", e.kind).eq_ignore_ascii_case(v)) {
+                        self.tool = Tool::Detail(e.kind);
+                    }
+                }
+                "traffic" => {
+                    crate::ui::round5::open_traffic(self);
+                    if let Some(e) = crate::ui::round5::TRAFFIC_MENU.iter().find(|e| format!("{:?}", e.kind).eq_ignore_ascii_case(v)) {
+                        self.tool = Tool::Traffic(e.kind);
+                    }
+                }
+                "items-tool" => {
+                    crate::ui::round5::open_items(self);
+                    if let Some(e) = crate::ui::round5::ITEM_MENU.iter().find(|e| format!("{:?}", e.kind).eq_ignore_ascii_case(v)) {
+                        self.tool = Tool::ItemDes(e.kind);
+                    }
+                }
+                "mood" => self.unit_tab = 9,
+                "fake-constructions" => crate::ui::round5::debug_constructions(self),
+                "fake-mood" => {
+                    // Test hook: the selected unit is taken by a mood (`Unit::mood`).
+                    if let Selected::Unit(id) = self.selected {
+                        if let Some(u) = self.sim.world.units.iter_mut().find(|u| u.id == id) {
+                            u.mood = if v.is_empty() { "Fey".into() } else { v.to_string() };
+                        }
+                    }
                 }
                 "tile" => {
                     let c = self.cam;
@@ -948,7 +1002,19 @@ impl Game {
                 }
             }
         }
-        if inp.hit(b, "D_DESIGNATE_DIG") {
+        // [round 5] Inside the smooth/traffic/item menus their DESIGNATE_* keys pick the tool.
+        if crate::ui::round5::submenu_keys(self) {
+            return;
+        }
+        let b = &self.binds;
+        let inp = &self.input;
+        if inp.hit(b, "D_DESIGNATE_SMOOTH") {
+            crate::ui::round5::open_smooth(self);
+        } else if inp.hit(b, "D_DESIGNATE_TRAFFIC") {
+            crate::ui::round5::open_traffic(self);
+        } else if inp.hit(b, "D_DESIGNATE_ITEMS") {
+            crate::ui::round5::open_items(self);
+        } else if inp.hit(b, "D_DESIGNATE_DIG") {
             self.open_dig();
         } else if inp.hit(b, "D_DESIGNATE_CHOP") {
             self.submenu = Submenu::None;
@@ -1115,6 +1181,7 @@ impl Game {
                 self.seed = seed;
                 *self.sim = Sim::new(world, seed);
                 self.r4 = Default::default();
+                self.r5 = Default::default();
                 let file = path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
                 self.label = format!("{} - loaded {file}", self.sim.world.meta.fort_name);
                 self.selected = Selected::None;
@@ -1328,7 +1395,7 @@ impl Game {
             // Right click backs out: pending rectangle, then tool, then selection.
             if self.drag.is_some() {
                 self.drag = None;
-            } else if matches!(self.tool, Tool::Build(_) | Tool::Zone(_) | Tool::Burrow) {
+            } else if matches!(self.tool, Tool::Build(_) | Tool::Zone(_) | Tool::Burrow | Tool::Construct(_)) {
                 // Back to the build/zone/burrow menu, like DF.
                 self.tool = Tool::None;
             } else if matches!(self.tool, Tool::SquadStation(_) | Tool::SquadKill(_)) {
@@ -1351,8 +1418,20 @@ impl Game {
                     self.select_at(h);
                 }
             }
-            Tool::Designate(_) | Tool::Stockpile(_) | Tool::Zone(_) | Tool::Burrow => {
+            Tool::Designate(_) | Tool::Stockpile(_) | Tool::Zone(_) | Tool::Burrow | Tool::Detail(_) | Tool::Traffic(_) | Tool::ItemDes(_) => {
                 let (d, done) = drag_step(self.drag, h, lp, lr);
+                self.drag = d;
+                if let Some((a, b)) = done {
+                    self.apply_tool(a, b);
+                }
+            }
+            Tool::Construct(_) => {
+                // [round 5] Constructions stay on the level of the first corner, like DF.
+                let h2 = match self.drag {
+                    Some(d) => Pos::new(h.x, h.y, d.a.z),
+                    None => h,
+                };
+                let (d, done) = drag_step(self.drag, h2, lp, lr);
                 self.drag = d;
                 if let Some((a, b)) = done {
                     self.apply_tool(a, b);
@@ -1453,6 +1532,9 @@ impl Game {
                 self.tool = Tool::None;
             }
             Tool::SquadStation(_) | Tool::SquadKill(_) | Tool::Link(_) => {}
+            Tool::Construct(_) | Tool::Detail(_) | Tool::Traffic(_) | Tool::ItemDes(_) => {
+                crate::ui::round5::apply(self, a, b);
+            }
             Tool::Build(i) => {
                 let Some(o) = self.build_opts.get(i).cloned() else { return };
                 let (lo, hi) = crate::ui::build::footprint(&o, a, Pos::new(b.x, b.y, a.z));

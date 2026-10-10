@@ -27,6 +27,10 @@ pub enum Action {
     Gather,
     Smooth,
     Erase,
+    /// [round 5]
+    Traffic,
+    /// [round 5] Item designations (claim, forbid, dump, melt, hide).
+    Items,
     Build,
     Stockpile,
     Zone,
@@ -67,8 +71,10 @@ pub const CENTER: &[ToolButton] = &[
     tb(Action::Dig, "Dig", "BUTTON_DIG", Ico::Pick, "D_DESIGNATE_DIG", true),
     tb(Action::Chop, "Chop down trees", "BUTTON_DES_CHOP", Ico::Axe, "D_DESIGNATE_CHOP", true),
     tb(Action::Gather, "Gather plants", "BUTTON_DES_GATHER", Ico::Plant, "D_DESIGNATE_GATHER", true),
-    tb(Action::Smooth, "Smooth stone (not yet)", "BUTTON_DES_SMOOTH", Ico::Smooth, "D_DESIGNATE_SMOOTH", false),
+    tb(Action::Smooth, "Smooth, engrave, carve", "BUTTON_DES_SMOOTH", Ico::Smooth, "D_DESIGNATE_SMOOTH", true),
     tb(Action::Erase, "Erase designations", "BUTTON_DES_ERASE", Ico::Eraser, "D_DESIGNATE_ERASE", true),
+    tb(Action::Traffic, "Traffic", "BUTTON_DES_TRAFFIC", Ico::Glyph(b'T', [120, 220, 120]), "D_DESIGNATE_TRAFFIC", true),
+    tb(Action::Items, "Item designations: claim, forbid, dump, melt, hide", "BUTTON_DES_ITEM_BUILDING", Ico::Glyph(b'X', [230, 90, 80]), "D_DESIGNATE_ITEMS", true),
     tb(Action::Build, "Build", "BUTTON_BUILDING", Ico::Hammer, "D_BUILDING", true),
     tb(Action::Stockpile, "Stockpiles", "BUTTON_STOCKPILE", Ico::Crate, "D_STOCKPILES", true),
     tb(Action::Zone, "Zones", "BUTTON_ZONE", Ico::Zone, "D_CIVZONE", true),
@@ -125,6 +131,9 @@ fn is_active(g: &Game, a: Action) -> bool {
         Action::Squads => g.screen == Screen::Military || matches!(g.tool, Tool::SquadStation(_) | Tool::SquadKill(_)),
         Action::Reports => g.screen == Screen::Reports,
         Action::Nobles => g.screen == Screen::Nobles,
+        Action::Smooth => g.submenu == Submenu::Smooth,
+        Action::Traffic => g.submenu == Submenu::Traffic,
+        Action::Items => g.submenu == Submenu::Items,
         _ => false,
     }
 }
@@ -155,6 +164,9 @@ fn press(g: &mut Game, a: Action) {
         }
         Action::Reports => g.toggle_screen(Screen::Reports),
         Action::Nobles => g.toggle_screen(Screen::Nobles),
+        Action::Smooth => super::round5::open_smooth(g),
+        Action::Traffic => super::round5::open_traffic(g),
+        Action::Items => super::round5::open_items(g),
         _ => {}
     }
 }
@@ -214,6 +226,7 @@ pub fn draw_toolbar(g: &mut Game) -> f32 {
         Submenu::Build => top = super::build::draw_build_menu(g, y),
         Submenu::Zone => top = super::build::draw_zone_menu(g, y),
         Submenu::Burrow => top = super::burrows::draw_burrow_menu(g, y),
+        Submenu::Smooth | Submenu::Traffic | Submenu::Items => top = super::round5::draw_submenu(g, cx, y),
         Submenu::None => match g.tool {
             Tool::Designate(k) => {
                 top = draw_hint(g, cx, y, &format!("{}: drag a rectangle. Right-click cancels.", kind_label(k)));

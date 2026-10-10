@@ -39,9 +39,14 @@ The defaults below are Steam DF's. Your own `interface.txt` overrides them.
 | Back out | right click: pending box, then tool, then selection | Esc, which finally opens the menu |
 | Dig menu | toolbar pickaxe | `m`, then `m` mine, `t` up/down stair, `r` ramp, `u` channel, `x` remove |
 | Chop / gather / erase | toolbar | `l` / `g` / `x` |
+| Smooth / engrave / carve | toolbar (after Gather): Smooth stone, Engrave, Carve track, Carve fortifications, Remove; drag a box (3D like digging) | `v`, then `m` smooth, `g` engrave, `t` track, `f` fortify |
+| Traffic | toolbar (after Erase): High, Normal, Low, Restricted; the map shows DF's traffic colors while the menu is open | `Shift+t`, then `h` / `x` / `l` / `r` |
+| Item designations | toolbar (after Traffic): Claim, Forbid, Dump, Remove dump, Melt, Remove melt, Hide, Unhide; drag a box over items | `i`, then `Shift+f` claim, `f` forbid, `p` / `Shift+p` dump, `m` / `Shift+m` melt, `h` / `Shift+h` hide |
+| Forbid / dump one item | `F` and `D` toggles in the tile info item list and on the unit sheet's Items tab; "Forbid all" / "Claim all" for a tile | |
+| Constructions | Build menu, category Constructions: Wall, Floor, Ramp, Up stair, Down stair, Up/down stair, Fortification, Track, Remove construction; drag a rectangle (one level) | `b` |
 | Stockpile | toolbar crate, then pick a preset (Stone, Wood, Food, Furniture, All) | `p` |
 | Creatures list | toolbar (first button): Citizens (sort by Name / Profession / Stress), Pets/livestock, Others (visitors, wild animals, hostiles) | `u` |
-| Unit sheet tabs | Overview, Thoughts, Needs, Personality, Health, Relations, Skills, Labor, Items (wheel scrolls) | |
+| Unit sheet tabs | Overview, Thoughts, Needs, Personality, Mood (only in a strange mood), Health, Relations, Skills, Labor, Items (wheel scrolls) | |
 | Squads | toolbar (right group, red arrow) | `c` |
 | Burrows | toolbar (middle group, after Zones) | `Shift+u` |
 | Reports | toolbar (right group, `‼`) | `Shift+n` |
@@ -79,6 +84,40 @@ position to jump there.
   on the cursor like DF. The tool stays active for placing more; right-click goes back to the
   list, a second right-click closes the menu. Unbuilt buildings are drawn translucent (workshops
   with DF's construction-stage sprites) with a dashed yellow frame and a hammer.
+- **Constructions** (round 5, Build menu > Constructions, `ui/round5.rs`): Wall, Floor, Ramp,
+  Up/Down/Up-down stair, Fortification, Track and Remove construction. Drag a rectangle on one
+  level; the preview draws DF's `PLANNED_CONSTRUCTION_*` blueprint on every tile, green where it
+  fits and red where not (a quick UI check: revealed, no building, floor for walls, floor or open
+  space for floors; the sim decides), with "12 ok, 9 blocked" at the cursor. Releasing calls
+  `Sim::build_construction`; the status says how many tiles were planned. Planned constructions
+  (buildings of kind `Construction` that are not built yet) are drawn as DF's translucent
+  blueprint, tinted with the material once one is assigned; tracks connect to their neighbors;
+  removals get DF's remove-construction marker. The tooltip says "Wall (planned)".
+- **Smooth / engrave / carve** (`v`): drag a box over levels like digging
+  (`Sim::designate_detail`); designated tiles show DF's `DESIGNATION_SMOOTH` / `_ENGRAVE` /
+  `_FORTIFY` / `_TRACK_*` markers (blue-tinted in marker mode). Carve designations have no tile
+  flag in rf-core, so the UI remembers them for the overlay until the tile changes.
+- **Traffic** (`Shift+t`): High (path cost 1), Normal (2), Low (5), Restricted (25) over a box
+  (`Sim::set_traffic`). Like DF, the traffic colors (`DESIGNATION_TRAFFIC_*`: green chevrons
+  high, orange low, red restricted) are only drawn while the traffic menu is open; the tooltip
+  always says `[low traffic]` etc.
+- **Item designations** (`i`): drag a box (`Sim::set_items_flag_in`). Forbidden items carry DF's
+  padlock, dump-marked ones the bin (`DESIGNATION_ITEM_FORBIDDEN`, `_DUMP`, `_FORBIDDEN_DUMP`);
+  hidden items are not drawn, except with their marker while the item menu is open. The tile
+  info lists every item with `F` / `D` toggles (`Sim::set_item_flag`) and "Forbid all" / "Claim
+  all"; forbidden lines are red. The unit sheet's Items tab has the same toggles.
+- **Bridges and cages** (rf-gfx): a raised drawbridge is drawn as DF's `BLD_BRIDGE_*_RAISED_*`
+  wall on its raising edge (the rest of its area shows the floor below), a retracted bridge not
+  at all, a lowered one with its planks along the raise direction. Caught creatures are drawn
+  inside their cage (the occupied cage sprite in the cage's material, the creature at 85 %, the
+  bars faintly in front) on cage traps and on loose occupied cages.
+- **Moods and treatment** (round 5): the overview shows "Fey mood: claimed Craftsdwarf's
+  workshop, needs rough gems" (`Sim::mood_info`); the Mood tab (enabled only during a mood) has
+  the mood in DF's words, the claimed workshop with "Go to workshop", the missing materials and
+  the time left. The Health tab gets a Treatment block after the status, derived from DF's wound
+  flags: Diagnosis / Cleaning (infection) / Suturing / Dressing / Setting (broken bone) /
+  Immobilization required, what is done (diagnosed, sutured, ...), permanent damage, and the
+  current activity when it is a rest or treatment job.
 - **Zones** (`z`): DF only shows zones in zone mode, and so does Rustfort: the translucent
   `ACTIVITY_ZONES` borders plus the zone-type icon appear while the zone menu is open or a zone
   is selected.
@@ -226,6 +265,12 @@ rustfort play --screenshot target/shots/a.png --frames 20 --view 48,48,22,1 \
   `settings`, `link` (link tool for the building selected with `bld:`), `caravan-popup` (the
   arrival box without a caravan), `fake-caravan` (made-up merchant goods to check the trade
   screen layout while the sim has no caravan; trading still goes to the sim).
+  Round 5: `construct:<Wall|Floor|Ramp|UpStair|DownStair|UpDownStair|Fortification|Track|Remove>`
+  (Build > Constructions with that tool), `smooth[:Smooth|Engrave|CarveTrack|CarveFortification|Remove]`,
+  `traffic[:High|Normal|Low|Restricted]`, `items-tool[:Claim|Forbid|Dump|...]`, `mood` (unit
+  sheet Mood tab), and the test hooks `fake-constructions` (a row of planned constructions next
+  to the camera, to check the blueprint look) and `fake-mood[:Fey|Secretive|...]` (the selected
+  unit is in a mood).
 - Screenshot runs print the average ticks/s and, with the sim thread, how busy the worker was;
   `RUSTFORT_MEASURE=a,b` prints the real time from sim tick a to b.
 - `--mouse x,y` parks the cursor.
@@ -255,7 +300,9 @@ screenshots under `target/`, never in git.
   (announcement history), `alerts` (hostile markers and the arrival pop-up), `devices` (doors,
   levers, bridges, traps, link tool and map highlight), `trade` (trade screen, move goods to
   depot), `nobles` (nobles screen), `round4` (caravan arrival box, population lines, settings
-  page) and `overlay` (announcements, tooltips, Esc menu with save/load/settings).
+  page), `round5` (constructions, smooth/traffic/item tools and their markers, planned
+  constructions, caged creatures, mood tab, treatment) and `overlay` (announcements, tooltips,
+  Esc menu with save/load/settings).
 - `load.rs` also fills squads, burrows, creature/weapon/armor raws and (round 4) entities,
   nobles, settings and historical figure names from the export's side files when the importer
   left them empty.
