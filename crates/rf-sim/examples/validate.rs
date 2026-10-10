@@ -533,6 +533,11 @@ fn run_seed(start: &World, ticks: u64, seed: u64, opt: &Opts, years: f64) -> Run
     m.insert("ev.beasts".into(), sim.cavern_report().beasts.len() as f64);
     m.insert("ev.trades".into(), tr.trades.len() as f64);
     m.insert("ev.masterpieces".into(), masterpieces as f64); // [calib11-social]
+    // [siege12] climbing invaders
+    let cl = sim.climb_stats();
+    m.insert("ev.climb_moves".into(), cl.moves as f64);
+    m.insert("ev.climb_falls".into(), (cl.slips + cl.dropped) as f64);
+    m.insert("ev.climb_net_builds".into(), cl.net_builds as f64);
     if std::env::var_os("VALIDATE_STRESS").is_some() {
         // [calib11-social] where the stress came from (applied stress per thought)
         let mut t = format!("seed {seed} stress by thought (sum k / events):");
