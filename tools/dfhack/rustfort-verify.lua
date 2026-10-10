@@ -251,6 +251,56 @@ for _, tok in ipairs({ 'INORGANIC:IRON', 'INORGANIC:STEEL', 'INORGANIC:COPPER', 
       m.strength.fracture[df.strain_type.IMPACT], m.strength.max_edge)
   end
 end
+-- round 4: building states and links, nobles, settings, entities, caravans - through other paths than
+-- the exporter where DF offers one (raw flag words, linked_mechanisms, dfhack.units.getNoblePositions)
+for _, b in ipairs(df.global.world.buildings.all) do
+  local t = df.building_type[b:getType()]
+  if t == 'Door' or t == 'Hatch' then
+    local wd = b.door_flags.whole   -- bit 0 forbidden (= locked), bit 4 closed
+    out[#out + 1] = ('door %d %s %s'):format(b.id, (wd & 1) ~= 0 and 'LOCKED' or '-', (wd & 16) ~= 0 and 'CLOSED' or 'OPEN')
+  elseif t == 'Bridge' then
+    out[#out + 1] = ('bridge %d %s %d'):format(b.id, (b.gate_flags.whole & 1) ~= 0 and 'RAISED' or 'LOWERED', b.direction)
+  elseif t == 'Trap' then
+    local tt = df.trap_type[b.trap_type]
+    if tt == 'Lever' or tt == 'PressurePlate' then
+      -- targets: the building holding each linked mechanism (exporter: the TRIGGERTARGET refs of its own items)
+      local tg = {}
+      for _, it in ipairs(b.linked_mechanisms) do
+        local h = dfhack.items.getHolderBuilding(it)
+        if h then tg[#tg + 1] = h.id end
+      end
+      table.sort(tg)
+      out[#out + 1] = ('lever %d %d %s'):format(b.id, b.state, #tg > 0 and table.concat(tg, ',') or '-')
+    else
+      local loaded = 0
+      for _, ci in ipairs(b.contained_items) do
+        local it = ci.item
+        local ity = df.item_type[it:getType()]
+        if ity == 'WEAPON' or ity == 'TRAPCOMP' or ity == 'BOULDER' then loaded = 1 end
+        if ity == 'CAGE' then
+          loaded = 1
+          for _, r in ipairs(it.general_refs) do if df.general_ref_contains_unitst:is_instance(r) then loaded = 0 end end
+        end
+      end
+      out[#out + 1] = ('trap %d %s %d'):format(b.id, tt, loaded)
+    end
+  end
+end
+for _, u in ipairs(df.global.world.units.active) do
+  if dfhack.units.isCitizen(u) then
+    for _, np in ipairs(dfhack.units.getNoblePositions(u) or {}) do
+      out[#out + 1] = ('noblepos %d %s'):format(u.id, np.position.code)
+    end
+  end
+end
+do
+  local dw = df.global.d_init.dwarf
+  out[#out + 1] = ('settings %d %d %d'):format(dw.population_cap, dw.strict_population_cap, dw.baby_cap_absolute)
+  local civ = df.historical_entity.find(df.global.plotinfo.civ_id)
+  for _, s in ipairs(civ.relations.diplomacy.state) do out[#out + 1] = ('diplomacy %d %d'):format(s.group_id, s.relation) end
+  out[#out + 1] = ('caravans %d'):format(#df.global.plotinfo.caravans)
+  out[#out + 1] = ('mandates %d'):format(#df.global.world.mandates.all)
+end
 local f = assert(io.open(outp, 'wb'))
 f:write(table.concat(out, '\n'), '\n')
 f:close()

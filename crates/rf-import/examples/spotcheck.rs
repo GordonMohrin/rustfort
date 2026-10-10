@@ -402,6 +402,88 @@ fn compare(dir: &str, result: &str) {
                     None => e.2 += 1,
                 }
             }
+            // round 4: building states and links, nobles, settings, diplomacy, caravans, mandates
+            Some(k @ ("door" | "bridge" | "lever" | "trap")) if f.len() >= 4 => {
+                let e = r2.entry(match k {
+                    "door" => "door lock/open state",
+                    "bridge" => "bridge raised/direction",
+                    "lever" => "lever state/links",
+                    _ => "trap loaded",
+                }).or_default();
+                let id: i32 = f[1].parse().unwrap_or(-1);
+                let Some(b) = w.building(id) else {
+                    e.2 += 1;
+                    continue;
+                };
+                let has = |s: &str| b.flags.iter().any(|x| x == s);
+                let got = match k {
+                    "door" => format!("{} {}", if has("LOCKED") { "LOCKED" } else { "-" }, if has("CLOSED") { "CLOSED" } else { "OPEN" }),
+                    "bridge" => {
+                        let d = match b.direction.as_str() { "RETRACT" => -1, "W" => 0, "E" => 1, "N" => 2, "S" => 3, _ => 9 };
+                        format!("{} {d}", if has("RAISED") { "RAISED" } else { "LOWERED" })
+                    }
+                    "lever" => {
+                        let mut l = b.links.clone();
+                        l.sort();
+                        let l: Vec<String> = l.iter().map(|x| x.to_string()).collect();
+                        format!("{} {}", has("ACTIVE") as i32, if l.is_empty() { "-".into() } else { l.join(",") })
+                    }
+                    _ => format!("{} {}", b.subtype, has("LOADED") as i32),
+                };
+                let want = f[2..].join(" ");
+                if got == want {
+                    e.0 += 1;
+                } else {
+                    e.1 += 1;
+                    println!("{k} {id}: import {got} | DF {want}");
+                }
+            }
+            Some("noblepos") if f.len() >= 3 => {
+                let e = r2.entry("noble positions").or_default();
+                let uid: i32 = f[1].parse().unwrap_or(-1);
+                if w.nobles.iter().any(|n| n.holder == uid && n.token == f[2]) {
+                    e.0 += 1;
+                } else if w.nobles.iter().any(|n| n.token == f[2]) {
+                    e.1 += 1;
+                    println!("noble {}: DF holder {uid}, import {:?}", f[2], w.nobles.iter().filter(|n| n.token == f[2]).map(|n| n.holder).collect::<Vec<_>>());
+                } else {
+                    e.2 += 1;
+                }
+            }
+            Some("settings") if f.len() >= 4 => {
+                let e = r2.entry("settings (population caps)").or_default();
+                let s = &w.settings;
+                let got = format!("{} {} {}", s.population_cap, s.strict_population_cap, s.baby_cap);
+                if got == f[1..4].join(" ") {
+                    e.0 += 1;
+                } else {
+                    e.1 += 1;
+                    println!("settings: import {got} | DF {}", f[1..4].join(" "));
+                }
+            }
+            Some("diplomacy") if f.len() >= 3 => {
+                let e = r2.entry("entity relations").or_default();
+                let id: i32 = f[1].parse().unwrap_or(-1);
+                let want = if id == w.meta.civ_id || id == w.meta.group_id { "Own" } else if f[2] == "1" { "War" } else { "Peace" };
+                match w.entities.iter().find(|x| x.id == id) {
+                    Some(x) if x.relation == want => e.0 += 1,
+                    Some(x) => {
+                        e.1 += 1;
+                        println!("entity {id}: import {} | DF {want}", x.relation);
+                    }
+                    None => e.2 += 1,
+                }
+            }
+            Some(k @ ("caravans" | "mandates")) if f.len() >= 2 => {
+                let e = r2.entry(if k == "caravans" { "caravan count" } else { "mandate count" }).or_default();
+                let got = if k == "caravans" { w.caravans.len() } else { w.nobles.iter().map(|n| n.mandates.len()).sum() };
+                if got.to_string() == f[1] {
+                    e.0 += 1;
+                } else {
+                    e.1 += 1;
+                    println!("{k}: import {got} | DF {}", f[1]);
+                }
+            }
             _ => {}
         }
     }

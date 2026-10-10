@@ -513,6 +513,133 @@ fn round3(w: &World, dir: &std::path::Path, rep: &rf_import::ImportReport) {
     println!("aquifer tiles: {aq}, heavy: {heavy}");
 }
 
+/// Round 4: doors, levers and their links, bridges, traps, civilizations, nobles, settings, caravans.
+fn round4(w: &World, dir: &std::path::Path, rep: &rf_import::ImportReport) {
+    let has = |b: &rf_core::Building, f: &str| b.flags.iter().any(|x| x == f);
+    let pos = |b: &rf_core::Building| format!("({},{},{})", b.x1, b.y1, b.z);
+    let label = |id: i32| match w.building(id) {
+        Some(b) => format!("{} {}{} {}", b.id, b.kind, if b.subtype.is_empty() { String::new() } else { format!("/{}", b.subtype) }, pos(b)),
+        None => format!("{id} (missing)"),
+    };
+    // doors / hatches by flag set
+    let mut doors: BTreeMap<String, usize> = BTreeMap::new();
+    for b in w.buildings.iter().filter(|b| b.kind == "Door" || b.kind == "Hatch") {
+        *doors.entry(format!("{} [{}]", b.kind, b.flags.join(","))).or_default() += 1;
+    }
+    println!("\ndoors and hatches (by state flags; LOCKED = DF door_flags.forbidden):");
+    for (k, c) in &doors {
+        println!("  {c:>4}  {k}");
+    }
+    let locked: Vec<String> = w.buildings.iter().filter(|b| has(b, "LOCKED")).map(|b| format!("{} {}", b.id, pos(b))).collect();
+    if !locked.is_empty() {
+        println!("  locked: {}", locked.join(", "));
+    }
+    println!("\nlevers and pressure plates ({} mechanism links):", rep.building_links);
+    for b in w.buildings.iter().filter(|b| rf_import::is_trigger(b)) {
+        let state = if b.subtype == "Lever" { if has(b, "ACTIVE") { "pulled" } else { "not pulled" } } else { "plate" };
+        let targets: Vec<String> = b.links.iter().map(|&l| label(l)).collect();
+        println!("  {} {} {state} [{}] -> {}", label(b.id), b.direction, b.flags.join(","), if targets.is_empty() { "nothing".into() } else { targets.join("; ") });
+    }
+    println!("\nbridges:");
+    for b in w.buildings.iter().filter(|b| b.kind == "Bridge") {
+        let levers: Vec<String> = b.links.iter().map(|l| l.to_string()).collect();
+        println!("  {} {}x{} raises {} [{}] levers [{}]", label(b.id), b.x2 - b.x1 + 1, b.y2 - b.y1 + 1, b.direction, b.flags.join(","), levers.join(","));
+    }
+    for k in ["Floodgate", "GrateWall", "GrateFloor", "BarsVertical", "BarsFloor", "Weapon", "Support"] {
+        let list: Vec<String> = w.buildings.iter().filter(|b| b.kind == k).map(|b| format!("{} [{}] links {:?}", b.id, b.flags.join(","), b.links)).collect();
+        if !list.is_empty() {
+            println!("  {k}: {}", list.join("; "));
+        }
+    }
+    // traps per type and state, with what is loaded in them
+    let mut traps: BTreeMap<String, (usize, usize, usize, usize)> = BTreeMap::new();
+    for b in w.buildings.iter().filter(|b| b.kind == "Trap") {
+        let e = traps.entry(b.subtype.clone()).or_default();
+        e.0 += 1;
+        if has(b, "LOADED") {
+            e.1 += 1;
+        }
+        if has(b, "ACTIVE") {
+            e.2 += 1;
+        }
+        e.3 += b.items.iter().filter(|&&i| w.item(i).is_some_and(|it| it.kind == "WEAPON" || it.kind == "TRAPCOMP")).count();
+    }
+    println!("\ntraps (type: total, loaded, armed/active, weapons+trap components inside):");
+    for (k, (n, l, a, wpn)) in &traps {
+        println!("  {k:<14} {n:>3}  loaded {l:>3}  active {a:>3}  weapons {wpn}");
+    }
+    let mut by_z: BTreeMap<i16, usize> = BTreeMap::new();
+    for b in w.buildings.iter().filter(|b| b.kind == "Trap" && b.subtype != "Lever") {
+        *by_z.entry(b.z).or_default() += 1;
+    }
+    println!("  per z: {}", by_z.iter().map(|(z, c)| format!("z{z} {c}")).collect::<Vec<_>>().join(", "));
+    // civilizations
+    println!("\nentities ({}): relation to the fort's civ, sends caravans", w.entities.len());
+    for e in w.entities.iter().filter(|e| e.relation != "Unknown" && (e.kind == "Civilization" || e.relation == "Own" || e.trades)) {
+        println!("  {:>4} {:<15} {:<8} {:<7} {}{}", e.id, e.kind, e.race, e.relation, e.name, if e.trades { "  [trades]" } else { "" });
+    }
+    let n_unknown = w.entities.iter().filter(|e| e.relation == "Unknown").count();
+    let n_sitegov = w.entities.iter().filter(|e| e.kind == "SiteGovernment" && e.relation != "Own").count();
+    println!("  (+ {n_sitegov} other site governments, {n_unknown} civilizations without contact)");
+    // nobles
+    let hf_name = |uid: i32| w.unit(uid).map(|u| u.name.clone()).unwrap_or_default();
+    println!("\nnobles ({} positions):", w.nobles.len());
+    for n in &w.nobles {
+        if n.entity_id != w.meta.group_id && n.holder < 0 {
+            continue;
+        }
+        let who = if n.holder >= 0 { format!("{} ({})", hf_name(n.holder), n.holder) } else { "vacant".into() };
+        let m = if n.mandates.is_empty() { String::new() } else { format!("  mandates: {}", n.mandates.join("; ")) };
+        println!("  {:<22} {:<22} {who}{m}", n.token, n.name);
+    }
+    let x = rf_import::load_extras(dir);
+    for m in &x.mandates {
+        println!("  mandate {:?} by {} {}: {}/{} left, {}/{} ticks", m.text, m.position, m.noble, m.amount_remaining, m.amount_total, m.timeout_counter, m.timeout_limit);
+    }
+    // settings
+    let s = &w.settings;
+    println!(
+        "\nsettings ({}): population cap {}, strict cap {}, baby cap {}; invasions {}, temperature {}, weather {}, cave-ins {}",
+        if rep.settings { "settings.json" } else { "DF defaults, no settings.json" },
+        s.population_cap,
+        s.strict_population_cap,
+        s.baby_cap,
+        s.invasions,
+        s.temperature,
+        s.weather,
+        s.cave_ins
+    );
+    let pick: Vec<&String> = s
+        .other
+        .iter()
+        .filter(|o| ["DIFFICULTY_", "ENEMY_", "INVASION_", "SIEGE_", "VISITOR_CAP", "FEATURE_ARTIFACTS"].iter().any(|p| o.starts_with(p)))
+        .collect();
+    if !pick.is_empty() {
+        println!("  {}", pick.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("  "));
+    }
+    // trade
+    let depots: Vec<String> = w.buildings.iter().filter(|b| b.kind == "TradeDepot").map(|b| format!("{} {} [{}]", b.id, pos(b), b.flags.join(","))).collect();
+    println!("\ntrade: depots {}; {} caravans; {} diplomats", if depots.is_empty() { "none".into() } else { depots.join(", ") }, w.caravans.len(), x.diplomats.len());
+    for c in &w.caravans {
+        println!(
+            "  {} ({}, {}) {} leaves in {} ticks, {} goods, {} animals, {} merchants, mood {}",
+            c.civ, c.race, c.entity_id, c.state, c.leaves_in, c.goods.len(), c.animals.len(), c.merchants.len(), c.mood
+        );
+    }
+    for d in &x.diplomats {
+        println!("  diplomat of civ {}: hf {} unit {} ({})", d.civ_id, d.diplomat_hf, d.diplomat_unit, d.source);
+    }
+    // hist figs
+    let deities = w.hist_figs.iter().filter(|h| w.units.iter().any(|u| u.relationships.iter().any(|r| r.kind == "Deity" && r.hist_fig_id == h.id))).count();
+    println!(
+        "\nhistorical figures: {} names ({} alive, {} on the map, {} worshipped deities)",
+        w.hist_figs.len(),
+        w.hist_figs.iter().filter(|h| h.alive).count(),
+        w.hist_figs.iter().filter(|h| h.unit_id >= 0).count(),
+        deities
+    );
+}
+
 fn main() {
     let mut dir: Option<PathBuf> = None;
     let mut zsel: Option<i16> = None;
@@ -605,6 +732,7 @@ fn main() {
 
     production(&w, &dir);
     round3(&w, &dir, &rep);
+    round4(&w, &dir, &rep);
 
     // tiles per z-range
     println!("\ntiles per z-range (shape %, material class %, top materials; hidden = undiscovered):");
