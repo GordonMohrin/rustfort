@@ -761,6 +761,9 @@ impl Sim {
                 Kind::Dead
             } else if u.is_worker() {
                 Kind::Worker
+            } else if u.flags.inactive {
+                // Units DF does not simulate (departed caravan animals, units that left).
+                Kind::Dead
             } else if u.flags.animal {
                 Kind::Animal
             } else if u.flags.inactive || u.flags.caged {

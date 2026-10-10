@@ -148,7 +148,7 @@ fn measure(a: &World, b: &World, years: f64, value: &dyn Fn(&Item) -> f64) -> Me
     put(
         &mut m,
         "pop.animals",
-        b.units.iter().filter(|u| !u.flags.dead && !u.flags.citizen && (u.flags.animal || u.flags.tame) && !u.flags.hostile).count() as f64,
+        b.units.iter().filter(|u| !u.flags.dead && !u.flags.inactive && !u.flags.citizen && (u.flags.animal || u.flags.tame) && !u.flags.hostile).count() as f64,
     );
 
     // Stress of the citizens at the end.
