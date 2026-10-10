@@ -351,3 +351,14 @@ Wiki pages checked: Combat, Material science, Attack, Armor, Wound, Blood, Pain,
 - **Survival:** 88 -> 90 citizens, the same as master.
 - **Speed:** about 59.6k ticks/s, against master's 61.4k measured back to back on the same busy machine (4 agents building at once). That is within the noise.
 - **Combat cost:** the combat phase stays at about 0.11 us/tick.
+
+## Round 8 combat check (real fort, `raids` example and 2-year bench)
+
+- Forced raids on the r5 export (`cargo run -p rf-sim --release --example raids -- --kind ... --standdown`):
+  - **Ambush** (8 goblins, hidden): spotted after about 800 ticks ("An ambush! Curse them!"); all 8 killed (one caged); 1 citizen lost.
+  - **Thief** (kobold): spotted at the gate ("Thief! Protect the hoard from skulking filth!") and struck down by the Wache before it stole anything.
+  - **Snatcher** (goblin): spotted ("Snatcher! Protect the children!"); it fled off the map without a child.
+  - **Siege** with a camp, 20 goblins and 6 monsters: camped 2000 ticks, then charged. 2 trolls were caged, 3 beak dogs and a troll killed, the leader died and the rest retreated: 18 killed, 1 citizen lost.
+- `--break-leg 4`: all 4 citizens with a broken lower leg were carried to beds (4 rescues).
+- 2 years with `--standdown` and invasions on: 87 -> 91-93 citizens. 1 siege (camped), 2 ambushes, 2 thieves (2 items stolen unseen), 3 snatchers (no child lost); soldiers spar in the Kaserne.
+- **Speed**, back to back with the round-7 build at low machine load: 53-61k ticks/s against 54k, the same within noise. The combat phase costs 0.17-0.19 us/tick. State hashes are equal with 1 and 6 threads, also with invasions on.
