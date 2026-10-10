@@ -61,3 +61,34 @@ pub struct HistFigName {
     /// Unit id on the map, -1 if not here.
     pub unit_id: i32,
 }
+
+/// A merchant caravan of the fort (DF `plotinfo.caravans`, exported to `caravans.json`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Caravan {
+    /// Merchant entity (civilization) id, see `World::entities`.
+    pub entity_id: i32,
+    /// Civilization name as DF shows it, e.g. `The Channels of Direction`.
+    pub civ: String,
+    /// Creature token of the merchants' race, e.g. `DWARF`, `HUMAN`, `ELF`.
+    pub race: String,
+    /// DF trade state: `None`, `Approaching`, `AtDepot`, `Leaving`, `Stuck`.
+    pub state: String,
+    /// Ticks until the merchants leave (DF `time_remaining` x 10; 0 = leaving now).
+    pub leaves_in: i64,
+    /// Trade depot building id, -1 = none.
+    pub depot: i32,
+    /// Item ids of the caravan's goods.
+    pub goods: Vec<i32>,
+    /// Unit ids of the pack animals / wagons.
+    pub animals: Vec<i32>,
+    /// Unit ids of the merchants on the map.
+    pub merchants: Vec<i32>,
+    /// DF bookkeeping: value of the goods brought / bought from the fort so far.
+    pub import_value: i32,
+    pub export_value: i32,
+    /// Merchant mood (DF starts at 100; failed haggling lowers it).
+    pub mood: i32,
+    /// Set `plot_merchant_flag` bits uppercased.
+    pub flags: Vec<String>,
+}
