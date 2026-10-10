@@ -87,11 +87,14 @@ const USAGE: &str = "usage:
                  [--screenshot out.png --frames N] [--view x,y,z,zoom] [--ui citizens,unit,build,orders,labor-screen,..]
                  [--mouse x,y] [--script \"frame:cmd; ...\"] [--ui-scale 2] [--gfps 60] [--size x,y,z] [--sim-inline]
                  [--menu] [--menu-page load|exports|import|settings] [--autosave-days N]
+                 [--desktop N] [--shots-at a,b]
   rustfort bench [--export DIR] [--synthetic] [--ticks N] [--seed N] [--no-invasions] [--standdown]
   rustfort savebench [--export DIR]
   --load FILE.rfsave   start from a save game (play, bench)
   --export DIR         a fort export; default: $RUSTFORT_EXPORT, else the newest export under export/,
                        else the built-in synthetic test fort
+  --desktop N          move the window to virtual desktop N (Windows; 0 = stay; screenshot runs
+                       default to desktop 1, also RUSTFORT_DESKTOP)
 environment: RUSTFORT_DF_DIR = Dwarf Fortress folder (else Settings, then Steam auto-detection)";
 
 fn parse_args() -> Result<Args, String> {
@@ -171,9 +174,12 @@ fn main() {
     let args = match parse_args() {
         Ok(a) => a,
         Err(e) => {
-            if !e.is_empty() {
-                eprintln!("error: {e}");
+            // An empty error is -h/--help: print the usage and exit successfully.
+            if e.is_empty() {
+                println!("{USAGE}");
+                std::process::exit(0);
             }
+            eprintln!("error: {e}");
             eprintln!("{USAGE}");
             std::process::exit(2);
         }
@@ -182,6 +188,10 @@ fn main() {
         "bench" => bench::run(&args),
         "savebench" => {
             let loaded = load::load(&args);
+            if let Some(w) = &loaded.warning {
+                eprintln!("note: {w}");
+            }
+            println!("world: {}", loaded.label);
             save::bench(loaded.world, args.seed);
         }
         "play" => {

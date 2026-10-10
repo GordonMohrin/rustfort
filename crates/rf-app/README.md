@@ -625,6 +625,8 @@ rustfort play --screenshot target/shots/a.png --frames 20 --view 48,48,22,1 \
   --ui unit,citizens --script "3:key m; 5:move 600,300; 6:ldown; 8:wheel 1; 10:move 1000,560; 12:lup"
 ```
 
+- Screenshot runs move their window to virtual desktop 1 on Windows, so they do not pop up on
+  the desktop you work on: `--desktop N` (0 = stay) or `RUSTFORT_DESKTOP` changes that.
 - `--view x,y,z,zoom` sets the camera.
 - `--ui` opens states: `citizens`, `pets`, `others`, `sort:<name|profession|stress>`, `unit[:id]`, `skills`,
   `labor`, `items`, `thoughts`, `needs`, `personality`, `health`, `relations`, `dig`, `chop`,

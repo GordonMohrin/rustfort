@@ -22,4 +22,7 @@ if not exist "%EXE%" (
   exit /b 1
 )
 "%EXE%" %*
-if errorlevel 1 pause
+set "RC=%errorlevel%"
+rem Keep an error message readable when started by double-click; pass the exit code on.
+if not "%RC%"=="0" pause
+exit /b %RC%

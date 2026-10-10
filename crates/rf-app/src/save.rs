@@ -660,6 +660,7 @@ pub fn bench(world: World, seed: u64) {
         Err(e) => eprintln!("writing a v0.9 save failed: {e}"),
     }
     let _ = std::fs::remove_file(&p);
+    let _ = std::fs::remove_dir(&dir); // only if empty: the temp folder leaves no trace
 }
 
 #[cfg(test)]

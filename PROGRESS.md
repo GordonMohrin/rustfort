@@ -38,7 +38,7 @@ No simulation changes; the 2-year bench on r5 keeps its state hash.
   about 170 calendar ticks/s in DF vs about 100,000 headless and 66,400 on average
   (88,000-90,000 while running) in the game window; the final siege about 107 calendar
   ticks/s (29 simulated frames/s) vs about 51,000).
-- **Personal references removed** from code comments, tests and docs (the reference fort is
+- **Personal references removed** from the current code comments, tests and docs (the reference fort is
   just "the reference fort" now).
 
 ## v0.12.0 (2026-10-10): minecarts and hauling routes, metallurgy and craft chains, siege engines, climbing invaders

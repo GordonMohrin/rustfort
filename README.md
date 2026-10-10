@@ -2,14 +2,15 @@
 
 A fast, faithful re-implementation of Dwarf Fortress fortress mode in Rust that continues your own DF fort.
 
-**Status:** v0.12, alpha. Tested on Windows 11 (Windows 10 should work). Linux builds are untested.
+**Status:** v0.12.1, alpha. Tested on Windows 11 (Windows 10 should work). Linux builds are untested.
 
 > **Legal note.** Rustfort is an unofficial fan project. It is not affiliated with or endorsed by
 > Bay 12 Games or Kitfox Games. You need your own copy of Dwarf Fortress: the Steam edition,
 > v50 or newer, which includes the Premium graphics. Rustfort contains no Dwarf Fortress code.
 > Apart from the README screenshots in `docs/screenshots`, which show DF's Premium graphics
 > (c) Bay 12 Games / Kitfox Games, a table of DF's thought captions taken from DFHack's
-> df-structures, and a few small tables of game facts (token names and numbers), this
+> df-structures, DF's short announcement wording (such as "Some migrants have arrived."), and
+> a few small tables of game facts (token names and numbers), this
 > repository contains no Dwarf Fortress files or data: graphics, fonts and raws are read from
 > your installation at runtime. [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) has the
 > details. Dwarf Fortress is a trademark of Bay 12 Games. The name is used here only to say
@@ -30,8 +31,8 @@ Fortress is installed:
 
 ```text
 Install and start Rustfort on this computer. Read
-https://github.com/GordonMohrin/rustfort/blob/HEAD/docs/INSTALL.md (start with its "Notes for AI agents")
-and follow it step by step, doing each step's check. Ask me before you install any software or
+https://raw.githubusercontent.com/GordonMohrin/rustfort/HEAD/docs/INSTALL.md word for word (start
+with its "Notes for AI agents") and follow it step by step, doing each step's check. Ask me before you install any software or
 change any settings, and never modify my Dwarf Fortress installation or my DF saves.
 At the end, start Rustfort as the guide describes and report what worked and what did not.
 ```
@@ -43,7 +44,7 @@ have, and open a new terminal after installing them:
 
 ```powershell
 winget install --id Git.Git -e
-winget install --id Microsoft.VisualStudio.2022.BuildTools -e --override "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --passive"
+winget install --id Microsoft.VisualStudio.2022.BuildTools -e --override "--wait --passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
 winget install --id Rustlang.Rustup -e
 ```
 
@@ -222,7 +223,9 @@ screen's **Continue** is different: it loads the newest save, else the newest ex
 | `rustfort.cmd` | Windows launcher: build if needed, then start |
 
 At runtime Rustfort writes only inside its working directory: `saves/` (saves, settings,
-crash log) and `export/` (fort exports). Both are gitignored.
+crash log) and `export/` (fort exports). Both are gitignored. The exceptions are the manual
+exporter without an output folder (`<DF folder>/rustfort-export/`) and `savebench`, which uses a
+temporary folder in `%TEMP%` and removes it again.
 
 ## Documentation
 

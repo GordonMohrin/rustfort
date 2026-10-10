@@ -15,8 +15,9 @@ Most of the time goes into downloads and the first build, so plan for about 20-4
 - **Dwarf Fortress v50 or newer, the Steam edition** (it includes the Premium graphics that
   Rustfort draws with). Rustfort ships no DF graphics, fonts or raws and reads them from your
   install.
-- About 5 GB of free disk space: up to 3 GB for the C++ build tools, 2-4 GB for Rustfort's
-  build folder, and about 70 MB per fort export.
+- About 4-5 GB of free disk space: up to 3 GB for the C++ build tools, about 1 GB for
+  Rustfort's release build (2-4 GB if you also build all examples and tests), and about 70 MB
+  per fort export.
 - An internet connection for the downloads.
 
 All commands are for **PowerShell** (Windows Terminal or "Windows PowerShell"). Commands
@@ -93,6 +94,15 @@ git --version
 
 Expected: `git version 2.` followed by more numbers. If that works, go to step 3.
 
+If `git` is "not recognized", Git may still be installed: shells that were started before an
+installation (AI agents' shells, for example) keep an old PATH. Reload the PATH for this session
+(it changes no setting) and check again before installing anything:
+
+```powershell
+$env:PATH = [Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH','User')
+git --version
+```
+
 **Do:**
 
 ```powershell
@@ -145,11 +155,12 @@ Tools 2022* (or *Modify*, as below).
 **Do:**
 
 ```powershell
-winget install --id Microsoft.VisualStudio.2022.BuildTools -e --override "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --passive"
+winget install --id Microsoft.VisualStudio.2022.BuildTools -e --override "--wait --passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
 ```
 
 This downloads a few GB and shows the Visual Studio installer's progress window. Windows asks
-for administrator permission. Wait until the installer window closes, then run the check again.
+for administrator permission. With `--wait` the command returns only when the installation is
+finished; then run the check again.
 
 **If it fails:** start *Visual Studio Installer* from the Start menu. Then choose *Modify* on
 *Build Tools 2022*, tick *Desktop development with C++* and click *Modify*. If the C++ tools
@@ -168,6 +179,17 @@ rustup show active-toolchain
 Expected: `cargo 1.` followed by numbers, and a toolchain whose name ends in
 `-x86_64-pc-windows-msvc` (for example `stable-x86_64-pc-windows-msvc (default)`). If both are
 right, go to step 5.
+
+If `cargo` is "not recognized", Rust may still be installed (an old PATH, as in step 2). Before
+installing anything, reload the PATH, look for Rust in its default place, and check again:
+
+```powershell
+$env:PATH = [Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH','User')
+Test-Path "$env:USERPROFILE\.cargo\bin\cargo.exe"
+```
+
+If `Test-Path` prints `True` but `cargo` is still not recognized, add the folder for this
+session only: `$env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"`. Then run the check again.
 
 **Do:**
 
@@ -465,9 +487,9 @@ Your `saves\` and `export\` folders are not tracked by Git and are not touched.
 **Do:** delete the Rustfort folder. That removes the code, the build, your saves (`saves\`) and
 your fort exports (`export\`). Copy those two folders first if you want to keep them.
 
-Rustfort installs nothing system-wide and writes only inside its own folder. The one exception
-is the manual exporter: run without an output folder, it writes to
-`<DF folder>\rustfort-export\`. Delete that folder too if it exists. The import from the title
+Rustfort installs nothing system-wide and writes only inside its own folder. The exceptions:
+the manual exporter, run without an output folder, writes to `<DF folder>\rustfort-export\`,
+and the `savebench` tool uses a temporary folder in `%TEMP%` that it removes again. Delete that folder too if it exists. The import from the title
 screen always writes into the Rustfort folder.
 
 Optionally, uninstall the tools in *Settings* > *Apps*: *Rustup* (or run `rustup self uninstall`),
@@ -522,7 +544,8 @@ Optionally, uninstall the tools in *Settings* > *Apps*: *Rustup* (or run `rustup
 
 **Out of disk space**
 
-- `cargo clean` deletes the build folder (`target\`, 2-4 GB). The next build starts from scratch.
+- `cargo clean` deletes the build folder (`target\`, about 1 GB for the game alone, 2-4 GB with
+  all examples and tests). The next build starts from scratch.
 - Old fort exports in `export\` (about 70 MB each) and old saves in `saves\` (a few MB each)
   can be deleted. Autosaves rotate by themselves (the newest 3 per fort are kept).
 
@@ -586,21 +609,26 @@ If you are an AI agent installing Rustfort for a user:
   starts a fresh shell for every command, variables such as `$DF` (step 1) and the reloaded
   PATH do not carry over: repeat them in the same command that needs them.
 - **Starting the game** (step 7): the window blocks a foreground shell until it is closed, so
-  start it without waiting for it. Use your tool's background-run feature, or:
+  start it without waiting for it. This starts it through `cmd.exe` without passing your
+  shell's output handles to the game (so a tool that reads your output is not blocked either),
+  writes its console output to a file, and waits up to two minutes for the line:
 
   ```powershell
-  Start-Process -FilePath .\rustfort.cmd -WorkingDirectory $PWD -RedirectStandardError "$env:TEMP\rustfort-start.txt"
-  Start-Sleep 10; Select-String -Path "$env:TEMP\rustfort-start.txt" -Pattern '^rustfort: Dwarf Fortress'
+  $log = "$env:TEMP\rustfort-start.txt"; Remove-Item $log -ErrorAction SilentlyContinue
+  Start-Process -FilePath cmd.exe -WorkingDirectory $PWD -ArgumentList '/c', ".\rustfort.cmd 2> `"$log`""
+  for ($i = 0; $i -lt 120; $i++) { Start-Sleep 1; $l = Select-String -Path $log -Pattern '^rustfort: Dwarf Fortress' -ErrorAction SilentlyContinue; if ($l) { break } }; $l.Line
   ```
 
   The console line `rustfort: Dwarf Fortress at <path> (<source>)` (or `rustfort: Dwarf
   Fortress not found: ...`) is the machine-checkable result of step 7, and it names the DF
-  folder Rustfort uses. The line comes after the build output, so wait longer if a build is
-  still running. Then ask the user to confirm that the title screen is visible and to close it
+  folder Rustfort uses. Even without a build, the first start can take more than 10 seconds,
+  hence the loop. Then ask the user to confirm that the title screen is visible and to close it
   with **Quit**.
 - Start the game without special flags: no debug, test, screenshot or script options. The one
   extra check you may run is the windowless smoke test
-  `target\release\rustfort.exe bench --ticks 2000`. It opens no window, takes a few seconds,
+  `target\release\rustfort.exe bench --ticks 2000` (when `CARGO_TARGET_DIR` is set:
+  `& "$env:CARGO_TARGET_DIR\release\rustfort.exe" bench --ticks 2000`, see step 6). It opens no
+  window, takes a few seconds,
   and prints the fort it used (a `world:` line; without an export it uses the built-in test
   fort and says so) and a `state hash:` line at the end.
 - Do not start an import unless the user asks for it. If they do, only use the title screen

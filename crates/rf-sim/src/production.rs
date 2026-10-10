@@ -744,10 +744,12 @@ impl Sim {
             }
             if !p.plants.is_empty() {
                 // The built-in test fort (`World::synthetic`) has no export at all.
-                let what = if self.world.meta.source == "synthetic" { "built-in test fort" } else { "no plant raws in the export" };
-                p.notes.push(format!(
-                    "{what}: {added} plant species derived from the material palette (PLANT:X:DRINK = brewable, PLANT:X:SEED = seeds)"
-                ));
+                // Short there: the note is the first line a new player reads in the game log.
+                p.notes.push(if self.world.meta.source == "synthetic" {
+                    format!("built-in test fort: {added} plant species")
+                } else {
+                    format!("no plant raws in the export: {added} plant species derived from the material palette (PLANT:X:DRINK = brewable, PLANT:X:SEED = seeds)")
+                });
             }
         }
         // Brewable plants without a drink material in the palette (or seeds without a seed

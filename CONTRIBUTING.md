@@ -10,11 +10,11 @@ them are strict.
    (the v50 pages), the raws of your own installation, and behavior you observe in the running
    game (read-only, for example through DFHack). Do not decompile, disassemble or otherwise
    reverse-engineer the Dwarf Fortress executable, and do not paste code or data taken from it.
-   Do not copy DF's text (descriptions, messages, captions) into the code either. The one
-   existing exception is the table of DF thought captions in
-   `crates/rf-sim/src/social/captions.rs`, taken from DFHack's df-structures (zlib license) and
-   credited in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md); do not add new copied DF
-   text. Small compiled-in tables of game facts (token names and numbers, such as reactions,
+   Do not copy DF's text (descriptions, messages, captions) into the code either. The existing
+   exceptions are credited in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md): the table of
+   DF thought captions in `crates/rf-sim/src/social/captions.rs` (from DFHack's df-structures,
+   zlib license) and DF's short announcement wording that the alerts and the gamelog reader
+   need. Do not add new copied DF text beyond such short messages. Small compiled-in tables of game facts (token names and numbers, such as reactions,
    default materials, armor or ores) are fine; name their source (wiki page or raws) in a
    comment.
 2. **No DF files in the repository.** Do not commit raws, graphics, fonts, sounds or any other

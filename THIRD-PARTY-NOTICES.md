@@ -60,6 +60,18 @@ portraits, UI icons and the font, (c) Bay 12 Games / Kitfox Games, read at runti
 installation. They are shown for illustration only. They are not licensed by this project and
 are not covered by MIT or Apache-2.0. They are the only DF imagery in the repository.
 
+## 2a. DF's announcement wording
+
+Some of Rustfort's in-game announcements and alerts use DF's own short wording, for example
+"A vile force of darkness has arrived!", "An ambush! Curse them!", "Some migrants have
+arrived.", "... has been struck down." or "... is taken by a fey mood!" (mainly in
+`crates/rf-app/src/ui/` and the rf-sim announcement texts). The validation tool's gamelog
+reader (`crates/rf-sim/examples/validate_support/gamelog.rs`) also matches DF's season and
+death lines ("Spring has arrived!", " has been found dead", ...) so it can read a real
+`gamelog.txt`. These short messages, about a few dozen, were noted down from playing the game
+so that Rustfort reads like DF and can compare itself with DF's logs. Their wording belongs to
+Bay 12 Games and is not covered by this project's license.
+
 ## 3. Game facts in the code
 
 A few small compiled-in tables hold game facts: token names and numbers, for example for
