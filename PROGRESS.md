@@ -1,5 +1,29 @@
 # Rustfort: progress
 
+## v0.12.0 (2026-10-10): minecarts and hauling routes, metallurgy and craft chains, siege engines, climbing invaders
+
+- **Minecarts and hauling routes** (`minecarts.rs`):
+  - routes with stops, linked stockpiles (take/give) and DF-style departure conditions ("Leave when full", "Wait 1 day", Push/Ride/Guide + direction)
+  - cart physics with the wiki numbers: track/floor/ramp friction, track stops (5 friction levels, dumping), corners and derailing, powered rollers
+  - carts that stall away from a stop are carried back; HANDLE_VEHICLES labor
+  - wheelbarrows for stockpiles with `max_wheelbarrows`; heavy items slow down hand haulers
+- **Metallurgy and craft chains** (`industry/reactions.rs`):
+  - all vanilla smelter alloys (from ore and from bars), pig iron and steel, coke from bituminous coal and lignite (checked against the installed raws: 22 reactions match)
+  - kiln/pottery, ashery (lye, potash, pearlash), render fat to tallow, soap, raw clear/crystal glass, splints and crutches
+  - magma smelter/forge/glass furnace/kiln need no fuel but need magma 4/7 below
+  - queued jobs from the imported fort that were unsupported before (coke, render fat, splints, crutches) now run
+  - workshop quality uses the wiki's quality-point formula (skill, attributes, focus, penalties)
+- **Siege engines** (`siegeengines.rs`): ballista, catapult and bolt thrower, built from siege workshop parts, crewed by siege operators; wiki field of fire, ranges and accuracy; ballista arrows pierce every body in line (friendly fire included); aim at a tile or fire at will.
+- **Climbing invaders** (`climbing.rs`): v50 rules: rough, constructed and ice walls, fortifications and trees can be climbed; smoothed/engraved natural walls, overhangs and raised bridges stop climbers; one-tile gaps are jumped; falls, Climber skill.
+- **UI:** hauling route editor (stops, conditions, piles, carts, live status), Build > Machines and Build > Siege engines tabs with placement direction (Tab), machine and siege engine sheets, power overlay, track sprites and route overlay on the map.
+- **Speed:** production availability mask, branch-free haul prefilter, lazily formatted combat log. 487 citizens: **38k ticks/s** (v0.11: about 22k).
+- **Result:** 2 years headless `--standdown` on r5: 87 -> 52 citizens, 220 deaths, about 100k ticks/s, the same state hash with 1 and N threads; save/load/continue IDENTICAL; chaos harness 0 panics.
+- **Known gaps:**
+  - craft quality is still below DF's (no unit preferences in the export)
+  - carts: no collisions, no per-stop item filters, guided carts follow the walking path
+  - siege engines are tested on synthetic maps only (the reference fort has none)
+  - climbing changes nothing in the r5 -> r6 siege, since invaders always find a walking route
+
 ## v0.11.0 (2026-10-10): calibration against Gordon's history, exact save continuation, faster sieges
 
 - **Stress:**
