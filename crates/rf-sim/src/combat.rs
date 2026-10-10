@@ -395,6 +395,9 @@ pub(crate) struct Fighter {
     pub wmirror: Vec<(u16, u16, u16)>,
     pub wmirror_nsc: u32,
     pub wmirror_ok: bool,
+    /// [siege12] Climbing: 0 not checked yet, 1 cannot climb, 2 climbs (see `climbing`).
+    #[serde(default)]
+    pub climb: u8,
 }
 
 impl Default for Fighter {
@@ -444,6 +447,7 @@ impl Default for Fighter {
             wmirror: Vec::new(), // [perf11]
             wmirror_nsc: 0,
             wmirror_ok: false,
+            climb: 0, // [siege12]
         }
     }
 }
@@ -541,6 +545,11 @@ pub(crate) struct Combat {
     pub flows: Vec<crate::path::Flow>,
     pub flow_nodes: u64,
     pub flow_paths: u64,
+    /// [siege12] Climbing invaders (see `climbing`) and siege engines (see `siegeengines`).
+    #[serde(default)]
+    pub climb: crate::climbing::Climbing,
+    #[serde(default)]
+    pub engines: crate::siegeengines::Engines,
 }
 
 impl Default for Combat {
@@ -565,6 +574,8 @@ impl Default for Combat {
             flows: Vec::new(), // [perf11]
             flow_nodes: 0,
             flow_paths: 0,
+            climb: Default::default(),   // [siege12]
+            engines: Default::default(), // [siege12]
         }
     }
 }
@@ -1304,6 +1315,12 @@ impl Sim {
         }
         if now % rf_core::TICKS_PER_DAY as u64 == 0 {
             self.invasion_daily(now);
+        }
+        if !self.combat.hostiles.is_empty() {
+            self.climb_tick(now); // [siege12] climbing net, climbers losing their hold
+        }
+        if !self.combat.engines.list.is_empty() {
+            self.engines_tick(now); // [siege12] siege engines
         }
     }
 
@@ -2504,7 +2521,8 @@ impl Sim {
     pub(crate) fn find_target(&self, s: usize, sight: Option<i32>) -> u32 {
         let _p = crate::perf::prof::Guard::new(crate::perf::prof::FIND_TARGET); // [perf11]
         let pos = self.ai[s].pos as usize;
-        let c = self.nav.comp_near(pos);
+        let climber = self.combat.f[s].climb == 2; // [siege12]
+        let c = if climber { self.climb_group_at(pos) } else { self.nav.comp_near(pos) };
         if c == 0 {
             return NONE;
         }
@@ -2523,8 +2541,8 @@ impl Sim {
                 }
             }
             let d = crate::manhattan(up, tp);
-            if (d, t) < best && self.nav.comp_near(ai.pos as usize) == c {
-                best = (d, t);
+            if (d, t) < best && (if climber { self.climb_group_at(ai.pos as usize) } else { self.nav.comp_near(ai.pos as usize) }) == c {
+                best = (d, t); // [siege12] climbers: same climbing group
             }
         }
         best.1
@@ -2572,8 +2590,9 @@ impl Sim {
             return true;
         }
         // Same walk component?
-        let c = self.nav.comp_near(self.ai[s].pos as usize);
-        if c == 0 || self.nav.comp_near(self.ai[t].pos as usize) != c {
+        let climber = self.combat.f[s].climb == 2; // [siege12] climbers: same climbing group
+        let c = if climber { self.climb_group_at(self.ai[s].pos as usize) } else { self.nav.comp_near(self.ai[s].pos as usize) };
+        if c == 0 || (if climber { self.climb_group_at(self.ai[t].pos as usize) } else { self.nav.comp_near(self.ai[t].pos as usize) }) != c {
             self.combat.f[s].target = NONE;
             return false;
         }
@@ -2601,7 +2620,12 @@ impl Sim {
             let tt = self.ai[t].pos;
             // [perf11] Far chasers share flows (a whole siege charging one dwarf); a new flow
             // only pays off far away (a ball of radius d against one A* of a few hundred nodes).
-            if d <= 12 || !self.flow_path(s, tt, tol, d >= FLOW_NEW_MIN, now) {
+            if climber {
+                // [siege12] Climbers path over walls: a shared climbing flow beyond 12 tiles.
+                if d <= 12 || !self.flow_path(s, tt, tol, true, now) {
+                    self.request_path_climb(s, Goals::one(tt), now);
+                }
+            } else if d <= 12 || !self.flow_path(s, tt, tol, d >= FLOW_NEW_MIN, now) {
                 self.request_path(s, Goals::one(tt), now);
             }
         }
@@ -2615,7 +2639,8 @@ impl Sim {
     pub(crate) fn flow_path(&mut self, s: usize, goal: u32, tol: i32, create: bool, now: u64) -> bool {
         let _p = crate::perf::prof::Guard::new(crate::perf::prof::FLOW_PATH);
         let start = self.ai[s].pos;
-        if start == goal || !self.nav.walkable(start as usize) || !self.nav.walkable(goal as usize) {
+        let climb = self.combat.f[s].climb == 2; // [siege12] climbers read climbing flows
+        if start == goal || !(self.nav.walkable(start as usize) || climb && self.climb_node(start as usize)) || !self.nav.walkable(goal as usize) {
             return false;
         }
         let rb = self.nav.rebuilds;
@@ -2623,6 +2648,9 @@ impl Sim {
         let gp = self.world.pos_of(goal as usize);
         let mut pick: Option<(i32, usize)> = None;
         for (k, f) in self.combat.flows.iter().enumerate() {
+            if f.climb != climb {
+                continue; // [siege12]
+            }
             let d = self.world.pos_of(f.goal as usize).dist(gp);
             if d <= tol && pick.map_or(true, |(bd, _)| d < bd) {
                 pick = Some((d, k));
@@ -2641,14 +2669,22 @@ impl Sim {
                     }
                     self.combat.flows.remove(old);
                 }
-                self.combat.flows.push(crate::path::Flow::new(goal, now, rb));
+                let mut fl = crate::path::Flow::new(goal, now, rb);
+                fl.climb = climb; // [siege12]
+                self.combat.flows.push(fl);
                 self.combat.flows.len() - 1
             }
         };
         let nav = &self.nav;
         let f = &mut self.combat.flows[k];
         let before = f.expanded;
-        let ok = f.settle(nav, start, FLOW_CAP);
+        let ok = if f.climb {
+            // [siege12] climbing graph
+            let g = crate::nav::ClimbGraph { nav, tiles: &self.world.tiles, cls: &self.combat.climb.cls };
+            f.settle_climb(&g, start, FLOW_CAP)
+        } else {
+            f.settle(nav, start, FLOW_CAP)
+        };
         self.combat.flow_nodes += f.expanded - before;
         if !ok {
             if f.expanded >= FLOW_CAP as u64 {
@@ -2672,6 +2708,16 @@ impl Sim {
     /// Hostiles and retaliating creatures.
     fn fighter_think(&mut self, s: usize, now: u64) {
         use crate::perf::prof; // [perf11]
+        // [siege12] Climbing invaders: classify once; one left hanging lets go.
+        if self.combat.f[s].climb == 0 {
+            self.climb_classify(s);
+        }
+        if self.combat.f[s].climb == 2 {
+            self.combat.climb.seen = now;
+            if self.climb_failsafe(s, now) {
+                return;
+            }
+        }
         let p0 = prof::t();
         let camped = self.combat.f[s].raid != 0 && self.raid_think(s, now);
         prof::add(prof::RAID_THINK, p0);

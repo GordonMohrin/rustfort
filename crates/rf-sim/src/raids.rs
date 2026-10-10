@@ -367,6 +367,12 @@ impl Sim {
             if kind.sneaks() {
                 skills.push(Skill { id: "SNEAK".into(), rating: 3 + r.below(6) as i32, xp: 0 });
             }
+            if !monster {
+                // [siege12] r6 goblins: Climber 1 (79 %), 2 (8 %), 3 (13 %). Own random stream,
+                // so the other draws of the raid stay as before.
+                let x = Rng::for_unit(self.seed, next_id as usize, now, 0xC11B).below(100);
+                skills.push(Skill { id: "CLIMBING".into(), rating: if x < 79 { 1 } else if x < 87 { 2 } else { 3 }, xp: 0 });
+            }
             let (profession, custom) = match (kind, monster) {
                 (_, true) => ("STANDARD".to_string(), String::new()),
                 (RaidKind::Thief, _) => ("THIEF".into(), "thief".into()),
