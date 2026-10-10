@@ -71,7 +71,7 @@ pub const MAGMA_BURN_TICKS: u32 = 10;
 /// Full-water tiles a single pressure search may visit.
 pub const PRESSURE_MAX_NODES: usize = 4096;
 /// Liquid tiles a single levelling search may visit.
-pub const LEVEL_MAX_NODES: usize = 1024;
+pub const LEVEL_MAX_NODES: usize = 96;
 /// Depth from which water must be swum (DF: 4/7 and deeper).
 pub const DEEP: u8 = 4;
 const AQ_PERIOD: u64 = 100;
@@ -132,6 +132,9 @@ pub struct FluidReport {
     pub pressure_moves: u64,
     /// 1/7 moves by the levelling search (slopes of 1/7 steps evening out).
     pub level_moves: u64,
+    /// Pressure and levelling searches done, and the tiles they looked at.
+    pub searches: u64,
+    pub search_nodes: u64,
     pub obsidian: u64,
     pub evaporated: u64,
     pub aquifer_added: u64,
@@ -183,7 +186,7 @@ pub(crate) struct Fluids {
     bfs: Vec<u32>,
     fail: HashMap<u32, i16>,
     /// Levelling searches that failed this tick: tile -> depth they failed for.
-    lfail: HashMap<u32, u8>,
+    lfail: HashMap<u32, (u8, u8)>,
     fail_tick: u64,
     leaky: Vec<u32>,
     leaky_set: Bits,
@@ -191,6 +194,8 @@ pub(crate) struct Fluids {
     evap_set: Bits,
     sources: Vec<(u32, bool)>,
     mud: Bits,
+    /// Water tiles whose drinking access was registered.
+    access: Bits,
     mud_count: usize,
     sub: Vec<Sub>,
     aquatic: Vec<String>,
@@ -235,6 +240,7 @@ impl Default for Fluids {
             evap_set: Bits::default(),
             sources: Vec::new(),
             mud: Bits::default(),
+            access: Bits::default(),
             mud_count: 0,
             sub: Vec::new(),
             aquatic: Vec::new(),
@@ -359,29 +365,12 @@ impl Fluids {
         }
     }
 
-    /// Record a change of tile `i`: skip it for the rest of the tick and wake its area
-    /// (two tiles on its level, for the levelling rule, plus above and below).
+    /// Record a change of tile `i`: skip it for the rest of the tick and wake its area.
     fn touch(&mut self, tiles: &[Tile], i: usize) {
         if self.moved.set(i) {
             self.moved_list.push(i as u32);
         }
         self.wake(tiles, i);
-        let (x, y, _) = self.xyz(i);
-        for oy in -2i32..=2 {
-            for ox in -2i32..=2 {
-                if ox.abs() < 2 && oy.abs() < 2 {
-                    continue;
-                }
-                let (nx, ny) = (x as i32 + ox, y as i32 + oy);
-                if nx < 0 || ny < 0 || nx >= self.dx as i32 || ny >= self.dy as i32 {
-                    continue;
-                }
-                let n = (i as i64 + oy as i64 * self.dx as i64 + ox as i64) as usize;
-                if depth(&tiles[n]) >= 2 {
-                    self.enqueue(n);
-                }
-            }
-        }
     }
 
     /// Set the liquid of a tile, keeping counters, flags, mud and evaporation candidates.
@@ -528,22 +517,36 @@ impl Fluids {
             }
         }
         // Levelling: on a slope of 1/7 steps (where the neighbour rule stops), connected liquid
-        // on one level still evens out, as DF's flickering water does. Search the connected
-        // body on this level for a tile at least 2/7 lower and move 1/7 there. Every such move
-        // lowers the sum of squared depths, so the liquid comes to rest.
-        if !changed && d >= 2 && self.has_step_neighbour(tiles, c, d, magma) {
-            if let Some(m) = self.level_target(tiles, c, d, magma, now) {
-                self.transfer(tiles, c, m, 1, magma);
-                self.stats.level_moves += 1;
-                changed = true;
+        // on one level still evens out, as DF's flickering water does. A tile next to a 1/7
+        // lower one searches the connected body on its level for a tile at least 2/7 lower
+        // and pushes 1/7 there; a tile next to a 1/7 higher one pulls 1/7 from a tile at least
+        // 2/7 higher. Every such move lowers the sum of squared depths, so the liquid comes to
+        // rest. The searches are local ([`LEVEL_MAX_NODES`]).
+        // Thin films (1/7, 2/7) are left to the neighbour rule.
+        if !changed && d >= 2 {
+            let (down, up) = self.step_neighbours(tiles, c, d, magma);
+            if down && d >= 3 {
+                if let Some(m) = self.level_search(tiles, c, d, magma, true, now) {
+                    self.transfer(tiles, c, m, 1, magma);
+                    self.stats.level_moves += 1;
+                    return true;
+                }
+            }
+            if up && d <= 5 {
+                if let Some(m) = self.level_search(tiles, c, d, magma, false, now) {
+                    self.transfer(tiles, m, c, 1, magma);
+                    self.stats.level_moves += 1;
+                    return true;
+                }
             }
         }
         changed
     }
 
-    /// `c` (depth `d`) has a neighbour of the same liquid exactly 1/7 lower.
-    fn has_step_neighbour(&self, tiles: &[Tile], c: usize, d: u8, magma: bool) -> bool {
+    /// Does `c` (depth `d`) have a neighbour of the same liquid exactly 1/7 lower / higher?
+    fn step_neighbours(&self, tiles: &[Tile], c: usize, d: u8, magma: bool) -> (bool, bool) {
         let (x, y, _) = self.xyz(c);
+        let (mut down, mut up) = (false, false);
         for &(ox, oy) in &DIRS8 {
             let (nx, ny) = (x as i32 + ox, y as i32 + oy);
             if nx < 0 || ny < 0 || nx >= self.dx as i32 || ny >= self.dy as i32 {
@@ -551,23 +554,31 @@ impl Fluids {
             }
             let n = (c as i64 + oy as i64 * self.dx as i64 + ox as i64) as usize;
             let nt = tiles[n];
-            if depth(&nt) + 1 == d && is_magma(&nt) == magma && self.hold(tiles, n) {
-                return true;
+            let nd = depth(&nt);
+            if nd > 0 && is_magma(&nt) != magma {
+                continue;
+            }
+            if nd + 1 == d && self.hold(tiles, n) {
+                down = true;
+            } else if nd == d + 1 {
+                up = true;
             }
         }
-        false
+        (down, up)
     }
 
-    /// Breadth-first search through the liquid connected to `c` on its level for a tile
-    /// holding at most `d - 2` (or nothing) that the body touches.
-    fn level_target(&mut self, tiles: &[Tile], c: usize, d: u8, magma: bool, now: u64) -> Option<usize> {
+    /// Breadth-first search through the liquid connected to `c` on its level. `push`: find a
+    /// tile holding at most `d - 2` (or nothing) that the body touches; else find a tile
+    /// holding at least `d + 2`.
+    fn level_search(&mut self, tiles: &[Tile], c: usize, d: u8, magma: bool, push: bool, now: u64) -> Option<usize> {
         if self.fail_tick != now {
             self.fail.clear();
             self.lfail.clear();
             self.fail_tick = now;
         }
-        if let Some(&fd) = self.lfail.get(&(c as u32)) {
-            if d <= fd {
+        // Failure cache: push failed for depth <= fd (low byte), pull failed for depth >= fu.
+        if let Some(&(fd, fu)) = self.lfail.get(&(c as u32)) {
+            if (push && d <= fd) || (!push && d >= fu) {
                 return None;
             }
         }
@@ -604,7 +615,8 @@ impl Fluids {
                 if nd > 0 && is_magma(&nt) != magma {
                     continue;
                 }
-                if nd + 2 <= d {
+                let hit = if push { nd >= 1 && nd + 2 <= d } else { nd >= d + 2 };
+                if hit {
                     found = Some(n);
                     break 'search;
                 }
@@ -620,10 +632,16 @@ impl Fluids {
         for &q in &seen {
             self.seen.clear(q as usize);
         }
+        self.stats.searches += 1;
+        self.stats.search_nodes += seen.len() as u64;
         if found.is_none() && !truncated {
             for &q in &bfs {
-                let e = self.lfail.entry(q).or_insert(0);
-                *e = (*e).max(d);
+                let e = self.lfail.entry(q).or_insert((0, u8::MAX));
+                if push {
+                    e.0 = e.0.max(d);
+                } else {
+                    e.1 = e.1.min(d);
+                }
             }
         }
         self.bfs = bfs;
@@ -708,6 +726,8 @@ impl Fluids {
         for &q in &seen {
             self.seen.clear(q as usize);
         }
+        self.stats.searches += 1;
+        self.stats.search_nodes += seen.len() as u64;
         let res = match found {
             Some(o) => {
                 self.transfer(tiles, src, o, 1, false);
@@ -815,6 +835,10 @@ impl Sim {
         f.leaky_set = Bits::new(n);
         f.evap_set = Bits::new(n);
         f.mud = Bits::new(n);
+        f.access = Bits::new(n);
+        if std::env::var_os("RUSTFORT_NO_FLUIDS").is_some() {
+            f.on = false;
+        }
         // Obsidian wall tiletype and material.
         f.obsidian_tt = w
             .tiletypes
@@ -925,6 +949,9 @@ impl Sim {
         }
         if !self.fluids.ready {
             self.fluids_init();
+            if !self.fluids.on {
+                return;
+            }
         }
         if now % BLD_PERIOD == 3 {
             self.fluids_buildings_check(false);
@@ -989,7 +1016,7 @@ impl Sim {
             let c = c as usize;
             if self.nav.compute(&self.world.tiles, c) != self.nav.flags[c] {
                 self.after_tile_change(c);
-            } else if self.world.tiles[c].liquid & liquid::DEPTH_MASK > 0 && self.world.tiles[c].liquid & liquid::MAGMA == 0 && !self.water_set.contains(&(c as u32)) {
+            } else if self.world.tiles[c].liquid & liquid::DEPTH_MASK > 0 && self.world.tiles[c].liquid & liquid::MAGMA == 0 && self.fluids.access.set(c) {
                 self.add_water_access_around(c);
             }
         }
@@ -1415,7 +1442,7 @@ impl Sim {
             self.fluids.in_pass = true;
             self.after_tile_change(i);
             self.fluids.in_pass = false;
-        } else if depth_7 > 0 && !magma && !self.water_set.contains(&(i as u32)) {
+        } else if depth_7 > 0 && !magma && self.fluids.access.set(i) {
             self.add_water_access_around(i);
         }
         if depth_7 >= DEEP || magma {
