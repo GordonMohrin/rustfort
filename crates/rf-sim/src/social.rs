@@ -75,6 +75,7 @@
 //!   drinks, sleep, work, deaths) are handled when they happen.
 
 mod captions;
+mod saves10; // [saves10] save/load of breakdowns, timers and counters
 
 use crate::path::Goals;
 use crate::rng::Rng;

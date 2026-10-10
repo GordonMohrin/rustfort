@@ -8,6 +8,7 @@ use crate::tiles::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)] // [saves10]
 pub struct Dims {
     pub x: u16,
     pub y: u16,
@@ -38,6 +39,7 @@ pub struct Meta {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)] // [saves10]
 pub struct Calendar {
     pub year: i32,
     /// Ticks since the start of the year, 0..TICKS_PER_YEAR.
@@ -73,11 +75,14 @@ impl Calendar {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)] // [saves10] save format 2 tolerates missing fields
 pub struct World {
     pub meta: Meta,
     pub calendar: Calendar,
     pub dims: Dims,
     /// Index = `(z * dims.y + y) * dims.x + x`.
+    /// [saves10] Serialized as one byte column per `Tile` field (see [`tile_columns`]).
+    #[serde(with = "tile_columns")]
     pub tiles: Vec<Tile>,
     pub tiletypes: TiletypeTable,
     /// Material palette; `Tile::mat` and `Item::mat` index into it.
@@ -147,6 +152,150 @@ pub struct World {
     /// beasts per cavern layer) that DF keeps in its own save.
     #[serde(default)]
     pub fort_history: FortHistory,
+    /// [saves10] Runtime state of the simulation modules (petitions, raids, moods, ...), keyed by
+    /// module name, each value the module's own self-describing encoding (JSON). Filled only
+    /// in the copy of the world that is written to a save (`Sim::world_for_save`) and consumed
+    /// by `Sim::new` when the save is loaded; empty in a running game and in imports.
+    #[serde(default)]
+    pub sim_state: std::collections::BTreeMap<String, String>,
+}
+
+/// [saves10] Serde format of [`World::tiles`]: a struct of one little-endian byte column per
+/// [`Tile`] field (`n`, `tt`, `mat`, `flags`, `liquid`, `desig`). Columns compress far better
+/// than interleaved tiles and cost one `bytes` value each in self-describing formats (a map
+/// per tile would be ~200 MB for a 192x192x150 fort). Unknown columns are ignored and missing
+/// ones read as zero, so a future `Tile` field can be added as a new column.
+pub mod tile_columns {
+    use crate::tiles::Tile;
+    use serde::de::{self, IgnoredAny, MapAccess, SeqAccess, Visitor};
+    use serde::ser::SerializeStruct;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::fmt;
+
+    const FIELDS: &[&str] = &["n", "tt", "mat", "flags", "liquid", "desig"];
+
+    struct Bytes<'a>(&'a [u8]);
+    impl Serialize for Bytes<'_> {
+        fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+            s.serialize_bytes(self.0)
+        }
+    }
+
+    struct ByteBuf(Vec<u8>);
+    impl<'de> Deserialize<'de> for ByteBuf {
+        fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+            struct V;
+            impl<'de> Visitor<'de> for V {
+                type Value = ByteBuf;
+                fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                    f.write_str("a byte column")
+                }
+                fn visit_bytes<E: de::Error>(self, v: &[u8]) -> Result<ByteBuf, E> {
+                    Ok(ByteBuf(v.to_vec()))
+                }
+                fn visit_byte_buf<E: de::Error>(self, v: Vec<u8>) -> Result<ByteBuf, E> {
+                    Ok(ByteBuf(v))
+                }
+                fn visit_seq<A: SeqAccess<'de>>(self, mut a: A) -> Result<ByteBuf, A::Error> {
+                    let mut v = Vec::with_capacity(a.size_hint().unwrap_or(0));
+                    while let Some(b) = a.next_element::<u8>()? {
+                        v.push(b);
+                    }
+                    Ok(ByteBuf(v))
+                }
+            }
+            d.deserialize_byte_buf(V)
+        }
+    }
+
+    pub fn serialize<S: Serializer>(tiles: &[Tile], s: S) -> Result<S::Ok, S::Error> {
+        let n = tiles.len();
+        let (mut tt, mut mat, mut flags) = (Vec::with_capacity(n * 2), Vec::with_capacity(n * 2), Vec::with_capacity(n * 2));
+        let (mut liquid, mut desig) = (Vec::with_capacity(n), Vec::with_capacity(n));
+        for t in tiles {
+            tt.extend_from_slice(&t.tt.to_le_bytes());
+            mat.extend_from_slice(&t.mat.to_le_bytes());
+            flags.extend_from_slice(&t.flags.to_le_bytes());
+            liquid.push(t.liquid);
+            desig.push(t.desig);
+        }
+        let mut st = s.serialize_struct("TileColumns", FIELDS.len())?;
+        st.serialize_field("n", &(n as u64))?;
+        st.serialize_field("tt", &Bytes(&tt))?;
+        st.serialize_field("mat", &Bytes(&mat))?;
+        st.serialize_field("flags", &Bytes(&flags))?;
+        st.serialize_field("liquid", &Bytes(&liquid))?;
+        st.serialize_field("desig", &Bytes(&desig))?;
+        st.end()
+    }
+
+    #[derive(Default)]
+    struct Cols {
+        n: Option<u64>,
+        tt: Vec<u8>,
+        mat: Vec<u8>,
+        flags: Vec<u8>,
+        liquid: Vec<u8>,
+        desig: Vec<u8>,
+    }
+
+    impl Cols {
+        fn build<E: de::Error>(self) -> Result<Vec<Tile>, E> {
+            let n = self.n.map(|n| n as usize).unwrap_or(self.tt.len() / 2);
+            if n > 1 << 31 {
+                return Err(E::custom("tile count out of range"));
+            }
+            let u16_at = |c: &[u8], i: usize| if c.len() >= 2 * i + 2 { u16::from_le_bytes([c[2 * i], c[2 * i + 1]]) } else { 0 };
+            Ok((0..n)
+                .map(|i| Tile {
+                    tt: u16_at(&self.tt, i),
+                    mat: u16_at(&self.mat, i),
+                    flags: u16_at(&self.flags, i),
+                    liquid: self.liquid.get(i).copied().unwrap_or(0),
+                    desig: self.desig.get(i).copied().unwrap_or(0),
+                })
+                .collect())
+        }
+    }
+
+    struct ColsVisitor;
+    impl<'de> Visitor<'de> for ColsVisitor {
+        type Value = Vec<Tile>;
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("tile columns")
+        }
+        fn visit_map<A: MapAccess<'de>>(self, mut m: A) -> Result<Vec<Tile>, A::Error> {
+            let mut c = Cols::default();
+            while let Some(k) = m.next_key::<String>()? {
+                match k.as_str() {
+                    "n" => c.n = Some(m.next_value()?),
+                    "tt" => c.tt = m.next_value::<ByteBuf>()?.0,
+                    "mat" => c.mat = m.next_value::<ByteBuf>()?.0,
+                    "flags" => c.flags = m.next_value::<ByteBuf>()?.0,
+                    "liquid" => c.liquid = m.next_value::<ByteBuf>()?.0,
+                    "desig" => c.desig = m.next_value::<ByteBuf>()?.0,
+                    _ => {
+                        m.next_value::<IgnoredAny>()?;
+                    }
+                }
+            }
+            c.build()
+        }
+        /// Positional form (non-self-describing formats, e.g. bincode).
+        fn visit_seq<A: SeqAccess<'de>>(self, mut a: A) -> Result<Vec<Tile>, A::Error> {
+            let mut c = Cols { n: a.next_element()?, ..Default::default() };
+            c.tt = a.next_element::<ByteBuf>()?.map(|b| b.0).unwrap_or_default();
+            c.mat = a.next_element::<ByteBuf>()?.map(|b| b.0).unwrap_or_default();
+            c.flags = a.next_element::<ByteBuf>()?.map(|b| b.0).unwrap_or_default();
+            c.liquid = a.next_element::<ByteBuf>()?.map(|b| b.0).unwrap_or_default();
+            c.desig = a.next_element::<ByteBuf>()?.map(|b| b.0).unwrap_or_default();
+            c.build()
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<Tile>, D::Error> {
+        d.deserialize_struct("TileColumns", FIELDS, ColsVisitor)
+    }
 }
 
 /// [war9] Fortress history counters that decide invasions (wiki Difficulty: "created wealth",

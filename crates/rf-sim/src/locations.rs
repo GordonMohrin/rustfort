@@ -45,6 +45,7 @@ use crate::rng::Rng;
 use crate::social::Class;
 use crate::{needs, AnnouncementKind, Kind, Sim, Task, Zone};
 use rf_core::{Location, Occupation, Pos, Unit, UnitFlags, TICKS_PER_DAY, TICKS_PER_MONTH};
+mod saves10; // [saves10] save/load of visitors, petitions and arrivals
 
 /// The round-8 society pass runs when `tick % S2_PERIOD == S2_PHASE`.
 pub const S2_PERIOD: u64 = 100;

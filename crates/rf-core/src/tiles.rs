@@ -254,6 +254,7 @@ impl TtSpecial {
 
 /// One entry of DF's tiletype enum (exported from `df.tiletype.attrs`).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)] // [saves10]
 pub struct TiletypeInfo {
     pub id: u16,
     /// DF enum name, e.g. `StoneWall`, `StoneFloor2`, `OpenSpace`, `ConstructedWallLRUD`.
@@ -270,6 +271,7 @@ pub struct TiletypeInfo {
 
 /// Lookup table over DF tiletypes. Index = DF tiletype id.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)] // [saves10]
 pub struct TiletypeTable {
     pub infos: Vec<TiletypeInfo>,
     #[serde(skip)]

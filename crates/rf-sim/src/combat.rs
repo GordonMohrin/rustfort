@@ -57,6 +57,7 @@ use crate::rng::Rng;
 use crate::{Kind, Sim, Task, NONE};
 use rf_core::{AttackRaw, CasteRaw, Item, ItemFlags, MaterialInfo, Pos, TissueLayerRaw, Wound, NO_MAT};
 use std::collections::{HashMap, VecDeque};
+mod saves10; // [saves10] save/load of raid groups and per-unit combat state
 
 /// Body part flag bits (from DF body part flags).
 pub(crate) mod bp {

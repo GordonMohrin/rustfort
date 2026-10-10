@@ -980,7 +980,7 @@ impl Game {
             return;
         }
         self.autosave_next = next_autosave_day(day, self.autosave_days);
-        let w = self.sim.world.clone();
+        let w = self.sim.world_for_save(); // [saves10] world + module state
         let seed = self.seed;
         let keep = self.settings.autosave_keep.max(1) as usize;
         self.set_status("Autosaving...".into());
@@ -1303,7 +1303,7 @@ impl Game {
         if self.saving.is_some() {
             return;
         }
-        let w = self.sim.world.clone();
+        let w = self.sim.world_for_save(); // [saves10] world + module state
         let seed = self.seed;
         self.set_status("Saving...".into());
         self.saving = Some(std::thread::spawn(move || crate::save::save_world(&w, seed, &crate::save::save_dir())));
@@ -1380,7 +1380,10 @@ impl Game {
                 self.burrow_ui = BurrowUi::default();
                 self.help_open = false;
                 self.autosave_next = next_autosave_day(game_day(&self.sim.world.calendar), self.autosave_days); // [round 6]
-                let text = format!(
+                // [saves10] The tick count comes back from the save: restart the tick-rate window.
+                self.tps_hist.clear();
+                self.released_at_tick = self.sim.ticks();
+                let mut text = format!(
                     "Loaded {} ({}): {} in {:.2}s + sim {:.2}s",
                     info.header.fort,
                     info.header.date,
@@ -1388,6 +1391,9 @@ impl Game {
                     info.secs,
                     t.elapsed().as_secs_f64()
                 );
+                if let Some(n) = &info.note {
+                    text.push_str(&format!(" - {n}")); // [saves10]
+                }
                 self.set_status(text.clone());
                 self.log.push(LogLine::new(text, None, AnnouncementKind::Info, now, date_string(&self.sim.world.calendar)));
             }

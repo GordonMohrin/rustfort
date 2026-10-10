@@ -63,6 +63,7 @@ use crate::rng::{splitmix, Rng};
 use crate::{Kind, Sim};
 use rf_core::{liquid, tile_flags, MaterialInfo, Pos, Shape, Tile, TtMaterial, TtSpecial, NO_MAT};
 use std::collections::HashMap;
+mod saves10; // [saves10] save/load of mud
 
 /// Ticks a unit survives without air (estimate).
 pub const DROWN_TICKS: u32 = 100;

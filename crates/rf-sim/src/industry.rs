@@ -51,6 +51,7 @@ use crate::rng::Rng;
 use crate::Sim;
 use rf_core::{BuildingJob, Item, ItemFlags, MaterialInfo, NO_MAT};
 use std::collections::HashMap;
+mod saves10; // [saves10] save/load of melt fractions and counters
 
 pub const F_CHARCOAL: u8 = 1;
 pub const F_ASH: u8 = 2;
