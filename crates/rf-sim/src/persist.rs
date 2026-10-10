@@ -14,6 +14,9 @@
 //! adds a field, and a module that cannot read its entry just starts fresh (as before).
 //! Caches (paths, job lists, nav) are rebuilt; unit AI tasks restart from Idle, which is why a
 //! reload continues the fort closely but not bit-identically (see `docs/SAVES.md`).
+//!
+//! [saves11] Since round 11 this is the fallback: saves also carry an exact snapshot of the
+//! whole sim (`saves11`, `World::sim_exact`) that continues bit-identically.
 
 use crate::Sim;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -70,7 +73,9 @@ impl Sim {
     pub fn world_for_save(&self) -> rf_core::World {
         let mut w = self.world.clone();
         w.sim_state = self.save_modules();
-        w.sim_exact = self.exact_snapshot(); // [saves11] bit-identical continuation
+        if !self.mid_tick {
+            w.sim_exact = self.exact_snapshot(); // [saves11] bit-identical continuation
+        }
         w
     }
 

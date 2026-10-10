@@ -118,43 +118,67 @@ const LM_RELAX_CAP: u64 = 4_000_000;
 /// that; new moves (digging, opened doors, cheaper traffic) are repaired right away by a
 /// decrease-only relaxation from the changed tiles (`relax_box`). So paths stay optimal. They can
 /// differ from the old heuristic's paths among equally cheap ones (other tie-breaks).
-#[derive(Default, serde::Serialize, serde::Deserialize)] // [saves11]
-#[serde(default)] // [saves11]
+#[derive(Default)]
 pub struct Landmarks {
     pub on: bool,
     /// Tile -> compact index (u32::MAX = none).
-    #[serde(with = "crate::saves11::len_only")] // [saves11] rebuilt from `tile`
     id: Vec<u32>,
     /// Compact index -> tile.
-    #[serde(with = "crate::saves11::le_u32")] // [saves11]
     tile: Vec<u32>,
-    #[serde(with = "crate::saves11::lm_cols")] // [saves11]
     d: Vec<[u16; LM_K]>,
     /// Landmark tiles (all components).
     pub marks: Vec<u32>,
-    #[serde(with = "crate::saves11::len_only")] // [saves11] rebuilt from `queue`
     inq: Vec<bool>,
     queue: std::collections::VecDeque<u32>,
     /// Relaxations done by incremental updates (stats).
     pub relaxed: u64,
+    /// [saves11] Map width (tile index -> row above, for the snapshot's predictor).
+    dx: u32,
 }
 
-impl Landmarks {
-    /// [saves11] Rebuild the tables a snapshot stores only by length (`id` from `tile`, `inq`
-    /// from `queue`).
-    pub(crate) fn after_load(&mut self) {
-        self.id.iter_mut().for_each(|x| *x = u32::MAX);
-        for (k, &t) in self.tile.iter().enumerate() {
-            if let Some(x) = self.id.get_mut(t as usize) {
-                *x = k as u32;
-            }
+/// [saves11] Snapshot form of [`Landmarks`]: `id` and `inq` are rebuilt from `tile` and
+/// `queue`, the distances are predicted from the tiles left and above (see
+/// `saves11::lm_encode`).
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+#[serde(default)]
+struct LmSnap {
+    on: bool,
+    dx: u32,
+    n: u64,
+    #[serde(with = "crate::saves11::le_u32")]
+    tile: Vec<u32>,
+    #[serde(with = "crate::saves11::le_u8")]
+    d: Vec<u8>,
+    marks: Vec<u32>,
+    queue: std::collections::VecDeque<u32>,
+    relaxed: u64,
+}
+
+// [saves11] Landmarks are saved through `LmSnap`.
+impl serde::Serialize for Landmarks {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let d = crate::saves11::lm_encode(self.dx as usize, &self.id, &self.tile, &self.d);
+        let snap = LmSnap { on: self.on, dx: self.dx, n: self.id.len() as u64, tile: self.tile.clone(), d, marks: self.marks.clone(), queue: self.queue.clone(), relaxed: self.relaxed };
+        snap.serialize(s)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Landmarks {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = LmSnap::deserialize(d)?;
+        if s.n > 1 << 31 || s.tile.iter().any(|&t| t as u64 >= s.n) || s.queue.iter().any(|&k| k as usize >= s.tile.len()) {
+            return Err(serde::de::Error::custom("landmark table out of range"));
         }
-        self.inq = vec![false; self.tile.len()];
-        for &k in &self.queue {
-            if let Some(x) = self.inq.get_mut(k as usize) {
-                *x = true;
-            }
+        let mut lm = Landmarks { on: s.on, dx: s.dx, id: vec![u32::MAX; s.n as usize], tile: s.tile, marks: s.marks, queue: s.queue, relaxed: s.relaxed, ..Default::default() };
+        for (k, &t) in lm.tile.iter().enumerate() {
+            lm.id[t as usize] = k as u32;
         }
+        lm.inq = vec![false; lm.tile.len()];
+        for &k in &lm.queue {
+            lm.inq[k as usize] = true;
+        }
+        lm.d = crate::saves11::lm_decode(lm.dx as usize, &lm.id, &lm.tile, &s.d).ok_or_else(|| serde::de::Error::custom("landmark distances"))?;
+        Ok(lm)
     }
 }
 
@@ -300,7 +324,7 @@ impl Nav {
     pub fn build_landmarks(&mut self) {
         use rayon::prelude::*;
         let n = self.flags.len();
-        let mut lm = Landmarks { id: vec![u32::MAX; n], ..Default::default() };
+        let mut lm = Landmarks { id: vec![u32::MAX; n], dx: self.dx as u32, ..Default::default() }; // [saves11] dx
         let mut by_comp: std::collections::BTreeMap<u32, Vec<u32>> = Default::default();
         for i in 0..n {
             if self.flags[i] & WALK != 0 {

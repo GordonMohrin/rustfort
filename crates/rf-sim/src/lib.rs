@@ -563,6 +563,10 @@ pub struct Sim {
     /// bit-identical continuation) or "close (...)" (round-10 module state only).
     #[serde(skip)]
     restore: String,
+    /// [saves11] Inside `run_ticks` (true after a panic unwound out of a tick: the state may
+    /// be half-updated, so `world_for_save` leaves the exact snapshot out).
+    #[serde(skip)]
+    mid_tick: bool,
     announcements: Vec<Announcement>,
     nav: Nav,
     ai: Vec<UnitAi>,
@@ -681,7 +685,9 @@ impl Sim {
         let saved = std::mem::take(&mut world.sim_state); // [saves10] module state of a save
         let exact = std::mem::take(&mut world.sim_exact); // [saves11] exact snapshot of a save
         let mut restore = String::new(); // [saves11]
-        if !exact.is_empty() {
+        if !exact.is_empty() && std::env::var_os("RUSTFORT_CLOSE_LOAD").is_some() {
+            restore = "close (RUSTFORT_CLOSE_LOAD)".into(); // [saves11] escape hatch
+        } else if !exact.is_empty() {
             match Sim::from_exact(&exact, &world) {
                 Ok(mut sim) => {
                     sim.world = world;
@@ -714,6 +720,7 @@ impl Sim {
             seed,
             ticks: 0,
             restore: if restore.is_empty() && !saved.is_empty() { "close".into() } else { restore }, // [saves11]
+            mid_tick: false, // [saves11]
             announcements: Vec::new(),
             nav,
             ai: Vec::new(),
@@ -1023,10 +1030,12 @@ impl Sim {
 
     pub fn run_ticks(&mut self, n: u32) {
         self.phase = [0.0; PHASES]; // [perf]
+        self.mid_tick = true; // [saves11] still set if a tick panics: no exact snapshot then
         for _ in 0..n {
             self.tick_inner();
         }
         self.sync_units();
+        self.mid_tick = false; // [saves11]
     }
 
     pub fn ticks(&self) -> u64 {

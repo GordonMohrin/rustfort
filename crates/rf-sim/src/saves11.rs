@@ -18,8 +18,9 @@
 //! rebuild it in [`Sim::after_exact_load`]). `&'static str` fields: see [`SStr`].
 //!
 //! Big per-tile tables of the navigation grid are stored as little-endian byte columns (the
-//! save's zstd compresses them well); the landmark table (`Nav::lm`) column-wise and
-//! delta-coded, its tile -> index map and queue flags are rebuilt.
+//! save's zstd compresses them well); the landmark table (`Nav::lm`) column-wise as residuals
+//! of a left/above prediction ([`lm_encode`]), its tile -> index map and queue flags are
+//! rebuilt.
 
 use crate::Sim;
 use serde::de::{self, SeqAccess, Visitor};
@@ -165,56 +166,95 @@ macro_rules! le_col {
 le_col!(le_u32, u32, 4);
 le_col!(le_u64, u64, 8);
 
-/// A table that is rebuilt after loading: only its length is stored, it reads back as
-/// `len` default values (`Nav::lm.id`, `Nav::lm.inq`; refilled in `after_exact_load`).
-pub(crate) mod len_only {
-    use super::*;
-    pub fn serialize<S: Serializer, T>(v: &[T], s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_u64(v.len() as u64)
-    }
-    pub fn deserialize<'de, D: Deserializer<'de>, T: Default + Clone>(d: D) -> Result<Vec<T>, D::Error> {
-        let n = u64::deserialize(d)? as usize;
-        if n > 1 << 31 {
-            return Err(de::Error::custom("table length"));
+/// Landmark tables: compact indices of the tiles left, above and above-left of compact tile
+/// `k` that come before `k` (so a decoder has them already), u32::MAX = none.
+fn lm_neighbours(dx: usize, id: &[u32], tile: &[u32]) -> Vec<[u32; 3]> {
+    tile.iter()
+        .enumerate()
+        .map(|(k, &t)| {
+            let t = t as usize;
+            let mut nb = [u32::MAX; 3];
+            for (s, off) in [1, dx, dx + 1].into_iter().enumerate() {
+                if (s == 0 || dx > 0) && t >= off {
+                    let c = id.get(t - off).copied().unwrap_or(u32::MAX);
+                    if c != u32::MAX && (c as usize) < k {
+                        nb[s] = c;
+                    }
+                }
+            }
+            nb
+        })
+        .collect()
+}
+
+/// Predicted distance of a tile from its left (l), upper (u) and upper-left (ul) neighbours
+/// (LOCO-I median edge detector; distance fields are mostly planar), or the previous value.
+#[inline]
+fn lm_predict(l: Option<u16>, u: Option<u16>, ul: Option<u16>, prev: u16) -> u16 {
+    use crate::nav::LM_INF;
+    match (l, u, ul) {
+        (Some(l), Some(u), Some(ul)) if l != LM_INF && u != LM_INF && ul != LM_INF => {
+            let (mn, mx) = (l.min(u), l.max(u));
+            if ul >= mx {
+                mn
+            } else if ul <= mn {
+                mx
+            } else {
+                (l as i32 + u as i32 - ul as i32) as u16
+            }
         }
-        Ok(vec![T::default(); n])
+        (Some(l), _, _) => l,
+        (None, Some(u), _) => u,
+        _ => prev,
     }
 }
 
-/// `Nav::lm.d` (`[u16; LM_K]` per walkable tile): column by column, each value as the
-/// wrapping difference to the previous tile's (neighbouring tiles have close distances, so
-/// the save's compressor shrinks this a lot), little-endian.
-pub(crate) mod lm_cols {
-    use super::*;
-    use crate::nav::LM_K;
-    pub fn serialize<S: Serializer>(v: &[[u16; LM_K]], s: S) -> Result<S::Ok, S::Error> {
-        let mut b = Vec::with_capacity(v.len() * LM_K * 2);
-        for j in 0..LM_K {
-            let mut prev = 0u16;
-            for row in v {
-                b.extend_from_slice(&row[j].wrapping_sub(prev).to_le_bytes());
-                prev = row[j];
-            }
+/// `Nav::lm.d` for a snapshot: column by column (one landmark at a time), each value as the
+/// difference to its prediction from the neighbours left and above, zigzag-coded (small
+/// negative and positive differences become small numbers) and split into a plane of low bytes
+/// followed by a plane of high bytes. Most residuals are 0, which the save's compressor shrinks
+/// to almost nothing.
+pub(crate) fn lm_encode(dx: usize, id: &[u32], tile: &[u32], d: &[[u16; crate::nav::LM_K]]) -> Vec<u8> {
+    let nb = lm_neighbours(dx, id, tile);
+    let n = tile.len().min(d.len());
+    let total = n * crate::nav::LM_K;
+    let mut out = vec![0u8; total * 2];
+    for j in 0..crate::nav::LM_K {
+        let v = |c: u32| (c != u32::MAX).then(|| d[c as usize][j]);
+        for k in 0..n {
+            let prev = if k > 0 { d[k - 1][j] } else { 0 };
+            let p = lm_predict(v(nb[k][0]), v(nb[k][1]), v(nb[k][2]), prev);
+            let r = d[k][j].wrapping_sub(p) as i16;
+            let z = ((r << 1) ^ (r >> 15)) as u16;
+            let o = j * n + k;
+            out[o] = z as u8;
+            out[total + o] = (z >> 8) as u8;
         }
-        s.serialize_bytes(&b)
     }
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<[u16; LM_K]>, D::Error> {
-        let b = bytes(d)?;
-        if b.len() % (2 * LM_K) != 0 {
-            return Err(de::Error::custom("landmark table length"));
-        }
-        let n = b.len() / (2 * LM_K);
-        let mut v = vec![[0u16; LM_K]; n];
-        for j in 0..LM_K {
-            let mut prev = 0u16;
-            for (k, row) in v.iter_mut().enumerate() {
-                let o = 2 * (j * n + k);
-                prev = prev.wrapping_add(u16::from_le_bytes([b[o], b[o + 1]]));
-                row[j] = prev;
-            }
-        }
-        Ok(v)
+    out
+}
+
+/// Inverse of [`lm_encode`] (`id` must already map tiles to compact indices).
+pub(crate) fn lm_decode(dx: usize, id: &[u32], tile: &[u32], b: &[u8]) -> Option<Vec<[u16; crate::nav::LM_K]>> {
+    let n = tile.len();
+    let total = n * crate::nav::LM_K;
+    if b.len() != total * 2 {
+        return None;
     }
+    let nb = lm_neighbours(dx, id, tile);
+    let mut d = vec![[0u16; crate::nav::LM_K]; n];
+    for j in 0..crate::nav::LM_K {
+        for k in 0..n {
+            let v = |c: u32| (c != u32::MAX).then(|| d[c as usize][j]);
+            let prev = if k > 0 { d[k - 1][j] } else { 0 };
+            let p = lm_predict(v(nb[k][0]), v(nb[k][1]), v(nb[k][2]), prev);
+            let o = j * n + k;
+            let z = b[o] as u16 | (b[total + o] as u16) << 8;
+            let r = ((z >> 1) as i16) ^ -((z & 1) as i16);
+            d[k][j] = p.wrapping_add(r as u16);
+        }
+    }
+    Some(d)
 }
 
 /// What the snapshot was taken against: a snapshot is only used with its own world.
@@ -393,10 +433,9 @@ impl Sim {
         &self.restore
     }
 
-    /// [saves11] Rebuild what the snapshot does not store (see the `len_only` fields).
-    pub(crate) fn after_exact_load(&mut self) {
-        self.nav.lm.after_load();
-    }
+    /// [saves11] Rebuild what the snapshot does not store (`#[serde(skip)]` caches). Nothing
+    /// today: the landmark tables rebuild their own index maps while decoding.
+    pub(crate) fn after_exact_load(&mut self) {}
 
     /// [saves11] Encoded size of each part of the snapshot (bytes, before compression).
     pub fn exact_sizes(&self) -> Vec<(&'static str, usize)> {
