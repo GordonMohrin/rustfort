@@ -381,3 +381,163 @@ impl Sim {
             })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SquadOrder;
+    use rf_core::{Building, ItemFlags, World};
+
+    /// Synthetic fort: barracks zone in the west of the hall (x 18..23, y 20..24) with a bed.
+    fn world() -> (World, i32) {
+        let mut w = World::synthetic(48, 48, 20);
+        let z = w.units[0].pos.z;
+        for u in &mut w.units {
+            u.thirst_timer = 0;
+            u.hunger_timer = 0;
+            u.sleepiness_timer = 0;
+        }
+        w.buildings.push(Building { id: 900, kind: "Civzone".into(), subtype: "Barracks".into(), x1: 18, y1: 20, x2: 23, y2: 24, z, center: Pos::new(20, 22, z), built: true, owner: -1, name: "Kaserne".into(), ..Default::default() });
+        let bp = Pos::new(23, 24, z);
+        w.buildings.push(Building { id: 901, kind: "Bed".into(), x1: bp.x, y1: bp.y, x2: bp.x, y2: bp.y, z, center: bp, built: true, owner: -1, ..Default::default() });
+        (w, 900)
+    }
+
+    fn sim_of(w: World, seed: u64) -> Sim {
+        let mut sim = Sim::new(w, seed);
+        sim.set_invasions(false);
+        sim.set_moods_enabled(false);
+        sim
+    }
+
+    #[test]
+    fn soldiers_train_and_spar_in_their_barracks() {
+        let (w, zone) = world();
+        let mut sim = sim_of(w, 51);
+        let sq = sim.create_squad("Wache");
+        for (k, id) in [1, 2, 3, 4].iter().enumerate() {
+            sim.assign_squad_member(sq, k, *id);
+        }
+        sim.set_squad_barracks(sq, &[zone]);
+        sim.order_squad(sq, SquadOrder::Train);
+        sim.run_ticks(3000);
+        for id in [1, 2, 3, 4] {
+            let p = sim.world.unit(id).unwrap().pos;
+            assert!((18..=23).contains(&p.x) && (20..=24).contains(&p.y), "soldier {id} trains in the barracks: {p:?}");
+        }
+        assert!(sim.combat.stats.sparring > 0, "partners spar");
+        // Sparring teaches more than drills: compare with a squad without barracks.
+        let (w2, _) = world();
+        let mut solo = sim_of(w2, 51);
+        let q2 = solo.create_squad("Solo");
+        for (k, id) in [1, 2, 3, 4].iter().enumerate() {
+            solo.assign_squad_member(q2, k, *id);
+        }
+        solo.order_squad(q2, SquadOrder::Train);
+        solo.run_ticks(3000);
+        let xp = |s: &Sim| s.world.units.iter().filter(|u| (1..=4).contains(&u.id)).map(|u| u.skills.iter().find(|k| k.id == "WRESTLING").map(|k| k.xp + k.rating * 1000).unwrap_or(0)).sum::<i32>();
+        assert!(xp(&sim) > xp(&solo), "sparring {} vs drills {}", xp(&sim), xp(&solo));
+        assert_eq!(solo.combat.stats.sparring, 0);
+    }
+
+    #[test]
+    fn soldiers_on_duty_sleep_in_barracks_beds() {
+        let (w, zone) = world();
+        let mut sim = sim_of(w, 52);
+        let sq = sim.create_squad("Wache");
+        sim.assign_squad_member(sq, 0, 3);
+        sim.set_squad_barracks(sq, &[zone]);
+        sim.order_squad(sq, SquadOrder::Train);
+        sim.run_ticks(10);
+        let s = sim.unit_slot[&3];
+        let now = sim.ticks;
+        sim.start_sleep(s, now);
+        let crate::Task::GoSleep(b) = sim.ai[s].task else { panic!("{:?}", sim.ai[s].task) };
+        assert_eq!(sim.world.pos_of(sim.beds[b as usize].tile as usize), Pos::new(23, 24, sim.world.units[0].pos.z));
+        assert_eq!(sim.combat.stats.barracks_sleeps, 1);
+    }
+
+    #[test]
+    fn patrol_walks_its_route() {
+        let (w, _) = world();
+        let z = w.units[0].pos.z;
+        let mut sim = sim_of(w, 53);
+        let sq = sim.create_squad("Patrouille");
+        sim.assign_squad_member(sq, 0, 2);
+        sim.order_squad_patrol(sq, &[Pos::new(19, 21, z), Pos::new(29, 27, z)]);
+        let s = sim.unit_slot[&2];
+        sim.run_ticks(100);
+        assert_eq!(sim.combat_caption(s).0, "Patrol");
+        sim.run_ticks(2400);
+        assert!(sim.combat.stats.patrol_points >= 3, "waypoints reached: {}", sim.combat.stats.patrol_points);
+    }
+
+    #[test]
+    fn position_uniform_and_equipment_report() {
+        let (w, _) = world();
+        let z = w.units[0].pos.z;
+        let mut sim = sim_of(w, 54);
+        let mat = sim.ensure_material("INORGANIC:IRON");
+        let id = sim.next_item_id;
+        sim.next_item_id += 1;
+        sim.push_item(Item { id, kind: "WEAPON".into(), subtype: "ITEM_WEAPON_AXE_BATTLE".into(), mat, pos: Pos::new(27, 22, z), stack: 1, container: -1, holder: -1, building: -1, desc: "iron battle axe".into(), flags: ItemFlags { on_ground: true, ..Default::default() }, ..Default::default() });
+        let sq = sim.create_squad("Axt");
+        sim.assign_squad_member(sq, 0, 4);
+        sim.set_squad_uniform(sq, 0, &["WEAPON:ITEM_WEAPON_AXE_BATTLE"]);
+        let before = sim.squad_equipment(sq);
+        assert_eq!(before[0].missing, vec!["WEAPON:ITEM_WEAPON_AXE_BATTLE".to_string()]);
+        assert!(before[1].uniform.is_empty(), "other positions use the (empty) squad uniform");
+        sim.order_squad(sq, SquadOrder::Train);
+        sim.run_ticks(1500);
+        let after = sim.squad_equipment(sq);
+        assert!(after[0].worn.iter().any(|(i, _)| *i == id), "the axe was picked up: {after:?}");
+        assert!(after[0].missing.is_empty());
+    }
+
+    #[test]
+    fn squad_ammo_settings_pick_ammo_by_use() {
+        let (w, _) = world();
+        let mut sim = sim_of(w, 55);
+        let sq = sim.create_squad("Schuetzen");
+        sim.assign_squad_member(sq, 0, 5);
+        sim.assign_squad_member(sq, 1, 6);
+        sim.set_squad_ammo(
+            sq,
+            vec![
+                SquadAmmo { item: "ITEM_AMMO_BOLTS@WOOD".into(), amount: 100, combat: false, training: true },
+                SquadAmmo { item: "ITEM_AMMO_BOLTS@METAL".into(), amount: 300, combat: true, training: false },
+            ],
+        );
+        let s = sim.unit_slot[&5];
+        sim.combat.f[s].squad = sq;
+        let iron = sim.ensure_material("INORGANIC:IRON");
+        let bolt = |mat: u16| Item { kind: "AMMO".into(), subtype: "ITEM_AMMO_BOLTS".into(), mat, stack: 25, ..Default::default() };
+        let (train, n_train) = sim.squad_ammo_spec(s, true);
+        let (fight, n_fight) = sim.squad_ammo_spec(s, false);
+        assert_eq!((n_train, n_fight), (50, 50), "amount per soldier, at most a quiver");
+        assert!(sim.ammo_fits(&train, &bolt(3)) && !sim.ammo_fits(&train, &bolt(iron)), "wooden bolts for training");
+        assert!(sim.ammo_fits(&fight, &bolt(iron)) && !sim.ammo_fits(&fight, &bolt(3)), "metal bolts for combat");
+    }
+
+    #[test]
+    fn civilian_alert_prefers_drinks_and_beds_inside_the_burrow() {
+        let (w, _) = world();
+        let z = w.units[0].pos.z;
+        let mut sim = sim_of(w, 56);
+        // Drinks lie at (28, 21..25); the burrow holds only the one at (28, 24) and the bed at (23, 24).
+        let b = sim.create_burrow("Zuflucht", Pos::new(23, 24, z), Pos::new(28, 24, z));
+        let s = sim.unit_slot[&1];
+        let q = sim.world.idx(Pos::new(28, 20, z)).unwrap() as u32;
+        sim.move_to(s, q, 0);
+        let now = sim.ticks;
+        let near = sim.nearest_consumable(s, true, now).unwrap();
+        assert_eq!(sim.world.item(near).unwrap().pos, Pos::new(28, 21, z), "without an alert: the nearest drink");
+        sim.set_civilian_alert(Some(b));
+        assert!(sim.alert_restricted(s));
+        let inside = sim.nearest_consumable(s, true, now).unwrap();
+        assert_eq!(sim.world.item(inside).unwrap().pos, Pos::new(28, 24, z), "under the alert: the drink inside the burrow");
+        sim.start_sleep(s, now);
+        let crate::Task::GoSleep(bed) = sim.ai[s].task else { panic!("{:?}", sim.ai[s].task) };
+        assert_eq!(sim.world.pos_of(sim.beds[bed as usize].tile as usize), Pos::new(23, 24, z), "the bed inside the burrow");
+    }
+}

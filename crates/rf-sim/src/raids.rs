@@ -33,7 +33,8 @@
 //!   season with a goblin civilization at war and children in the fort; they arrive on a random
 //!   day of the season.
 //! - Spotting: within `3 + observer/3 - ambusher/4` tiles (at least 1, at most 8; soldiers on
-//!   duty +3), same z +-1, same walk component, 1 in 2 per 10-tick check.
+//!   duty +3), same z +-1, same walk component, 1 in 2 per 10-tick check. Sleeping or
+//!   unconscious dwarves and children spot nobody.
 //! - Camp time: goblins 600-2400 ticks (gathering), other races 2-7 days. Campers attack fort
 //!   units within 8 tiles. Monster mix 1:1 trolls and beak dogs; beak dogs walk beside the
 //!   goblins (riding is not simulated). Leader = the member with the best weapon skill.
@@ -629,7 +630,8 @@ impl Sim {
             for k in 0..self.combat.fort.len() {
                 let t = self.combat.fort[k] as usize;
                 let ai = &self.ai[t];
-                if ai.kind != Kind::Worker || self.combat.f[t].carried_by != NONE || self.combat.f[t].uncon_until > now {
+                // Sleeping, unconscious or carried units and children raise no alarm (estimate).
+                if ai.kind != Kind::Worker || ai.sleeping || self.combat.f[t].carried_by != NONE || self.combat.f[t].uncon_until > now || is_child(&self.world.units[ai.uidx]) {
                     continue;
                 }
                 let tp = self.nav.xyz(ai.pos as usize);
@@ -874,4 +876,216 @@ impl Sim {
 /// Children and babies (DF professions `CHILD`, `BABY`; age below 12 otherwise).
 pub(crate) fn is_child(u: &Unit) -> bool {
     matches!(u.profession.as_str(), "CHILD" | "BABY") || (u.age > 0.0 && u.age < 12.0 && u.race == "DWARF")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rf_core::{Item, ItemFlags, World};
+
+    /// Synthetic fort (hall underground, surface above) with invasions off.
+    fn fort(seed: u64) -> (Sim, i16, i16) {
+        let mut w = World::synthetic(48, 48, 20);
+        for u in &mut w.units {
+            u.thirst_timer = 0;
+            u.hunger_timer = 0;
+            u.sleepiness_timer = 0;
+        }
+        let hall_z = w.units[0].pos.z;
+        let surface = (20i16 * 2 / 3).max(2);
+        let mut sim = Sim::new(w, seed);
+        sim.set_invasions(false);
+        sim.set_moods_enabled(false);
+        (sim, hall_z, surface)
+    }
+
+    fn texts(sim: &mut Sim) -> Vec<String> {
+        sim.drain_announcements().into_iter().map(|a| a.text).collect()
+    }
+
+    fn goblet(sim: &mut Sim, p: Pos) -> i32 {
+        let id = sim.next_item_id;
+        sim.next_item_id += 1;
+        let item = Item { id, kind: "GOBLET".into(), mat: 0, pos: p, stack: 1, value: 600, container: -1, holder: -1, building: -1, desc: "gold goblet".into(), flags: ItemFlags { on_ground: true, ..Default::default() }, ..Default::default() };
+        sim.push_item(item);
+        id
+    }
+
+    #[test]
+    fn ambush_is_hidden_until_spotted() {
+        let (mut sim, _hz, _sz) = fort(41);
+        let n = sim.force_raid(RaidKind::Ambush, 4, 0);
+        assert_eq!(n, 4);
+        assert!(sim.hostiles().is_empty(), "hidden ambushers are not listed");
+        let ids: Vec<i32> = sim.world.units.iter().filter(|u| u.race == "GOBLIN").map(|u| u.id).collect();
+        assert!(ids.iter().all(|&id| sim.unit_hidden(id)));
+        let mut fled_while_hidden = false;
+        let mut seen = Vec::new();
+        for _ in 0..300 {
+            sim.run_ticks(20);
+            seen.extend(texts(&mut sim));
+            if sim.combat.stats.raids_spotted > 0 {
+                break;
+            }
+            fled_while_hidden |= sim.combat.f.iter().any(|f| f.role == Role::Civilian);
+        }
+        assert!(!fled_while_hidden, "civilians do not see hidden ambushers");
+        assert!(seen.iter().any(|t| t == "An ambush! Curse them!"), "DF announcement: {seen:?}");
+        assert_eq!(sim.hostiles().len(), 4, "revealed ambushers are listed");
+        assert!(ids.iter().all(|&id| !sim.unit_hidden(id)));
+        assert_eq!(sim.combat.stats.ambushes, 1);
+    }
+
+    #[test]
+    fn thief_steals_a_valuable_and_escapes() {
+        let (mut sim, _hz, sz) = fort(43);
+        // A gold goblet on the surface, far from the dwarves (who stay underground).
+        let id = goblet(&mut sim, Pos::new(6, 40, sz));
+        let n = sim.force_raid(RaidKind::Thief, 1, 0);
+        assert_eq!(n, 1);
+        let thief = *sim.combat.inv.hidden.first().unwrap() as usize;
+        assert_eq!(sim.world.units[sim.ai[thief].uidx].race, "KOBOLD");
+        for _ in 0..400 {
+            sim.run_ticks(25);
+            if sim.ai[thief].kind == Kind::Dead {
+                break;
+            }
+        }
+        assert_eq!(sim.combat.stats.items_stolen, 1, "the thief grabbed the goblet");
+        assert_eq!(sim.combat.stats.items_lost, 1, "and carried it off the map");
+        assert!(sim.item_idx.get(&id).map(|&i| sim.imeta[i as usize].dead).unwrap_or(true), "the goblet is gone");
+        assert!(sim.world.units[sim.ai[thief].uidx].flags.inactive, "the thief left");
+    }
+
+    #[test]
+    fn spotted_thief_flees_without_fighting() {
+        let (mut sim, hz, _sz) = fort(44);
+        // The goblet lies in the hall, among the dwarves: the thief is seen.
+        let p = sim.world.units[0].pos;
+        goblet(&mut sim, Pos::new(p.x + 1, p.y + 1, hz));
+        sim.force_raid(RaidKind::Thief, 1, 0);
+        let mut seen = Vec::new();
+        for _ in 0..400 {
+            sim.run_ticks(25);
+            seen.extend(texts(&mut sim));
+            if sim.combat.stats.raids_spotted > 0 {
+                break;
+            }
+        }
+        assert!(seen.iter().any(|t| t == "Thief! Protect the hoard from skulking filth!"), "{seen:?}");
+        let thief = sim.combat.inv.sieges[0].members[0] as usize;
+        sim.run_ticks(20);
+        assert!(sim.combat.f[thief].role == Role::Leave || sim.ai[thief].kind == Kind::Dead, "a spotted thief runs");
+    }
+
+    fn child_on_surface(sim: &mut Sim, sz: i16) -> (usize, usize) {
+        let cs = sim.unit_slot[&7];
+        let uidx = sim.ai[cs].uidx;
+        sim.world.units[uidx].profession = "CHILD".into();
+        sim.world.units[uidx].age = 6.0;
+        let q = sim.world.idx(Pos::new(10, 10, sz)).unwrap() as u32;
+        sim.move_to(cs, q, 0);
+        sim.ai[cs].wake = u64::MAX - 1; // plays right there
+        (cs, uidx)
+    }
+
+    #[test]
+    fn snatcher_carries_a_child_off_the_map() {
+        let (mut sim, _hz, sz) = fort(45);
+        let (cs, uidx) = child_on_surface(&mut sim, sz);
+        sim.force_raid(RaidKind::Snatcher, 1, 0);
+        let sn = sim.combat.inv.hidden[0] as usize;
+        let mut grabbed = false;
+        let mut seen = Vec::new();
+        for _ in 0..600 {
+            sim.run_ticks(20);
+            seen.extend(texts(&mut sim));
+            grabbed |= sim.combat.f[cs].carried_by == sn as u32;
+            if sim.combat.stats.children_abducted > 0 {
+                break;
+            }
+        }
+        assert!(grabbed, "the snatcher picked the child up");
+        assert_eq!(sim.combat.stats.children_abducted, 1);
+        assert!(sim.world.units[uidx].flags.inactive, "the child is gone");
+        assert!(seen.iter().any(|t| t.ends_with("has been abducted!")), "{seen:?}");
+    }
+
+    #[test]
+    fn killed_snatcher_drops_the_child() {
+        let (mut sim, _hz, sz) = fort(46);
+        let (cs, uidx) = child_on_surface(&mut sim, sz);
+        sim.force_raid(RaidKind::Snatcher, 1, 0);
+        let sn = sim.combat.inv.hidden[0] as usize;
+        for _ in 0..600 {
+            sim.run_ticks(10);
+            if sim.combat.f[cs].carried_by != NONE {
+                break;
+            }
+        }
+        assert_eq!(sim.combat.f[cs].carried_by, sn as u32);
+        sim.run_ticks(30);
+        assert_eq!(sim.ai[cs].pos, sim.ai[sn].pos, "the child moves with the snatcher");
+        let now = sim.ticks;
+        sim.combat_kill(sn, now, "has been struck down");
+        assert_eq!(sim.combat.f[cs].carried_by, NONE, "dropped");
+        assert_eq!(sim.combat.carriers, 0);
+        sim.run_ticks(50);
+        assert!(!sim.world.units[uidx].flags.inactive && sim.ai[cs].kind == Kind::Worker, "the child is back");
+    }
+
+    #[test]
+    fn siege_camps_then_charges_with_monsters() {
+        let (mut sim, _hz, _sz) = fort(47);
+        let n = sim.force_raid(RaidKind::Siege, 6, 2);
+        assert_eq!(n, 8);
+        let g = &sim.combat.inv.sieges[0];
+        let (camp, charge_at) = (sim.world.pos_of(g.camp as usize), g.charge_at);
+        assert!(charge_at >= sim.ticks + 600, "goblins gather before the attack");
+        let races: Vec<String> = g.members.iter().map(|&s| sim.world.units[sim.ai[s as usize].uidx].race.clone()).collect();
+        assert_eq!(races.iter().filter(|r| *r == "TROLL").count(), 1);
+        assert_eq!(races.iter().filter(|r| *r == "BEAK_DOG").count(), 1);
+        assert_eq!(sim.combat.stats.monsters_spawned, 2);
+        assert_eq!(sim.combat.stats.siege_camps, 1);
+        let members = g.members.clone();
+        while sim.ticks + 50 < charge_at {
+            sim.run_ticks(50);
+            for &m in &members {
+                let p = sim.upos(m as usize);
+                assert!(p.dist(camp) <= 8 || sim.combat.f[m as usize].target != NONE, "camper {p:?} far from camp {camp:?}");
+            }
+        }
+        sim.run_ticks(4000);
+        assert!(sim.combat.inv.sieges.is_empty() || sim.combat.inv.sieges[0].charged);
+        assert!(sim.combat.stats.attacks > 0, "the siege attacked after the camp");
+    }
+
+    #[test]
+    fn a_dead_leader_breaks_the_siege() {
+        let (mut sim, _hz, _sz) = fort(48);
+        sim.force_raid(RaidKind::Siege, 8, 0);
+        let leader = sim.combat.inv.sieges[0].leader;
+        assert_ne!(leader, NONE);
+        let now = sim.ticks;
+        sim.combat_kill(leader as usize, now, "has been struck down");
+        sim.run_ticks(rf_core::TICKS_PER_DAY as u32 + 5);
+        assert!(sim.combat.inv.sieges[0].fleeing, "the siege breaks with its leader");
+        assert_eq!(sim.combat.stats.leaders_killed, 1);
+    }
+
+    #[test]
+    fn raids_are_deterministic_across_threads() {
+        let run = |threads: usize| {
+            let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
+            pool.install(|| {
+                let (mut sim, _, _) = fort(49);
+                sim.set_parallel_threshold(1);
+                sim.force_raid(RaidKind::Ambush, 5, 0);
+                sim.force_raid(RaidKind::Thief, 1, 0);
+                sim.run_ticks(5000);
+                (sim.state_hash(), sim.combat.stats.attacks, sim.combat.stats.raids_spotted)
+            })
+        };
+        assert_eq!(run(1), run(4));
+    }
 }

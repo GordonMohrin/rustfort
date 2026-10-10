@@ -1242,4 +1242,74 @@ mod tests {
         // 7 wounds x 60 days at 1/100: about 4 expected.
         assert!(infected >= 1, "{infected}");
     }
+
+    /// [military2] Unit 0 has a broken lower leg; beds in the hall; `rescuers` get RECOVER_WOUNDED.
+    fn broken_leg_world(rescuers: bool) -> World {
+        let mut w = World::synthetic(48, 48, 20);
+        let hall = w.units[0].pos;
+        for k in 0..3 {
+            let p = Pos::new(hall.x + 2 * k - 2, hall.y + 5, hall.z);
+            w.buildings.push(Building { id: 700 + k as i32, kind: "Bed".into(), x1: p.x, y1: p.y, x2: p.x, y2: p.y, z: p.z, center: p, built: true, owner: -1, ..Default::default() });
+        }
+        for u in w.units.iter_mut() {
+            u.thirst_timer = 0;
+            u.hunger_timer = 0;
+            u.sleepiness_timer = 0;
+            if rescuers && u.id != 1 {
+                u.labors.push("RECOVER_WOUNDED".into());
+            }
+        }
+        w.units[0].pos = Pos::new(hall.x - 4, hall.y - 3, hall.z);
+        w.units[0].wounds = vec![rf_core::Wound { body_part: "LLL".into(), layer: "BONE".into(), flags: vec!["BROKEN".into()], severity: 6000, pain: 30, bleeding: 0, age: 0 }];
+        w
+    }
+
+    #[test]
+    fn broken_leg_patient_is_carried_to_bed() {
+        let mut sim = Sim::new(broken_leg_world(true), 31);
+        sim.set_invasions(false);
+        sim.set_moods_enabled(false);
+        let s = sim.unit_slot[&1];
+        let start = sim.ai[s].pos;
+        assert!(sim.cannot_stand(s), "a broken lower leg: cannot stand");
+        let mut carried = false;
+        for _ in 0..300 {
+            sim.run_ticks(10);
+            if sim.combat.f[s].carried_by != NONE {
+                carried = true;
+            }
+            if !carried && sim.combat.stats.rescues == 0 {
+                assert_eq!(sim.ai[s].pos, start, "the patient does not walk on a broken leg");
+            }
+            if sim.combat.stats.rescues > 0 {
+                break;
+            }
+        }
+        assert!(carried, "somebody picked the patient up");
+        assert_eq!(sim.combat.stats.rescues, 1);
+        let Sub::Resting(b) = sim.combat.f[s].sub else { panic!("not resting: {:?}", sim.combat.f[s].sub) };
+        assert!(b >= 0, "in a bed");
+        assert_eq!(sim.beds[b as usize].tile, sim.ai[s].pos, "lying on the bed");
+        assert_eq!(sim.combat.carriers, 0);
+        sim.run_ticks(400);
+        assert_eq!(sim.ai[s].pos, sim.beds[b as usize].tile, "stays in bed");
+    }
+
+    #[test]
+    fn without_rescuers_the_patient_crawls() {
+        let mut sim = Sim::new(broken_leg_world(false), 33);
+        sim.set_invasions(false);
+        sim.set_moods_enabled(false);
+        let s = sim.unit_slot[&1];
+        sim.run_ticks(300);
+        assert!(sim.combat.f[s].crawl, "crawling");
+        assert_eq!(sim.ai[s].speed, 900 * CRAWL_FACTOR);
+        assert!(sim.combat.stats.crawlers >= 1);
+        assert_eq!(sim.combat.stats.rescues, 0);
+        // Healed: walks again.
+        sim.combat.f[s].wounds.clear();
+        sim.run_ticks(200);
+        assert!(!sim.combat.f[s].crawl);
+        assert_eq!(sim.ai[s].speed, 900);
+    }
 }
