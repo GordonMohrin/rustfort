@@ -488,6 +488,7 @@ impl Sim {
             ("justice", enc(&self.justice)),
             ("life", enc(&self.life)),
             ("skills", cat(vec![enc(&self.skills), enc(&self.growth)])),
+            ("carts", enc(&self.carts)), // [carts12]
             ("total", self.exact_snapshot()),
         ]
     }

@@ -41,3 +41,7 @@ path = "examples/defense.rs"
 [[example]]
 name = "construct" # [construct] constructions, smoothing, engraving, dumping on the real fort
 path = "examples/construct.rs"
+
+[[example]]
+name = "minecarts" # [carts12] hauling routes (guided ore cart, pushed track) on the real fort
+path = "examples/minecarts.rs"

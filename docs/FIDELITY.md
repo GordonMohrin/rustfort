@@ -224,6 +224,34 @@ reported as a floor (`min_tier`). Once the exporter writes the engravings into
 | Temperature, freezing, steam | not simulated (Gordon's world has temperature off) | w:Temperature | MISSING |
 | Pumps, screw pumps, power | [gaps10] `power.rs`: screw pumps take liquid from one level below the tile next to the input (at least 2/7) and move all that fits into the tile beyond the output end every tick, never above the pump's level; powered (10) or worked by hand (`OperatePump` job, labor `OPERATE_PUMP`, 600 ticks per job). Power networks: water wheel net +90 when water under it flows (-10 when not), windmill +40/+20/+0 with wind (outside), axles -1 per tile, gear assemblies -5, pumps and millstones -10, rollers -2; gears connect on all 6 sides, axles only along their axis. Millstones mill only while powered. Tests `power::tests` (4) | w:Screw pump, w:Power, w:Water wheel, w:Windmill, w:Gear assembly, w:Axle | FIXED r10 (wind odds, wheel ports, flow freshness, manual job length ESTIMATE; gear disengaging and minecarts MISSING; Gordon's fort has no machines) |
 
+## minecarts.rs (round 12, `[carts12]`)
+
+Hauling routes, minecart physics, track stops, rollers, wheelbarrows and carried weight. Tests `minecarts::tests` (11), demo `examples/minecarts.rs` on Trussroads (a guided ore cart from z 123 to the smelters' ore pile at z 126, and a pushed cart on a 24-tile track carved beside "Steinlager Sued A").
+
+| rule | Rustfort | DF (source) | class |
+|---|---|---|---|
+| Routes | stops (tile, linked piles take/give, conditions), minecart items as vehicles; a dwarf first brings the cart to stop 1 | w:Hauling | OK |
+| Loading | dwarves with the item's HAUL_* labor carry items one at a time from `take_from` piles into the cart, up to 3 at once per cart | w:Hauling | OK |
+| Stop item filter | not modelled: a stop loads what the route's later `give_to` piles accept | per-stop item settings (w:Hauling) | ESTIMATE |
+| Unloading | dwarves carry items from the cart into free tiles of the `give_to` piles | w:Hauling | OK |
+| Capacity | 500 000 cm³; boulder 100 000, log 50 000, bar/block 6 000, meal 1 000, cloth 200 (5 stones, 10 logs, 83 bars, 500 meals, 2 500 cloth) | w:Minecart | OK |
+| Other item volumes | gems 1 200, other items 5 000 | not given | ESTIMATE |
+| Departure | `Leave when N% full` / `full` / `empty`, `Wait N days`; Push, Ride, Guide with Push/Haul Vehicles (`HANDLE_VEHICLES`); "full" also when waiting items no longer fit | w:Hauling | OK (no-fill default ESTIMATE) |
+| Push | the cart goes to the middle of the next tile with 19 990; direction from the condition or along the track to the next stop | w:Minecart | OK |
+| Ride | same push, the dwarf rides along and gets off at the next stop | w:Minecart | OK |
+| Guide | the cart moves with the walking dwarf, ignores physics (also ramps) | w:Minecart | OK (follows the walking path, not the track: ESTIMATE) |
+| Speed units | 100 000 = one tile per tick; tiles 100 000 long, ramps 141 420 | w:Minecart | OK |
+| Friction | track 10, floor 200, track stop highest 50 000 / high 10 000 / medium 500 / low 50 / lowest 10, ramp up 4 910, ramp down -4 890 | w:Minecart | OK |
+| Corners | turn, -1 000 speed; derail above 50 000 unless a wall blocks the straight way | w:Minecart | OK |
+| Track ends | the cart leaves the track straight on, until floor friction stops it, a wall stops it or it falls | w:Minecart | OK (falling carts stop where they land: ESTIMATE) |
+| Dumping | entering a track stop with a dump direction drops the contents onto that tile; items fall to the first floor | w:Track stop | OK |
+| Rollers | powered (2 per tile) rollers give a slower cart their speed (lowest 10 000 .. highest 50 000) in their direction | w:Roller | OK |
+| Collisions, checkpoint effect, fluids in carts, levers/pressure plates on track stops | not modelled | w:Minecart | MISSING |
+| Stalled carts | a cart that stops away from a stop is carried by a dwarf to the stop it was heading for | dwarves retrieve carts | ESTIMATE |
+| Cart weight | minecarts are 40 000 cm³ of material (oak 28Γ, iron 314Γ); weight only matters where a dwarf moves the cart (guiding, carrying) | w:Minecart | OK |
+| Wheelbarrows | piles with `max_wheelbarrows` > 0 take free wheelbarrows; items of 75Γ or more hauled to such a pile go by wheelbarrow at full speed, the wheelbarrow stays at the pile; only used to carry items to its pile | w:Wheelbarrow | OK (wheelbarrows are not carried to the pile first: ESTIMATE; Gordon's piles all have 0) |
+| Carried weight | a dwarf hauling (by hand) an item, carrying or guiding a cart above 75Γ walks `1 + (w - 75) / 300` times slower, at most 4x (granite boulder 1.6x) | slowdown exists, formula not given (w:Weight) | ESTIMATE (construction and workshop fetches are not slowed yet) |
+
 ## animals.rs (round 8)
 
 | rule | Rustfort | DF (source) | class |

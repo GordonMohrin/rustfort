@@ -596,6 +596,66 @@ impl Chaos {
                     sim.set_liquid(p, d, magma);
                 }
             }
+            90..=91 => {
+                // [carts12] Hauling routes: create, add stops, link piles, conditions, vehicles.
+                let routes: Vec<i32> = sim.world.haul_routes.iter().map(|r| r.id).collect();
+                match self.rng.below(8) {
+                    0 if routes.len() < 4 => {
+                        let r = sim.create_haul_route("chaos");
+                        self.note(t, "create_haul_route", format!("{r}"));
+                    }
+                    1 | 2 => {
+                        if let Some(&r) = self.rng.pick(&routes) {
+                            let p = self.near_pos(sim, 10);
+                            let k = sim.add_route_stop(r, "stop", p);
+                            self.note(t, "add_route_stop", format!("{r} {p:?} -> {k}"));
+                        }
+                    }
+                    3 => {
+                        if let Some(&r) = self.rng.pick(&routes) {
+                            let pile = self.building_id(sim, |b| b.kind == "Stockpile");
+                            let (stop, take) = (self.rng.below(3), self.rng.chance(50));
+                            self.note(t, "link_stop_pile", format!("{r} {stop} {pile} {take}"));
+                            sim.link_stop_pile(r, stop, pile, take);
+                        }
+                    }
+                    4 => {
+                        if let Some(&r) = self.rng.pick(&routes) {
+                            let opts: [&[&str]; 5] = [&["Push"], &["Ride"], &["Guide"], &["Push E", "Leave when full"], &["Leave when empty", "Wait 1 day"]];
+                            let c = opts[self.rng.below(opts.len())];
+                            let stop = self.rng.below(3);
+                            self.note(t, "set_stop_conditions", format!("{r} {stop} {c:?}"));
+                            sim.set_stop_conditions(r, stop, c);
+                        }
+                    }
+                    5 => {
+                        if let Some(&r) = self.rng.pick(&routes) {
+                            let p = self.near_pos(sim, 6);
+                            let v = sim.spawn_vehicle(self.rng.chance(20), p, 0);
+                            self.note(t, "assign_vehicle", format!("{r} {v} at {p:?}"));
+                            sim.assign_vehicle(r, v);
+                        }
+                    }
+                    6 => {
+                        if let Some(&r) = self.rng.pick(&routes) {
+                            let stop = self.rng.below(3);
+                            self.note(t, "remove_route_stop", format!("{r} {stop}"));
+                            sim.remove_route_stop(r, stop);
+                        }
+                    }
+                    _ => {
+                        if let Some(&r) = self.rng.pick(&routes) {
+                            if self.rng.chance(30) {
+                                self.note(t, "remove_haul_route", format!("{r}"));
+                                sim.remove_haul_route(r);
+                            } else {
+                                let st = sim.route_status(r);
+                                self.note(t, "route_status", format!("{r} {:?}", st.vehicles));
+                            }
+                        }
+                    }
+                }
+            }
             _ => {
                 // Most of the time the player just watches.
             }

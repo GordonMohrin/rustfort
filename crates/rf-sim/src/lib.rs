@@ -93,6 +93,8 @@ mod storage; // [industry]
 pub mod fluids; // [fluids]
 pub mod power; // [gaps10] screw pumps, water wheels, windmills, axles, gears
 pub use power::{MachineKind, PowerNet, PowerStats}; // [gaps10]
+pub mod minecarts; // [carts12] minecarts, hauling routes, track stops, rollers, wheelbarrows
+pub use minecarts::CartStats; // [carts12]
 pub use fluids::FluidReport; // [fluids]
 pub use industry::IndustryReport; // [industry]
 pub use storage::{PileReport, StorageReport}; // [industry]
@@ -220,6 +222,8 @@ pub mod labor {
     pub const POTASH_MAKING: u64 = 1 << 61;
     pub const SOAP_MAKER: u64 = 1 << 62;
     pub const DYER: u64 = 1 << 63;
+    /// [carts12] Push/Haul Vehicles (DF `HANDLE_VEHICLES`): push, ride and guide minecarts.
+    pub const HANDLE_VEHICLES: u64 = 1 << 55;
     pub const ANY_INDUSTRY: u64 = BURN_WOOD | SMELT | FORGE_WEAPON | FORGE_ARMOR | FORGE_FURNITURE | METAL_CRAFT | GLASSMAKER | BUTCHER | TANNER
         | LEATHER | WEAVER | CLOTHESMAKER | CLEAN_FISH | BONE_CARVE | ENGRAVER | SHEARER | SPINNER | WOOD_CRAFT | MECHANIC | MILLER | PROCESS_PLANT
         | POTTERY | GLAZING | LYE_MAKING | POTASH_MAKING | SOAP_MAKER | DYER; // [metal12]
@@ -284,6 +288,7 @@ pub mod labor {
             "POTASH_MAKING" => POTASH_MAKING, // [metal12]
             "SOAP_MAKER" => SOAP_MAKER,       // [metal12]
             "DYER" => DYER,                   // [metal12]
+            "HANDLE_VEHICLES" => HANDLE_VEHICLES, // [carts12]
             _ => 0,
         }
     }
@@ -474,6 +479,8 @@ enum Task {
     Care,
     /// [animals] Leading, slaughtering or training an animal, hunting, fishing (see `animals`).
     Animal,
+    /// [carts12] Route work `.0` (load/unload a minecart, push, ride, guide, wheelbarrow; see `minecarts`).
+    Cart(u32),
 }
 
 #[derive(serde::Serialize, serde::Deserialize)] // [saves11]
@@ -683,6 +690,8 @@ pub struct Sim {
     /// [skills9] Skill and quality counters; tree growth state.
     skills: skills::SkillsReport,
     growth: growth::Growth,
+    /// [carts12] Minecarts, hauling routes, wheelbarrows (see `minecarts`).
+    carts: minecarts::Carts,
 }
 
 /// [perf9] Debug: A* searches with at least this many nodes are printed (`RF_PATH_LOG`, set
@@ -833,6 +842,7 @@ impl Sim {
             life: lifestyle::Life::default(), // [society2]
             skills: skills::SkillsReport::default(), // [skills9]
             growth: growth::Growth::default(), // [skills9]
+            carts: minecarts::Carts::default(), // [carts12]
         };
         sim.restore_core(&saved); // [saves10] tick count first: the init passes below use it
         sim.init_plants();
@@ -1213,6 +1223,7 @@ impl Sim {
             (_, Task::Mood) => self.mood_caption(s), // [moods]
             (_, Task::Care) => self.care_caption(s), // [moods]
             (_, Task::Animal) => self.animal_caption(s), // [animals]
+            (_, Task::Cart(j)) => self.cart_caption(j), // [carts12]
         };
         UnitStatus {
             activity: activity.into(),
@@ -1275,6 +1286,7 @@ impl Sim {
         self.caverns_hash(&mut mix); // [moods]
         self.animals_hash(&mut mix); // [animals]
         self.society2_hash(&mut mix); // [society2]
+        self.carts_hash(&mut mix); // [carts12]
         h
     }
 
@@ -1384,6 +1396,7 @@ impl Sim {
         self.phase[6] += (tq - tp).as_secs_f64(); // [perf]
         self.fluids_tick(now); // [fluids]
         self.power_tick(now); // [gaps10] pumps and power
+        self.carts_tick(now); // [carts12] minecarts and wheelbarrows
         let tp = Instant::now(); // [perf]
         self.phase[7] += (tp - tq).as_secs_f64(); // [perf]
         if now % population::POP_PERIOD == population::POP_PHASE {
@@ -1787,9 +1800,10 @@ impl Sim {
         if self.def.trap_tile(q) && !self.caverns_trapavoid(s) { // [moods] TRAPAVOID
             self.def.pending.push((s as u32, q)); // [defense] traps and pressure plates
         }
+        let speed = if self.carts.slow.is_empty() { self.ai[s].speed } else { self.carts_speed(s) }; // [carts12] carried weight
         let ai = &mut self.ai[s];
         ai.pos = q;
-        let t = ai.speed + ai.frac;
+        let t = speed + ai.frac;
         ai.frac = t % 100;
         ai.wake = now + (t / 100).max(1) as u64;
         let (uidx, carrying) = (ai.uidx, ai.carrying);
@@ -1898,6 +1912,9 @@ impl Sim {
         }
         if pf!(9, self.construct_try(s, now)) {
             return; // [construct] constructions, detailing, dumping
+        }
+        if !restricted && self.carts_try_job(s, now) {
+            return; // [carts12] hauling routes: load, unload, push, ride, guide
         }
         let ai = &self.ai[s];
         let labors = ai.labors;
@@ -2030,6 +2047,7 @@ impl Sim {
             Task::GoPickup(id, dest) => {
                 if self.item_reachable_here(s, id) {
                     self.pickup(s, id);
+                    self.carts_carry_start(s, id); // [carts12] heavy items slow the hauler
                     self.ai[s].task = Task::GoStore(id, dest);
                     self.request_path(s, Goals::one(dest), now);
                 } else {
@@ -2038,6 +2056,9 @@ impl Sim {
                 }
             }
             Task::GoStore(id, dest) => {
+                if !self.carts.slow.is_empty() {
+                    self.carts_clear_slow(s); // [carts12]
+                }
                 self.drop_item(s, id, dest);
                 self.society_stored(id, dest); // [society] coffin / trade depot
                 self.ai[s].task = Task::Idle;
@@ -2053,6 +2074,7 @@ impl Sim {
             Task::Combat => self.combat_think(s, now), // [combat]
             Task::Construct(_) => {} // [construct] handled in construct_think
             Task::Animal => {} // [animals] handled in animal_work_think
+            Task::Cart(j) => self.carts_arrive(s, j, now), // [carts12]
         }
     }
 
@@ -2169,7 +2191,11 @@ impl Sim {
             Task::Mood => self.mood_cancel(s), // [moods]
             Task::Care => self.care_cancel(s), // [moods]
             Task::Animal => self.animal_work_cancel(s), // [animals]
+            Task::Cart(j) => self.carts_cancel(s, j), // [carts12]
             Task::Idle | Task::Wander => {}
+        }
+        if !self.carts.slow.is_empty() {
+            self.carts_clear_slow(s); // [carts12]
         }
         let ai = &mut self.ai[s];
         ai.task = Task::Idle;
@@ -3123,6 +3149,9 @@ impl Sim {
             }
             self.set_hauling(id, true);
             self.haul_remove(id);
+            if self.carts_barrow_haul(s, id, dest, now) {
+                return true; // [carts12] heavy item by wheelbarrow
+            }
             self.ai[s].task = Task::GoPickup(id, dest);
             let _ = t;
             let g = self.item_goals(id);
