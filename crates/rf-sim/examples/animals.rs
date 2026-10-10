@@ -174,8 +174,8 @@ fn main() {
     println!("\nend: {} citizens, {} tame animals on the map", sim.world.citizens().count(), r.tame);
     println!("  by race: {}", r.by_race.iter().map(|(r, n)| format!("{r} {n}")).collect::<Vec<_>>().join(", "));
     println!(
-        "  pregnancies {}, births {}, clutches {} ({} eggs laid, {} hatched), milkings {}, shearings {}, cheese {}, thread {}",
-        r.pregnancies, r.births, r.clutches, r.eggs_laid, r.eggs_hatched, r.milkings, r.shearings, r.cheese, r.thread
+        "  pregnancies {}, egg-layer matings {}, births {}, clutches {} ({} eggs laid, {} hatched), milkings {}, shearings {}, cheese {}, thread {}",
+        r.pregnancies, r.fertilizations, r.births, r.clutches, r.eggs_laid, r.eggs_hatched, r.milkings, r.shearings, r.cheese, r.thread
     );
     println!(
         "  slaughtered {}, led to pasture {}, starved {}, grass eaten {} %-tiles, bare tiles {}",
@@ -189,6 +189,7 @@ fn main() {
         "  hunts {} ({} kills, {} shots), fishing trips {} ({} caught, {} cleaned), adoptions {}, pet thoughts {}, vermin killed {}",
         r.hunts, r.hunt_kills, r.shots, r.fishing_trips, r.fish_caught, r.fish_cleaned, r.adoptions, r.pet_thoughts, r.vermin_killed
     );
+    println!("  hunt targets now {}, crossbow and bolts free: {}", r.hunt_targets, r.hunt_gear);
     println!("  deaths: {}", deaths.iter().map(|(k, v)| format!("{k} {v}")).collect::<Vec<_>>().join(", "));
-    println!("  {} ticks in {:.1} s = {:.0} ticks/s", done, sim_secs, done as f64 / sim_secs.max(1e-9));
+    println!("  {} ticks in {:.1} s = {:.0} ticks/s; animal passes and animal AI: {:.2} s ({:.1} %)", done, sim_secs, done as f64 / sim_secs.max(1e-9), r.cpu_secs, 100.0 * r.cpu_secs / sim_secs.max(1e-9));
 }

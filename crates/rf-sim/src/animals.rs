@@ -74,7 +74,7 @@
 //! - Fishing: catch chance 30 % + 5 % per Fishing level (max 90 %); 40 catches per water body
 //!   (fishing zone, or the cavern/surface water in general) per season.
 //! - Pet adoption: 1/20 per day for an idle citizen within 3 tiles of a stray pet; a pet near
-//!   its owner gives an interaction thought 1/7 per day; cats kill vermin 1/4 per day.
+//!   its owner gives an interaction thought 1/7 per day; cats kill vermin 1/14 per day.
 //! - Off-map animals in the export (position -30000, 80 in the round-5 export) are not simulated.
 
 use crate::path::Goals;
@@ -282,6 +282,8 @@ pub(crate) struct AWork {
     pub hits: i32,
     pub zone: i32,
     pub tries: u8,
+    /// The bolts are the hunter's own (in the quiver), not reserved from a stockpile.
+    pub own: bool,
 }
 
 /// Nest box (DF `NestBox` building).
@@ -330,6 +332,8 @@ pub struct AnimalReport {
     pub hungry_grazers: usize,
     pub pregnant: usize,
     pub pregnancies: u64,
+    /// Matings of egg layers (the female lays fertile eggs for 6 months).
+    pub fertilizations: u64,
     pub births: u64,
     pub clutches: u64,
     pub eggs_laid: u64,
@@ -360,6 +364,11 @@ pub struct AnimalReport {
     pub vermin_killed: u64,
     /// Tame animals in the export that are off the map (not simulated).
     pub off_map: usize,
+    /// Wild animals a hunter could go after, and whether a free crossbow and bolts exist.
+    pub hunt_targets: u32,
+    pub hunt_gear: bool,
+    /// CPU seconds spent in the animal passes and the animal AI (`animals_tick`, `animal_think`).
+    pub cpu_secs: f64,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -735,6 +744,12 @@ impl Sim {
 
     /// Think step of a tame animal (grazing, pasture, nest box, following its owner, being led).
     pub(crate) fn animal_think(&mut self, s: usize, now: u64) {
+        let t = std::time::Instant::now();
+        self.an_think_inner(s, now);
+        self.animals.rep.cpu_secs += t.elapsed().as_secs_f64();
+    }
+
+    fn an_think_inner(&mut self, s: usize, now: u64) {
         let st = self.animals.st[s];
         // Grazer hunger (wiki "Grazer": +1 per tick, death at 100 000).
         let grazer0 = self.an_sp(s).map(|p| p.grazer).unwrap_or(0);
@@ -971,6 +986,18 @@ impl Sim {
 
     /// Per-tick hook: the periodic pass and the daily work.
     pub(crate) fn animals_tick(&mut self, now: u64) {
+        if now % ANIMAL_PERIOD != ANIMAL_PHASE {
+            if !self.animals.ready && !self.animals.off {
+                self.init_animals();
+            }
+            return;
+        }
+        let t = std::time::Instant::now();
+        self.an_tick_inner(now);
+        self.animals.rep.cpu_secs += t.elapsed().as_secs_f64();
+    }
+
+    fn an_tick_inner(&mut self, now: u64) {
         if self.animals.off {
             return;
         }
@@ -1073,12 +1100,13 @@ impl Sim {
             if eggs {
                 a.fertile = 2;
                 a.fertile_until = now + FERTILE;
+                self.animals.rep.fertilizations += 1;
             } else {
                 a.preg_until = now + GESTATION;
                 let uidx = self.ai[f].uidx;
                 self.world.units[uidx].pregnancy = GESTATION as i32;
+                self.animals.rep.pregnancies += 1;
             }
-            self.animals.rep.pregnancies += 1;
         }
     }
 
@@ -1431,8 +1459,8 @@ impl Sim {
                 }
             }
             let mut r = Rng::for_unit(self.seed, s, now, 0xDA);
-            // Cats kill vermin (estimate 1/4 per day).
-            if self.animals.species[sp].vermin && self.an_is_adult(s) && r.chance(1, 4) {
+            // Cats kill vermin (estimate 1/14 per day).
+            if self.animals.species[sp].vermin && self.an_is_adult(s) && r.chance(1, 14) {
                 self.animals.rep.vermin_killed += 1;
                 let t = self.ai[s].pos as usize;
                 let m = self.animal_mat("RAT", "REMAINS", "rat remains");
@@ -1801,7 +1829,7 @@ impl Sim {
             self.animals_ensure();
         }
         self.animals.next_try[s] = now + 400 + (s as u64 % 64);
-        if labors & labor::HUNT != 0 && self.animals.hunt_gear && self.animals.hunt_targets > 0 && self.an_start_hunt(s, now) {
+        if labors & labor::HUNT != 0 && self.animals.hunt_targets > 0 && (self.animals.hunt_gear || self.an_own_gear(s).0 >= 0) && self.an_start_hunt(s, now) {
             return true;
         }
         labors & labor::FISH != 0 && self.an_start_fishing(s, now)
@@ -1838,33 +1866,66 @@ impl Sim {
         if best.1 == usize::MAX {
             return false;
         }
-        // Crossbow and bolts (reserved from the stockpile, see the estimates).
-        let (mut bow, mut bolts) = (-1, -1);
-        for idx in 0..self.world.items.len() {
-            let it = &self.world.items[idx];
-            if bow < 0 && it.kind == "WEAPON" && it.subtype == "ITEM_WEAPON_CROSSBOW" && self.item_free(idx, now) {
-                bow = it.id;
-            } else if bolts < 0 && it.kind == "AMMO" && it.subtype == "ITEM_AMMO_BOLTS" && self.item_free(idx, now) {
-                bolts = it.id;
-            }
-            if bow >= 0 && bolts >= 0 {
-                break;
+        // The hunter's own crossbow and quiver bolts (soldiers carry theirs), else free ones from
+        // a stockpile, reserved (see the estimates).
+        let (own_bow, own_bolts) = self.an_own_gear(s);
+        let (mut bow, mut bolts) = (own_bow, own_bolts);
+        if bow < 0 || bolts < 0 {
+            for idx in 0..self.world.items.len() {
+                let it = &self.world.items[idx];
+                if bow < 0 && it.kind == "WEAPON" && it.subtype == "ITEM_WEAPON_CROSSBOW" && self.item_free(idx, now) {
+                    bow = it.id;
+                } else if bolts < 0 && it.kind == "AMMO" && it.subtype == "ITEM_AMMO_BOLTS" && self.item_free(idx, now) {
+                    bolts = it.id;
+                }
+                if bow >= 0 && bolts >= 0 {
+                    break;
+                }
             }
         }
         if bow < 0 || bolts < 0 {
-            self.animals.hunt_gear = false;
+            if own_bow < 0 {
+                self.animals.hunt_gear = false;
+            }
             return false;
         }
-        self.reserve(bow);
-        self.reserve(bolts);
+        let own = bolts == own_bolts;
+        let res_bow = if bow == own_bow { -1 } else { bow };
+        if res_bow >= 0 {
+            self.reserve(res_bow);
+        }
+        if !own {
+            self.reserve(bolts);
+        }
         let t = best.1;
         self.animals.st[t].held = s as u32;
-        self.animals.w[s] = AWork { kind: WKind::Hunt, step: Step::Stalk, target: t as u32, item: bow, item2: bolts, ..Default::default() };
+        self.animals.w[s] = AWork { kind: WKind::Hunt, step: Step::Stalk, target: t as u32, item: res_bow, item2: bolts, own, ..Default::default() };
         self.ai[s].task = Task::Animal;
         self.animals.rep.hunts += 1;
         let g = self.an_near_goals(self.ai[t].pos);
         self.request_path(s, g, now);
         true
+    }
+
+    /// Crossbow and bolts a unit carries (bolts loose or in a quiver), -1 = none.
+    fn an_own_gear(&self, s: usize) -> (i32, i32) {
+        let u = &self.world.units[self.ai[s].uidx];
+        let (mut bow, mut bolts) = (-1, -1);
+        let ok = |id: i32| self.item_idx.get(&id).map(|&i| !self.imeta[i as usize].dead && self.world.items[i as usize].stack > 0).unwrap_or(false);
+        for &id in &u.inventory {
+            let Some(&i) = self.item_idx.get(&id) else { continue };
+            let it = &self.world.items[i as usize];
+            if it.kind == "WEAPON" && it.subtype == "ITEM_WEAPON_CROSSBOW" && ok(id) {
+                bow = id;
+            } else if it.kind == "AMMO" && it.subtype == "ITEM_AMMO_BOLTS" && ok(id) && bolts < 0 {
+                bolts = id;
+            } else if it.kind == "QUIVER" && bolts < 0 {
+                if let Some(c) = self.contents.get(&id) {
+                    bolts = c.iter().copied().find(|&b| ok(b) && self.world.items[self.item_idx[&b] as usize].subtype == "ITEM_AMMO_BOLTS").unwrap_or(-1);
+                }
+            }
+        }
+        (bow, bolts)
     }
 
     fn an_start_fishing(&mut self, s: usize, now: u64) -> bool {
@@ -1978,7 +2039,7 @@ impl Sim {
         if w.item >= 0 {
             self.unreserve(w.item);
         }
-        if w.item2 >= 0 {
+        if w.item2 >= 0 && !w.own {
             self.unreserve(w.item2);
         }
         self.animals.w[s] = AWork::default();
@@ -2258,11 +2319,15 @@ impl Sim {
             self.cancel_task(s);
             return;
         }
-        self.unreserve(bolts);
+        if !w.own {
+            self.unreserve(bolts);
+        }
         self.consume(bolts);
         if let Some(&bi2) = self.item_idx.get(&bolts) {
             if !self.imeta[bi2 as usize].dead {
-                self.reserve(bolts);
+                if !w.own {
+                    self.reserve(bolts);
+                }
             } else {
                 self.animals.w[s].item2 = -1;
             }
@@ -2307,10 +2372,11 @@ impl Sim {
     /// The prey is dead: fetch its corpse for the butcher.
     fn an_hunt_kill_done(&mut self, s: usize, t: usize, now: u64) {
         let w = self.animals.w[s];
-        if w.item2 >= 0 {
+        if w.item2 >= 0 && !w.own {
             self.unreserve(w.item2);
-            self.animals.w[s].item2 = -1;
         }
+        self.animals.w[s].item2 = -1;
+        self.animals.w[s].own = false;
         // The corpse lies where the prey died (the newest corpse on that tile).
         let tile = self.ai.get(t).map(|a| a.pos).unwrap_or(NONE);
         let corpse = self
@@ -2378,7 +2444,7 @@ impl Sim {
         if w.item >= 0 {
             self.unreserve(w.item);
         }
-        if w.item2 >= 0 {
+        if w.item2 >= 0 && !w.own {
             self.unreserve(w.item2);
             if w.step == Step::GoCorpse {
                 self.haul_add(w.item2);
@@ -2486,7 +2552,9 @@ impl Sim {
             self.ai[s].kind = Kind::Animal;
             self.ai[s].wake = self.ticks + 1;
         }
-        self.animals.st[s].lead_req = valid;
+        // Already standing in the pasture: nobody needs to lead it.
+        let inside = valid && self.an_pen_of(s).map(|p| self.an_in_zone(self.ai[s].pos, p.zone)).unwrap_or(false);
+        self.animals.st[s].lead_req = valid && !inside;
         self.animals.last_census = 0;
     }
 
@@ -2543,6 +2611,8 @@ impl Sim {
         by.sort();
         r.by_race = by;
         r.bare_tiles = self.animals.grass.iter().filter(|g| g.bare).count();
+        r.hunt_targets = self.animals.hunt_targets;
+        r.hunt_gear = self.animals.hunt_gear;
         r
     }
 

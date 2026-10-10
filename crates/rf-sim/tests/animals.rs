@@ -319,6 +319,7 @@ fn hen_lays_in_nest_box_eggs_are_collected_or_hatch_when_forbidden() {
     assert!(left <= 1, "food haulers took the eggs out of the nest box (to the pile, or they were eaten): {left}");
     let sim = run(true);
     let r = sim.animal_report();
+    assert!(r.fertilizations >= 1, "the rooster fertilized the hen: {r:?}");
     assert!(r.eggs_hatched >= 4, "forbidden fertile eggs hatch after 3 months: {r:?}");
     assert!(sim.world.units.iter().filter(|u| u.race == "BIRD_CHICKEN").count() > 2);
 }
@@ -447,7 +448,7 @@ fn cat_adopts_a_dwarf_and_hunts_vermin() {
     let mut w = world();
     w.units.push(animal(500, "CAT", "FEMALE", Pos::new(cx - 2, cy - 2, hz), 0));
     let mut sim = Sim::new(w, 31);
-    sim.run_ticks((3 * rf_core::TICKS_PER_MONTH) as u32);
+    sim.run_ticks((6 * rf_core::TICKS_PER_MONTH) as u32);
     let cat = sim.world.unit(500).unwrap();
     assert!(cat.pet_owner > 0, "the cat chose an owner");
     let owner = sim.world.unit(cat.pet_owner).unwrap();

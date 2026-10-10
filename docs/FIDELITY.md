@@ -259,7 +259,7 @@ reported as a floor (`min_tier`). Once the exporter writes the engravings into
 | Overfishing | 40 catches per water body per season, refilled at season change | depletion and refill at season change (w:Fishing); amount not given; permanent depletion missing | ESTIMATE |
 | Catch chance | 30 % + 5 %/Fishing level per 600-tick try | not given | ESTIMATE |
 | Prepare raw fish | Fishery, labor Fish cleaning, auto job when raw fish exists | same (w:Fishery, auto fishery standing order) | OK |
-| Cats and vermin | `HUNTS_VERMIN` cats kill a vermin 1/4 per day (rat remains, refuse) | vermin are real creatures in DF | ESTIMATE |
+| Cats and vermin | `HUNTS_VERMIN` cats kill a vermin 1/14 per day (rat remains, refuse) | vermin are real creatures in DF | ESTIMATE |
 | Off-map animals in the export | not simulated (80 tame animals at pos -30000 in round 5) | | ESTIMATE |
 
 ## Known gaps worth doing next (economy & society)
