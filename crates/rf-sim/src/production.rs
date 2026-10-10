@@ -196,6 +196,13 @@ macro_rules! r {
     };
 }
 
+/// [metal12] A raw reaction row (`CustomReaction` + token), performed by `industry::reactions`.
+macro_rules! rx {
+    ($re:expr, $label:expr, $ws:expr, $lab:expr, $sk:expr, $noun:expr) => {
+        r!("CustomReaction", $re, "", "", "", $label, $ws, $lab, $sk, Input::Ind(crate::industry::F_REACT), 400, 1, $noun)
+    };
+}
+
 use labor::{BREW, CARPENTER, COOK, MASON, STONE_CRAFT};
 
 /// All workshop jobs (index = recipe id). Labels follow DF's workshop menus.
@@ -288,6 +295,48 @@ pub const RECIPES: &[Recipe] = &[
     r!("MakeCheese", "", "CHEESE", "", "", "Make cheese", "Farmers", labor::MAKE_CHEESE, "CHEESEMAKING", Input::Ind(crate::animals::F_CHEESE), 300, 1, "cheese"),
     r!("SpinThread", "", "THREAD", "", "", "Spin thread", "Farmers", labor::SPINNER, "SPINNING", Input::Ind(crate::animals::F_SPIN), 300, 1, "thread"),
     r!("PrepareRawFish", "", "FISH", "", "", "Prepare raw fish", "Fishery", labor::CLEAN_FISH, "PROCESSFISH", Input::Ind(crate::animals::F_CLEAN_FISH), 200, 1, "fish"),
+    // [metal12] raw reactions (vanilla reaction_smelter.txt / reaction_other.txt, see
+    // industry::reactions), DF's hard-coded ashery and glass jobs, splints and crutches.
+    // Appended at the end: saves keep recipe indices.
+    rx!("BITUMINOUS_COAL_TO_COKE", "Make coke from bituminous coal", "Smelter", labor::SMELT, "SMELT", "coke"),
+    rx!("LIGNITE_TO_COKE", "Make coke from lignite", "Smelter", labor::SMELT, "SMELT", "coke"),
+    rx!("BRASS_MAKING", "Make brass bars (use ore)", "Smelter", labor::SMELT, "SMELT", "bars"),
+    rx!("BRASS_MAKING2", "Make brass bars (use bars)", "Smelter", labor::SMELT, "SMELT", "bars"),
+    rx!("BRONZE_MAKING", "Make bronze bars (use ore)", "Smelter", labor::SMELT, "SMELT", "bars"),
+    rx!("BRONZE_MAKING2", "Make bronze bars (use bars)", "Smelter", labor::SMELT, "SMELT", "bars"),
+    rx!("ELECTRUM_MAKING", "Make electrum bars (use ore)", "Smelter", labor::SMELT, "SMELT", "bars"),
+    rx!("ELECTRUM_MAKING2", "Make electrum bars (use bars)", "Smelter", labor::SMELT, "SMELT", "bars"),
+    rx!("BILLON_MAKING", "Make billon bars (use ore)", "Smelter", labor::SMELT, "SMELT", "bars"),
+    rx!("BILLON_MAKING2", "Make billon bars (use bars)", "Smelter", labor::SMELT, "SMELT", "bars"),
+    rx!("PEWTER_FINE_MAKING", "Make fine pewter bars (use ore)", "Smelter", labor::SMELT, "SMELT", "bars"),
+    rx!("PEWTER_FINE_MAKING2", "Make fine pewter bars (use bars)", "Smelter", labor::SMELT, "SMELT", "bars"),
+    rx!("PEWTER_TRIFLE_MAKING", "Make trifle pewter bars (use ore)", "Smelter", labor::SMELT, "SMELT", "bars"),
+    rx!("PEWTER_TRIFLE_MAKING2", "Make trifle pewter bars (use bars)", "Smelter", labor::SMELT, "SMELT", "bars"),
+    rx!("PEWTER_LAY_MAKING", "Make lay pewter bars (use bars)", "Smelter", labor::SMELT, "SMELT", "bars"),
+    rx!("PIG_IRON_MAKING", "Make pig iron bars", "Smelter", labor::SMELT, "SMELT", "bars"),
+    rx!("STEEL_MAKING", "Make steel bars", "Smelter", labor::SMELT, "SMELT", "bars"),
+    rx!("NICKEL_SILVER_MAKING", "Make nickel silver bars", "Smelter", labor::SMELT, "SMELT", "bars"),
+    rx!("BLACK_BRONZE_MAKING", "Make black bronze bars", "Smelter", labor::SMELT, "SMELT", "bars"),
+    rx!("STERLING_SILVER_MAKING", "Make sterling silver bars", "Smelter", labor::SMELT, "SMELT", "bars"),
+    rx!("ROSE_GOLD_MAKING", "Make rose gold bars", "Smelter", labor::SMELT, "SMELT", "bars"),
+    rx!("BISMUTH_BRONZE_MAKING", "Make bismuth bronze bars", "Smelter", labor::SMELT, "SMELT", "bars"),
+    rx!("RENDER_FAT", "Render fat", "Kitchen", COOK, "COOK", "tallow"),
+    rx!("MAKE_SOAP_FROM_TALLOW", "Make soap from tallow", "SOAP_MAKER", labor::SOAP_MAKER, "SOAP_MAKING", "soap"),
+    rx!("MAKE_PEARLASH", "Make pearlash", "Kiln", labor::SMELT, "SMELT", "pearlash"),
+    rx!("MAKE_CLAY_JUG", "Make clay jug", "Kiln", labor::POTTERY, "POTTERY", "jug"),
+    rx!("MAKE_CLAY_BRICKS", "Make clay bricks", "Kiln", labor::POTTERY, "POTTERY", "bricks"),
+    rx!("MAKE_CLAY_STATUE", "Make clay statue", "Kiln", labor::POTTERY, "POTTERY", "statue"),
+    rx!("MAKE_LARGE_CLAY_POT", "Make large clay pot", "Kiln", labor::POTTERY, "POTTERY", "large pot"),
+    rx!("MAKE_CLAY_CRAFTS", "Make clay crafts", "Kiln", labor::POTTERY, "POTTERY", "craft"),
+    r!("MakeLye", "", "LIQUID_MISC", "", "", "Make lye", "Ashery", labor::LYE_MAKING, "LYE_MAKING", Input::Ind(crate::industry::F_REACT), 300, 1, "lye"),
+    r!("MakePotashFromLye", "", "BAR", "", "", "Make potash from lye", "Ashery", labor::POTASH_MAKING, "POTASH_MAKING", Input::Ind(crate::industry::F_REACT), 300, 1, "potash"),
+    r!("MakePotashFromAsh", "", "BAR", "", "", "Make potash from ash", "Ashery", labor::POTASH_MAKING, "POTASH_MAKING", Input::Ind(crate::industry::F_REACT), 300, 1, "potash"),
+    r!("MakeRawGlass", "GLASS_CLEAR", "ROUGH", "", "", "Make raw clear glass", "GlassFurnace", labor::GLASSMAKER, "GLASSMAKER", Input::Ind(crate::industry::F_REACT), 300, 1, "raw glass"),
+    r!("MakeRawGlass", "GLASS_CRYSTAL", "ROUGH", "", "", "Make raw crystal glass", "GlassFurnace", labor::GLASSMAKER, "GLASSMAKER", Input::Ind(crate::industry::F_REACT), 300, 1, "raw glass"),
+    r!("ConstructSplint", "", "SPLINT", "", "wood", "Construct wooden splint", "Carpenters", CARPENTER, "CARPENTRY", Input::Log, 300, 1, "splint"),
+    r!("ConstructCrutch", "", "CRUTCH", "", "wood", "Construct wooden crutch", "Carpenters", CARPENTER, "CARPENTRY", Input::Log, 300, 1, "crutch"),
+    r!("ConstructSplint", "", "SPLINT", "", "metal", "Forge metal splint", "MetalsmithsForge", labor::FORGE_FURNITURE, "FORGE_FURNITURE", Input::Ind(crate::industry::F_FORGE), 400, 1, "splint"),
+    r!("ConstructCrutch", "", "CRUTCH", "", "metal", "Forge metal crutch", "MetalsmithsForge", labor::FORGE_FURNITURE, "FORGE_FURNITURE", Input::Ind(crate::industry::F_FORGE), 400, 1, "crutch"),
 ];
 
 /// Job kinds counted in the report (`jobs_done`): recipes first, then these.
@@ -347,10 +396,27 @@ pub(crate) enum WK {
 pub(crate) struct WJob {
     pub kind: WK,
     pub site: u32,
-    pub items: [i32; 4],
-    pub need: [i32; 4],
+    /// [metal12] 6 reagent slots (steel: iron, pig iron, flux, coal and the fuel); saves with 4
+    /// slots still load.
+    #[serde(deserialize_with = "pad_slots")]
+    pub items: [i32; WJ_SLOTS],
+    #[serde(deserialize_with = "pad_slots")]
+    pub need: [i32; WJ_SLOTS],
     pub n: u8,
     pub got: u8,
+}
+
+/// [metal12] Reagent slots of a production job.
+pub const WJ_SLOTS: usize = 6;
+
+/// [metal12] Read a reagent-slot array of any length up to `WJ_SLOTS` (older saves had 4).
+fn pad_slots<'de, D: serde::Deserializer<'de>>(d: D) -> Result<[i32; WJ_SLOTS], D::Error> {
+    let v: Vec<i32> = serde::Deserialize::deserialize(d)?;
+    let mut a = [0i32; WJ_SLOTS];
+    for (k, x) in v.into_iter().take(WJ_SLOTS).enumerate() {
+        a[k] = x;
+    }
+    Ok(a)
 }
 
 #[derive(serde::Serialize, serde::Deserialize)] // [saves11]
@@ -1263,7 +1329,7 @@ impl Sim {
         self.prod.census = c;
     }
 
-    fn inputs_available(&self, r: &Recipe) -> bool {
+    fn inputs_available(&self, r: &Recipe, magma: bool) -> bool {
         let c = &self.prod.census;
         match r.input {
             Input::BrewPlant => c.brew_plants > 0 && c.empty_containers > 0,
@@ -1271,7 +1337,7 @@ impl Sim {
             Input::Meal(n) => c.cookables >= n as i32,
             Input::Log => c.logs > 0,
             Input::Boulder => c.boulders > 0,
-            Input::Ind(f) => self.ind_available(f, r), // [industry]
+            Input::Ind(f) => self.ind_available(f, r, magma), // [industry] [metal12] magma: no fuel
         }
     }
 
@@ -1298,6 +1364,13 @@ impl Sim {
                 continue;
             }
             let mut score = 0;
+            // [metal12] Hard-coded job variants (raw clear / crystal glass) are told apart by the
+            // job material (`GLASS_CLEAR`) or the template's key in `reaction`.
+            if job == "MakeRawGlass" {
+                let key = if !reaction.is_empty() { reaction } else { mat };
+                let want = if key == "GLASS_CLEAR" || key == "GLASS_CRYSTAL" { key } else { "" };
+                score += if want == r.reaction { 10 } else { -10 };
+            }
             if job == "PrepareMeal" {
                 // DF encodes the meal kind in the job's mat_type 2/3/4, which the exporter
                 // decodes as the builtin materials CORAL / GLASS_GREEN / GLASS_CLEAR.
@@ -1347,6 +1420,7 @@ impl Sim {
     }
 
     fn recipe_of_job(j: &BuildingJob, shop: &str) -> Option<u8> {
+        let shop = crate::industry::base_shop(shop); // [metal12] magma workshops
         Sim::recipe_of(&j.job, &j.reaction, &j.item_type, &j.item_subtype, &j.mat_category, &j.mat, Some(shop))
     }
 
@@ -1368,7 +1442,9 @@ impl Sim {
                 self.prod.shops[si].avail = avail;
                 continue;
             }
-            if self.prod.shops[si].busy == NONE {
+            // [metal12] A magma workshop works only with magma 4/7 below (wiki Magma forge).
+            let magma = crate::industry::is_magma_shop(&self.prod.shops[si].subtype);
+            if self.prod.shops[si].busy == NONE && (!magma || self.magma_shop_ok(bi)) {
                 let sub = self.prod.shops[si].subtype.clone();
                 let n = self.world.buildings[bi].jobs.len();
                 for qi in 0..n.min(MAX_QUEUE) {
@@ -1378,7 +1454,7 @@ impl Sim {
                     }
                     match Sim::recipe_of_job(j, &sub) {
                         Some(r) => {
-                            if self.inputs_available(&RECIPES[r as usize]) {
+                            if self.inputs_available(&RECIPES[r as usize], magma) {
                                 avail.push((qi as u16, r));
                                 labors |= RECIPES[r as usize].labor;
                             }
@@ -1603,7 +1679,7 @@ impl Sim {
                 self.prod
                     .shops
                     .iter()
-                    .filter(|s| (if ws_id >= 0 { s.bid == ws_id } else { s.subtype == workshop }) && self.in_alert(s.site as usize))
+                    .filter(|s| (if ws_id >= 0 { s.bid == ws_id } else { crate::industry::base_shop(&s.subtype) == workshop }) && self.in_alert(s.site as usize))
                     .map(|s| s.bi)
                     .collect()
             } else {
@@ -1634,7 +1710,7 @@ impl Sim {
             let shops: Vec<usize> = if !alert_shops.is_empty() {
                 alert_shops
             } else {
-                self.prod.shops.iter().filter(|s| if ws_id >= 0 { s.bid == ws_id } else { s.subtype == workshop }).map(|s| s.bi).collect()
+                self.prod.shops.iter().filter(|s| if ws_id >= 0 { s.bid == ws_id } else { crate::industry::base_shop(&s.subtype) == workshop }).map(|s| s.bi).collect()
             };
             if shops.is_empty() {
                 continue;
@@ -2286,6 +2362,7 @@ impl Sim {
     }
 
     pub(crate) fn prod_complete(&mut self, s: usize, now: u64) {
+        self.prod_fix_done(); // [metal12] saves from builds with fewer recipes
         let wj = self.prod.wj[s];
         let site = wj.site as usize;
         let mut r = Rng::for_unit(self.seed, s, now, 21);
@@ -2713,6 +2790,22 @@ impl Sim {
             }
         }
         Some(under)
+    }
+
+    /// [metal12] Saves from builds with fewer recipes have a shorter `done` table (recipes,
+    /// then plant / harvest / construct): move the last three counters to their new place.
+    pub(crate) fn prod_fix_done(&mut self) {
+        let d = &mut self.prod.done;
+        if d.len() == DONE_KINDS {
+            return;
+        }
+        if d.len() >= 3 && d.len() < DONE_KINDS {
+            let tail: Vec<u64> = d.split_off(d.len() - 3);
+            d.resize(RECIPES.len(), 0);
+            d.extend(tail);
+        } else {
+            d.resize(DONE_KINDS, 0);
+        }
     }
 
     pub(crate) fn mark_prod_dirty(&mut self) {

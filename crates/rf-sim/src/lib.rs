@@ -206,8 +206,16 @@ pub mod labor {
     pub const HUNT: u64 = 1 << 52;
     pub const FISH: u64 = 1 << 53;
     pub const ANIMALTRAIN: u64 = 1 << 54;
+    // [metal12] kiln, ashery, soap maker and dyer labors (DF `unit_labor` names), top bits.
+    pub const POTTERY: u64 = 1 << 58;
+    pub const GLAZING: u64 = 1 << 59;
+    pub const LYE_MAKING: u64 = 1 << 60;
+    pub const POTASH_MAKING: u64 = 1 << 61;
+    pub const SOAP_MAKER: u64 = 1 << 62;
+    pub const DYER: u64 = 1 << 63;
     pub const ANY_INDUSTRY: u64 = BURN_WOOD | SMELT | FORGE_WEAPON | FORGE_ARMOR | FORGE_FURNITURE | METAL_CRAFT | GLASSMAKER | BUTCHER | TANNER
-        | LEATHER | WEAVER | CLOTHESMAKER | CLEAN_FISH | BONE_CARVE | ENGRAVER | SHEARER | SPINNER | WOOD_CRAFT | MECHANIC | MILLER | PROCESS_PLANT;
+        | LEATHER | WEAVER | CLOTHESMAKER | CLEAN_FISH | BONE_CARVE | ENGRAVER | SHEARER | SPINNER | WOOD_CRAFT | MECHANIC | MILLER | PROCESS_PLANT
+        | POTTERY | GLAZING | LYE_MAKING | POTASH_MAKING | SOAP_MAKER | DYER; // [metal12]
     pub const ANY_HAUL: u64 = HAUL_STONE | HAUL_WOOD | HAUL_FOOD | HAUL_ITEM | HAUL_REFUSE | HAUL_FURNITURE | HAUL_BODY | HAUL_ANIMALS;
     pub const ANY_JOB: u64 = MINE | CUTWOOD | HERBALISM;
     /// Labors that can take workshop, farm or construction jobs.
@@ -261,6 +269,12 @@ pub mod labor {
             "HUNT" => HUNT, // [animals]
             "FISH" => FISH, // [animals]
             "ANIMALTRAIN" => ANIMALTRAIN, // [animals]
+            "POTTERY" => POTTERY,             // [metal12]
+            "GLAZING" => GLAZING,             // [metal12]
+            "LYE_MAKING" => LYE_MAKING,       // [metal12]
+            "POTASH_MAKING" => POTASH_MAKING, // [metal12]
+            "SOAP_MAKER" => SOAP_MAKER,       // [metal12]
+            "DYER" => DYER,                   // [metal12]
             _ => 0,
         }
     }

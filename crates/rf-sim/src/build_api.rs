@@ -62,6 +62,13 @@ const OPTIONS: &[BuildOption] = &[
     BuildOption { kind: "Furnace", subtype: "WoodFurnace", label: "Wood furnace", category: "Furnaces", size: (3, 3), needs: "1 boulder or block", dragged: false },
     BuildOption { kind: "Furnace", subtype: "GlassFurnace", label: "Glass furnace", category: "Furnaces", size: (3, 3), needs: "1 boulder or block", dragged: false },
     BuildOption { kind: "Furnace", subtype: "Kiln", label: "Kiln", category: "Furnaces", size: (3, 3), needs: "1 boulder or block", dragged: false },
+    // [metal12] magma furnaces (no fuel; magma 4/7 below a non-center tile), ashery, soap maker.
+    BuildOption { kind: "Furnace", subtype: "MagmaSmelter", label: "Magma smelter", category: "Furnaces", size: (3, 3), needs: "1 magma-safe boulder or block; magma below", dragged: false },
+    BuildOption { kind: "Furnace", subtype: "MagmaGlassFurnace", label: "Magma glass furnace", category: "Furnaces", size: (3, 3), needs: "1 magma-safe boulder or block; magma below", dragged: false },
+    BuildOption { kind: "Furnace", subtype: "MagmaKiln", label: "Magma kiln", category: "Furnaces", size: (3, 3), needs: "1 magma-safe boulder or block; magma below", dragged: false },
+    BuildOption { kind: "Workshop", subtype: "MagmaForge", label: "Magma forge", category: "Workshops", size: (3, 3), needs: "1 anvil, 1 magma-safe boulder or block; magma below", dragged: false },
+    BuildOption { kind: "Workshop", subtype: "Ashery", label: "Ashery", category: "Workshops", size: (3, 3), needs: BUILDING_MAT, dragged: false },
+    BuildOption { kind: "Workshop", subtype: "SOAP_MAKER", label: "Soap maker's workshop", category: "Workshops", size: (3, 3), needs: BUILDING_MAT, dragged: false },
     BuildOption { kind: "Workshop", subtype: "MetalsmithsForge", label: "Metalsmith's forge", category: "Workshops", size: (3, 3), needs: "1 anvil, 1 boulder or block", dragged: false },
     BuildOption { kind: "Workshop", subtype: "Tanners", label: "Tanner's shop", category: "Workshops", size: (3, 3), needs: BUILDING_MAT, dragged: false },
     BuildOption { kind: "Workshop", subtype: "Leatherworks", label: "Leather works", category: "Workshops", size: (3, 3), needs: BUILDING_MAT, dragged: false },
