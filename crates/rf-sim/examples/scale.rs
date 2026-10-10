@@ -1,7 +1,8 @@
 //! [perf] Scale benchmark on the real fort: ticks/s at high population.
 //!
 //!   cargo run -p rf-sim --release --example scale -- [--export <dir>] [--extra 0,100,200,400]
-//!       [--warm 6000] [--ticks 33600] [--seed 1] [--threads N] [--invasions] [--keep-military]
+//!       [--warm 6000] [--ticks 33600] [--seed 1] [--threads N] [--par-threshold N] [--invasions]
+//!       [--keep-military]
 //!
 //! For every N in `--extra` the export is loaded fresh and N extra citizens are added: clones
 //! of the fort's own dwarves (labors and skills kept, so the labor mix stays realistic) with new
@@ -126,6 +127,9 @@ fn main() {
         let mut sim = Sim::new(world, seed);
         let new_s = t_new.elapsed().as_secs_f64();
         sim.set_invasions(flag("--invasions"));
+        if let Some(t) = get("--par-threshold").and_then(|s| s.parse().ok()) {
+            sim.set_parallel_threshold(t); // results must not depend on it (determinism check)
+        }
         if !flag("--keep-military") {
             let ids: Vec<i32> = sim.world.squads.iter().map(|q| q.id).collect();
             for id in ids {
