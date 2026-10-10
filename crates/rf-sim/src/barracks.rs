@@ -410,6 +410,8 @@ mod tests {
             u.thirst_timer = 0;
             u.hunger_timer = 0;
             u.sleepiness_timer = 0;
+            // [skills9] w:Sparring needs Competent (3) Fighting.
+            u.skills.push(rf_core::Skill { id: "MELEE_COMBAT".into(), rating: 3, xp: 0 });
         }
         w.buildings.push(Building { id: 900, kind: "Civzone".into(), subtype: "Barracks".into(), x1: 18, y1: 20, x2: 23, y2: 24, z, center: Pos::new(20, 22, z), built: true, owner: -1, name: "Kaserne".into(), ..Default::default() });
         let bp = Pos::new(23, 24, z);

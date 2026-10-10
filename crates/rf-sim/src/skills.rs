@@ -24,18 +24,19 @@
 //!   consoling a stressed partner, pacifying or intimidating in an argument.
 //!
 //! # Estimates (not on the wiki, fitted to Gordon's r4 -> r5 history)
-//! - Quality roll: base level = skill / 4 (the remainder as a chance), plus -1 / 0 / +1 with
-//!   chances 1/4, 1/2, 1/4; a result of masterwork or better is a masterwork with chance 1/3,
-//!   otherwise exceptional. At skill 16 that gives 25 % superior, 67 % exceptional, 8 %
-//!   masterwork; at 20+ 75 % exceptional and 25-33 % masterwork; at 0 75 % ordinary.
+//! - Quality roll: a floor of skill / 4 (the remainder as a chance), then up to 3 more levels,
+//!   each with chance 0.55; a result of masterwork or better is a masterwork with chance 1/3,
+//!   otherwise exceptional. At skill 2 that gives 45 / 25 / 14 / 17 % ordinary .. superior
+//!   (Gordon's leather armor by skill 1-3 leatherworkers: 39 / 34 / 12 / 15 %), at 16 82 %
+//!   exceptional and 18 % masterwork, at 20+ 2/3 exceptional and 1/3 masterwork.
 //! - Training amounts per 100-tick round, in XP (fractions by chance): sparring SA 8, Fighting 3,
 //!   weapon 2, Discipline 2, Wrestling 1, Armor 0.5, Dodging 0.4, Shield 0.4, grasp strike 0.4,
 //!   stance strike 0.2, bite 0.2; witnessing a bout within 5 tiles SA 3; individual drill 5 XP
 //!   to one skill (weapon 30 %, Fighting 40 %, Discipline 20 %, Armor / Dodging / Shield 10 %);
-//!   demonstration 1 in 10 rounds: skill 3, Student 4, Concentration 4, teacher Teacher 4.
+//!   demonstration 1 in 10 rounds: skill 3, Student 13, Concentration 13, teacher Teacher 13.
 //!   Gordon's three constantly training squads gained 14.5k military XP per dwarf-year (6.1k
 //!   SA, 2.6k Fighting, 1.8k axe, 1.7k Discipline).
-//! - Conversation: the speaker gains `TALK_XP` in one conversation skill per conversation; the
+//! - Conversation: the speaker gains `TALK_XP` (11) in one conversation skill per conversation; the
 //!   skill is Consoler for a stressed partner, Pacifier / Intimidator in an argument, otherwise
 //!   picked with the weights of Gordon's fort (Persuader 76, Comedian 41, Judge of intent 37,
 //!   Intimidator 20, Pacifier 25, Consoler 20, Conversationalist 28, Flatterer 8, Liar 4).
@@ -53,7 +54,7 @@ pub(crate) const XP_STONECUT: i32 = 10;
 /// Organization for each work order the manager approves (wiki).
 pub(crate) const XP_ORGANIZE: i32 = 100;
 /// Conversation skill experience per conversation (estimate).
-pub(crate) const TALK_XP: i32 = 25;
+pub(crate) const TALK_XP: i32 = 11;
 
 /// Does an item of this kind have quality levels? (Meals roll their own in `lifestyle.rs`.)
 pub(crate) fn has_quality(kind: &str) -> bool {
@@ -72,15 +73,18 @@ pub(crate) fn has_quality(kind: &str) -> bool {
 /// Item quality 0..=5 from the maker's (effective) skill level (estimate, see module docs).
 pub(crate) fn quality_roll(rating: i32, r: &mut Rng) -> u8 {
     let s = rating.clamp(0, 40) as u32;
+    // Floor: a quarter of the skill (the remainder as a chance).
     let mut q = (s / 4) as i32;
     if r.below(4) < s % 4 {
         q += 1;
     }
-    q += match r.below(4) {
-        0 => -1,
-        3 => 1,
-        _ => 0,
-    };
+    // Ladder: up to 3 more levels, each with chance 11 in 20.
+    for _ in 0..3 {
+        if !r.chance(11, 20) {
+            break;
+        }
+        q += 1;
+    }
     if q >= 5 {
         if r.chance(1, 3) {
             5
@@ -226,9 +230,9 @@ impl Sim {
                     _ => "DODGING",
                 };
                 self.add_xp(s, demo, 3);
-                self.add_xp(s, "KNOWLEDGE_ACQUISITION", 4);
-                self.add_xp(s, "CONCENTRATION", 4);
-                self.add_xp(t, "TEACHING", 4);
+                self.add_xp(s, "KNOWLEDGE_ACQUISITION", 13);
+                self.add_xp(s, "CONCENTRATION", 13);
+                self.add_xp(t, "TEACHING", 13);
             }
         }
     }
@@ -296,6 +300,8 @@ pub struct SkillsReport {
     pub demonstrations: u64,
     pub talks: u64,
     pub approvals: u64,
+    /// Bad memories relived (`social_recall`).
+    pub recalls: u64,
 }
 
 #[cfg(test)]
@@ -313,9 +319,9 @@ mod tests {
             h
         };
         let novice = hist(0);
-        assert!(novice[0] > 20_000 && novice[2] == 0, "{novice:?}");
+        assert!(novice[0] > 12_000 && novice[0] < 15_000 && novice[4] == 0, "{novice:?}");
         let skilled = hist(16);
-        assert!(skilled[4] > 18_000 && skilled[5] > 1_000 && skilled[5] < 4_000, "{skilled:?}");
+        assert!(skilled[4] > 22_000 && skilled[5] > 4_000 && skilled[5] < 7_000 && skilled[3] == 0, "{skilled:?}");
         let legend = hist(30);
         // Masterworks at most 1 in 3, the rest exceptional.
         assert!(legend[5] < 10_600 && legend[5] > 9_400 && legend[3] == 0, "{legend:?}");

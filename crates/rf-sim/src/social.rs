@@ -95,6 +95,9 @@ const LT_MIN: i32 = -50_000;
 const LT_MAX: i32 = 120_000;
 const FOCUS_MAX: i32 = 400;
 const FOCUS_MIN: i32 = -200_000; // lowest focus level seen in the export
+/// [skills9] Daily chance (1 in this) to relive the strongest bad memory, and its share.
+const RECALL_IN: u32 = 6;
+const RECALL_DIV: i32 = 2;
 
 /// DF `need_type` names in enum order (subthought of `NeedsUnfulfilled`).
 pub const NEED_NAMES: [&str; 30] = [
@@ -1459,7 +1462,45 @@ impl Sim {
                 self.social.psy[s].next_need_thought = now + 14 * DAY as u64;
             }
         }
+        self.social_recall(s, now, &mut r); // [skills9] strong memories come back
         self.social_breakdown(s, now, &mut r);
+    }
+
+    /// [skills9] Dwarves relive strong bad memories (wiki v50 "Thought": memories of strong
+    /// events are kept and remembered, which brings the emotion back). Each day with chance
+    /// 1 in `RECALL_IN` the strongest grief or horror memory of the last two years (death of a
+    /// relation or friend, witnessed death, a dead body, a lost pet) is felt again at
+    /// 1/`RECALL_DIV` of its strength, half that in the second year (estimate, fitted so that the losses of Gordon's fort
+    /// between r4 and r5 leave about as many stressed dwarves as DF had).
+    fn social_recall(&mut self, s: usize, now: u64, r: &mut Rng) {
+        if !r.chance(1, RECALL_IN) {
+            return;
+        }
+        let f = self.social.psy[s].facets;
+        let c = self.world.calendar;
+        let t_now = c.year as i64 * rf_core::TICKS_PER_YEAR as i64 + c.year_tick as i64;
+        let u = &mut self.world.units[self.ai[s].uidx];
+        let best = u
+            .emotions
+            .iter()
+            .filter(|e| matches!(e.thought.as_str(), "Death" | "WitnessDeath" | "SawDeadBody" | "LostPet"))
+            .filter_map(|e| {
+                let age = t_now - (e.year as i64 * rf_core::TICKS_PER_YEAR as i64 + e.year_tick as i64);
+                // Memories of the last two years; the second year at half strength.
+                let k = if age <= rf_core::TICKS_PER_YEAR as i64 { 1 } else if age <= 2 * rf_core::TICKS_PER_YEAR as i64 { 2 } else { return None };
+                Some((e.strength / k, divider(&e.emotion)))
+            })
+            .filter(|&(_, d)| d > 0)
+            .max();
+        let Some((strength, div)) = best else { return };
+        let cap = 100_000 / div;
+        let delta = strength * STRESS_K / div / RECALL_DIV * (150 - f.bravery) / 100;
+        if u.stress < cap && delta > 0 {
+            u.stress = (u.stress + delta).min(cap).clamp(ST_MIN, ST_MAX);
+            self.social.psy[s].without_distress = 0;
+            self.skills.recalls += 1;
+        }
+        let _ = now;
     }
 
     fn socialize(&mut self, s: usize, ri: usize, kind: RoomKind, now: u64, r: &mut Rng) {

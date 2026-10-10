@@ -1475,7 +1475,7 @@ impl Sim {
                     Some(old) if old != p => {
                         self.prod.order_period.insert(id, p);
                         let o = &mut self.world.work_orders[oi];
-                        let ran = o.amount_left < o.amount_total; // [skills9]
+                        let ran = o.amount_left == 0 && o.amount_total > 0; // [skills9] finished: approved again
                         o.amount_left = o.amount_total;
                         if ran {
                             self.skills_order_approved(); // [skills9] the manager approves the order again
