@@ -109,6 +109,9 @@ pub struct Chaos {
     pub guard: bool,
     /// Keep the sim's own invasions off (and never toggle them back on).
     pub no_invasions: bool,
+    alert_since: Option<u64>,
+    /// Player emulation: lift a civilian alert after half a month.
+    pub lift_alert: bool,
 }
 
 fn clamp_pos(w: &World, x: i32, y: i32, z: i32) -> Pos {
@@ -121,7 +124,7 @@ fn clamp_pos(w: &World, x: i32, y: i32, z: i32) -> Pos {
 
 impl Chaos {
     pub fn new(seed: u64) -> Chaos {
-        Chaos { rng: Rng::new(seed), log: Vec::new(), baseline: HashSet::new(), out: Outcome::default(), violent: true, slow_tps: 0.0, guard: true, no_invasions: false }
+        Chaos { rng: Rng::new(seed), log: Vec::new(), baseline: HashSet::new(), out: Outcome::default(), violent: true, slow_tps: 0.0, guard: true, no_invasions: false, alert_since: None, lift_alert: true }
     }
 
     fn note(&mut self, tick: u64, what: &'static str, detail: String) {
@@ -265,6 +268,7 @@ impl Chaos {
                 let pick = if self.rng.chance(50) { None } else { self.rng.pick(&ids).copied().or(Some(12345)) };
                 self.note(t, "civilian_alert", format!("{pick:?}"));
                 sim.set_civilian_alert(pick);
+                self.alert_since = pick.map(|_| t);
             }
             30 => {
                 let zone = self.building_id(sim, |b| b.kind == "Civzone");
@@ -953,10 +957,24 @@ impl Chaos {
         if self.baseline.is_empty() {
             self.set_baseline(&sim);
         }
+        let trace = std::env::var_os("CHAOS_TRACE").is_some();
         for s in 0..steps {
+            if trace {
+                eprintln!("trace step {s} tick {} act", sim.ticks());
+            }
             let n = self.rng.range(0, 3);
             for _ in 0..n {
                 self.act(&mut sim);
+                if trace {
+                    eprintln!("trace   {}", self.log.last().cloned().unwrap_or_default());
+                }
+            }
+            // Like a player: lift a civilian alert after half a month (burrowed civilians
+            // without food starve, as in DF).
+            if self.lift_alert && self.alert_since.map(|t| sim.ticks() >= t + rf_core::TICKS_PER_MONTH as u64 / 2).unwrap_or(false) {
+                sim.set_civilian_alert(None);
+                self.alert_since = None;
+                self.note(sim.ticks(), "civilian_alert", "lifted".into());
             }
             // Like a player: when hostiles show up, the military gets ready (usually).
             if self.guard && self.rng.chance(60) && !sim.hostiles().is_empty() && sim.world.squads.iter().all(|q| q.schedule.eq_ignore_ascii_case("Off duty") || q.schedule.is_empty()) {
@@ -968,6 +986,9 @@ impl Chaos {
             }
             let before = sim.stats();
             let t0 = std::time::Instant::now();
+            if trace {
+                eprintln!("trace step {s} run_ticks");
+            }
             sim.run_ticks(step_ticks);
             let dt = t0.elapsed().as_secs_f64();
             self.out.sim_secs += dt;
@@ -990,7 +1011,13 @@ impl Chaos {
             self.out.ticks += step_ticks as u64;
             self.out.steps += 1;
             if s % 8 == 0 {
+                if trace {
+                    eprintln!("trace step {s} ui_queries");
+                }
                 self.ui_queries(&mut sim);
+            }
+            if trace {
+                eprintln!("trace step {s} check");
             }
             let cits: HashSet<String> = sim.world.units.iter().filter(|u| u.flags.citizen).map(|u| u.name.clone()).collect();
             for a in sim.drain_announcements() {

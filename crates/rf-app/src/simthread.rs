@@ -160,7 +160,17 @@ fn spawn_worker() -> Option<Worker> {
                 while left > 0 && !gb.load(Ordering::Acquire) {
                     let n = chunk.min(left).min(u32::MAX as u64);
                     let t = Instant::now();
-                    sim.run_ticks(n as u32);
+                    // [chaos10] A panic in the simulation must not take the game with it: write
+                    // a rescue save of the world (Sim::new rebuilds the rest on load), then let
+                    // the panic continue so the UI reports it.
+                    if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| sim.run_ticks(n as u32))) {
+                        let dir = crate::save::save_dir();
+                        match crate::save::save_world_tagged(&sim.world, sim.seed, &dir, "crash") {
+                            Ok(info) => eprintln!("rustfort: the simulation crashed; rescue save written to {}", info.path.display()),
+                            Err(err) => eprintln!("rustfort: the simulation crashed; rescue save failed: {err}"),
+                        }
+                        std::panic::resume_unwind(e);
+                    }
                     let dt = t.elapsed();
                     busy.fetch_add(dt.as_nanos() as u64, Ordering::Relaxed);
                     left -= n;

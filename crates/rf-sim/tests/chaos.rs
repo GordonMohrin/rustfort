@@ -87,6 +87,46 @@ fn station_on_a_wall_goes_next_to_it_without_failing_searches() {
     assert!(near >= 2, "soldiers went to the station ({near} near)");
 }
 
+/// Round 10 chaos, real fort seeds 204 and 108 (war and peace): the game died with "thread
+/// has overflowed its stack". Under a civilian alert, `construct_try` recursed once per
+/// planned construction without material inside the burrow; with a big planned area that is
+/// thousands of frames. It is a loop now. The sim runs on a thread with a small stack here,
+/// so the old recursion overflows with 1 600 jobs.
+#[test]
+fn many_constructions_without_material_under_an_alert_do_not_overflow_the_stack() {
+    let h = std::thread::Builder::new()
+        .stack_size(512 * 1024)
+        .spawn(|| {
+            let (dx, dy, dz) = (64u16, 64u16, 20u16);
+            let surface_z = (dz as i16 * 2 / 3).max(2);
+            let (cx, cy, hz) = (dx as i16 / 2, dy as i16 / 2, (surface_z - 4).max(0));
+            let mut w = World::synthetic(dx, dy, dz);
+            w.items.clear(); // no material anywhere
+            let floor = w.tiletypes.by_name("StoneFloor1").unwrap();
+            for y in cy - 20..=cy + 20 {
+                for x in cx - 20..=cx + 20 {
+                    if (x, y) != (cx, cy) {
+                        w.tile_mut(Pos::new(x, y, hz)).unwrap().tt = floor;
+                    }
+                }
+            }
+            let mut sim = Sim::new(w, 8);
+            sim.set_invasions(false);
+            let n = sim.build_construction(rf_sim::ConstructionKind::Wall, Pos::new(cx - 20, cy - 20, hz), Pos::new(cx + 20, cy + 20, hz));
+            let b = sim.create_burrow("Hall", Pos::new(cx - 20, cy - 20, hz), Pos::new(cx + 20, cy + 20, hz));
+            sim.set_civilian_alert(Some(b));
+            for u in sim.world.units.iter().map(|u| u.id).collect::<Vec<_>>() {
+                sim.set_labor(u, "BUILD_CONSTRUCTION", true);
+            }
+            sim.run_ticks(3_000);
+            n
+        })
+        .unwrap();
+    let n = h.join().expect("the sim thread overflowed or panicked");
+    println!("{n} planned walls without material under a civilian alert: no overflow");
+    assert!(n > 1_000, "only {n} constructions planned");
+}
+
 /// Round 10 chaos, real fort, every seed: seeds planted in DF's farm plots are turned into
 /// crops (the seed item is destroyed), but the plot kept the dead item ids in
 /// `Building::items` forever, and saves carried them. Compaction now drops them.

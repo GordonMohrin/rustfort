@@ -44,6 +44,7 @@ fn main() {
     let jobs: usize = get("--jobs").and_then(|s| s.parse().ok()).unwrap_or(4).max(1);
     let peaceful = has("--peaceful");
     let no_invasions = has("--no-invasions");
+    let keep_alert = has("--keep-alert");
     let slow_tps: f64 = get("--slow").and_then(|s| s.parse().ok()).unwrap_or(5000.0);
     let synthetic = has("--synthetic");
     let bench = has("--bench");
@@ -88,6 +89,7 @@ fn main() {
             c.violent = !peaceful;
             c.slow_tps = slow_tps;
             c.no_invasions = no_invasions;
+            c.lift_alert = !keep_alert;
             // `c` stays readable after a panic (its action log is the repro).
             let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 pool.install(|| {
