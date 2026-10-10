@@ -269,6 +269,22 @@ pub(crate) struct BodyT {
     pub nopain: bool,
 }
 
+/// [ranged] A blow that landed: the attack, the weapon or projectile, the names for the log.
+pub(crate) struct Blow {
+    pub atk: AtkT,
+    /// Struck with an object (weapon, projectile), not a body part.
+    pub armed: bool,
+    pub wmech: Mech,
+    pub wsize: f32,
+    pub wquality: f32,
+    pub wdesc: Option<String>,
+    pub skill: i32,
+    pub an: String,
+    pub dn: String,
+    /// Projectile momentum: replaces the attacker's strength-based momentum.
+    pub momentum: Option<f32>,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct WeapT {
     pub name: String,
@@ -1404,6 +1420,13 @@ impl Sim {
         self.combat.stats.hits += 1;
         self.add_xp(a, &a_skill_name, 10);
         self.add_xp(a, "MELEE_COMBAT", 3);
+        self.strike(a, d, now, &mut r, Blow { atk, armed: weapon.is_some(), wmech, wsize, wquality, wdesc, skill: a_skill, an, dn, momentum: None }) // [ranged]
+    }
+
+    /// [ranged] Resolve a blow that landed (melee or projectile): hit location, momentum, armor
+    /// and tissue layers, wounds and death. Returns true if `d` died.
+    pub(crate) fn strike(&mut self, a: usize, d: usize, now: u64, r: &mut Rng, b: Blow) -> bool {
+        let Blow { atk, armed, wmech, wsize, wquality, wdesc, skill: a_skill, an, dn, momentum } = b; // [ranged]
         // --- hit location
         let db = self.combat.f[d].body as usize;
         let mut part = u16::MAX;
@@ -1438,6 +1461,9 @@ impl Sim {
         let wmass = (wmech.dens.max(100.0) * wsize.max(1.0)).max(1.0);
         let mut m = isize_ * str_ * atk.vel / (1e6 * (1.0 + isize_ / wmass));
         m *= (60 + r.below(41)) as f32 / 100.0 * (1.0 + 0.03 * a_skill.clamp(0, 20) as f32);
+        if let Some(pm) = momentum {
+            m = pm; // [ranged] projectile momentum (launcher force, ammo weight)
+        }
         let qw = 1.0 + 0.2 * wquality;
         let sharp = (wmech.edge / 10_000.0).max(0.05);
         // --- armor layers
@@ -1476,7 +1502,7 @@ impl Sim {
                 spread = true;
             } else {
                 // Blunt deflection: 2 * Sw * IYw < A * Da (MPa, g/cm³).
-                if weapon.is_some() && 2.0 * wsize * (wmech.iy / 1000.0) < aa * (am.dens / 1000.0) {
+                if armed && 2.0 * wsize * (wmech.iy / 1000.0) < aa * (am.dens / 1000.0) {
                     m = 0.0;
                 } else {
                     // Rigid armor spreads a blow over at least ~1000 mm² (estimate, A >= 1).
@@ -2243,6 +2269,9 @@ impl Sim {
 
     /// Move towards target `t` and attack it when adjacent. False if the target is gone.
     pub(crate) fn pursue(&mut self, s: usize, now: u64) -> bool {
+        if let Some(shot) = self.ranged_pursue(s, now) {
+            return shot; // [ranged] shoot from a distance instead of closing in
+        }
         let t = self.combat.f[s].target;
         if !self.alive(t) || self.world.units[self.ai[t as usize].uidx].flags.inactive {
             self.combat.f[s].target = NONE;

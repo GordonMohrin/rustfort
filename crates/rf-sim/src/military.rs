@@ -151,6 +151,7 @@ impl Sim {
 
     /// `Task::Combat` was cancelled (path failure, death): drop reservations and beds.
     pub(crate) fn combat_cancel(&mut self, s: usize) {
+        self.ranged_cancel(s); // [ranged]
         self.release_rest(s);
         if let Some(f) = self.combat.f.get_mut(s) {
             if let Sub::Equip(id) = f.sub {
@@ -235,6 +236,9 @@ impl Sim {
                 }
                 return;
             }
+        }
+        if self.ranged_soldier(s, now) {
+            return; // [ranged] quiver, ammo, archery practice
         }
         if now >= self.combat.f[s].equip_at {
             self.combat.f[s].equip_at = now + rf_core::TICKS_PER_DAY as u64;

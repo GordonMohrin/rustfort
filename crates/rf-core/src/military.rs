@@ -116,6 +116,15 @@ pub struct WeaponRaw {
     pub minimum_size: i32,
     pub ranged_ammo: String,
     pub attacks: Vec<AttackRaw>,
+    /// [ranged] Item definition kind as exported: `WEAPON`, `AMMO` or `TRAPCOMP` (empty = weapon).
+    pub kind: String,
+    /// [ranged] Skill used when firing (`CROSSBOW`, `BOW`, `BLOWGUN`); empty for melee weapons.
+    pub skill_ranged: String,
+    /// [ranged] DF `SHOOT_FORCE` and `SHOOT_MAXVEL` of launchers (0 = not a launcher).
+    pub shoot_force: i32,
+    pub shoot_maxvel: i32,
+    /// [ranged] Plural name, e.g. `bolts`.
+    pub name_plural: String,
 }
 
 /// Armor/clothing definition (helms, armor, gloves, shoes, pants, shields).
