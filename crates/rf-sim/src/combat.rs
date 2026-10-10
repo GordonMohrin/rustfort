@@ -1910,6 +1910,7 @@ impl Sim {
         u.wounds = out;
         u.blood = blood;
         u.blood_max = bmax;
+        self.health_sync_names(s); // [moods]
     }
 
     fn knock_out(&mut self, s: usize, until: u64, why: &str) {
@@ -2185,7 +2186,7 @@ impl Sim {
             return false;
         }
         let total: i32 = f.wounds.iter().filter(|w| w.flags & wf::SEVERED == 0).map(|w| w.sev).sum();
-        f.wounds.iter().any(|w| w.flags & wf::BROKEN != 0) || total > 15_000 || f.blood * 10 < f.blood_max * 7
+        f.wounds.iter().any(|w| w.flags & wf::BROKEN != 0) || total > 15_000 || f.blood * 10 < f.blood_max * 7 || self.health_wants_bed(s) // [moods]
     }
 
     // ------------------------------------------------------------------ unit control
@@ -2432,7 +2433,7 @@ impl Sim {
     // ------------------------------------------------------------------ recovery
 
     fn patient_think(&mut self, s: usize, now: u64) {
-        if self.needs_break(s) {
+        if self.needs_break(s) && !self.health_keep_in_bed(s) { // [moods] bedridden patients are fed
             self.release_rest(s);
             self.combat.f[s].role = Role::None;
             self.ai[s].task = Task::Idle;

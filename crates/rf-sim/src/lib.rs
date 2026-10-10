@@ -83,6 +83,12 @@ pub use fluids::FluidReport; // [fluids]
 pub use industry::IndustryReport; // [industry]
 pub use storage::{PileReport, StorageReport}; // [industry]
 mod rng;
+pub mod moods; // [moods]
+pub mod health; // [moods]
+pub mod caverns; // [moods]
+pub use caverns::{BeastRecord, CavernLayer, CavernReport}; // [moods]
+pub use health::{HealthInfo, HealthReport}; // [moods]
+pub use moods::{MoodKind, MoodRecord}; // [moods]
 
 use items::{is_drink, is_edible, Cat};
 use nav::{Nav, DIRS8};
@@ -382,6 +388,10 @@ enum Task {
     GoDine(i32, u32),
     /// [combat] Unit run by the combat/military module (fighting, fleeing, training, resting).
     Combat,
+    /// [moods] Strange mood (see `moods`).
+    Mood,
+    /// [moods] Doctor or caretaker treating a patient (see `health`).
+    Care,
 }
 
 struct UnitAi {
@@ -551,6 +561,10 @@ pub struct Sim {
     def: defense::Defense,
     /// [ranged] Launchers, ammo, shooters, archery targets (see `ranged`).
     ranged: ranged::Ranged,
+    /// [moods] Strange moods, health care, caverns (see `moods`, `health`, `caverns`).
+    moods: moods::Moods,
+    health: health::Health,
+    caverns: caverns::Caverns,
 }
 
 #[inline]
@@ -653,6 +667,9 @@ impl Sim {
             trade: trade::Trade::default(), // [society]
             def: defense::Defense::default(), // [defense]
             ranged: ranged::Ranged::default(), // [ranged]
+            moods: moods::Moods::default(), // [moods]
+            health: health::Health::default(), // [moods]
+            caverns: caverns::Caverns::default(), // [moods]
         };
         sim.init_plants();
         sim.init_units();
@@ -665,6 +682,8 @@ impl Sim {
         sim.init_storage(); // [industry]
         sim.init_combat(); // [combat]
         sim.init_defense(); // [defense]
+        sim.init_moods(); // [moods]
+        sim.init_health(); // [moods]
         sim.rebuild_food_lists();
         sim.rebuild_haul();
         sim
@@ -1016,6 +1035,8 @@ impl Sim {
             (_, Task::GoPickup(_, d)) | (_, Task::GoStore(_, d)) => ("Store Item in Stockpile", Some(pos_of(d))),
             (_, Task::Fetch(_)) | (_, Task::GoSite) | (_, Task::Craft) => self.wjob_caption(s),
             (_, Task::Combat) => self.combat_caption(s), // [combat]
+            (_, Task::Mood) => self.mood_caption(s), // [moods]
+            (_, Task::Care) => self.care_caption(s), // [moods]
         };
         UnitStatus {
             activity: activity.into(),
@@ -1071,6 +1092,9 @@ impl Sim {
         self.combat_hash(&mut mix); // [combat]
         self.fluids_hash(&mut mix); // [fluids]
         self.society_hash(&mut mix); // [society]
+        self.moods_hash(&mut mix); // [moods]
+        self.health_hash(&mut mix); // [moods]
+        self.caverns_hash(&mut mix); // [moods]
         h
     }
 
@@ -1178,6 +1202,11 @@ impl Sim {
             self.population_tick(now); // [society]
         }
         self.defense_tick(now); // [defense]
+        if now % 100 == 73 {
+            self.moods_pass(now); // [moods]
+        }
+        self.health_tick(now); // [moods]
+        self.caverns_tick(now); // [moods]
         let t0 = Instant::now();
         for s in 0..self.ai.len() {
             if self.ai[s].wake <= now {
@@ -1446,7 +1475,7 @@ impl Sim {
             }
             Task::Combat => self.combat_think(s, now), // [combat]
             _ => {
-                let interruptible = matches!(task, Task::GoJob(_) | Task::GoPickup(..) | Task::GoStore(..) | Task::Wander | Task::Fetch(_) | Task::GoSite);
+                let interruptible = matches!(task, Task::GoJob(_) | Task::GoPickup(..) | Task::GoStore(..) | Task::Wander | Task::Fetch(_) | Task::GoSite | Task::Care); // [moods] Care
                 if urgent && interruptible {
                     self.cancel_task(s);
                     self.decide(s, now);
@@ -1503,7 +1532,7 @@ impl Sim {
     fn move_to(&mut self, s: usize, q: u32, now: u64) {
         self.stats.steps += 1;
         let p = self.world.pos_of(q as usize);
-        if self.def.trap_tile(q) {
+        if self.def.trap_tile(q) && !self.caverns_trapavoid(s) { // [moods] TRAPAVOID
             self.def.pending.push((s as u32, q)); // [defense] traps and pressure plates
         }
         let ai = &mut self.ai[s];
@@ -1533,6 +1562,9 @@ impl Sim {
 
     fn decide(&mut self, s: usize, now: u64) {
         self.stats.decisions += 1;
+        if self.moods_decide(s, now) {
+            return; // [moods] strange mood, insanity
+        }
         let mut r = Rng::for_unit(self.seed, s, now, 1);
         let ai = &mut self.ai[s];
         let elapsed = (now.saturating_sub(ai.last_decide)).clamp(1, 120) as u32;
@@ -1564,6 +1596,9 @@ impl Sim {
             // [social] Tantrum, depression, obliviousness or insanity: no work.
             self.wander(s, now, &mut r);
             return;
+        }
+        if self.health_decide(s, now) {
+            return; // [moods] doctors and caretakers
         }
         if self.defense_try_job(s, now) {
             return; // [defense] Pull the Lever
@@ -1711,6 +1746,8 @@ impl Sim {
             Task::Fetch(id) => self.prod_arrive_fetch(s, id, now),
             Task::GoSite => self.prod_arrive_site(s, now),
             Task::GoDine(id, _) => self.social_arrive_dine(s, id, now), // [social]
+            Task::Mood => self.mood_arrive(s, now), // [moods]
+            Task::Care => self.care_arrive(s, now), // [moods]
             Task::Job(_) | Task::Drink(_) | Task::Eat(_) | Task::Sleep(_) | Task::Craft => {}
             Task::Combat => self.combat_think(s, now), // [combat]
         }
@@ -1822,6 +1859,8 @@ impl Sim {
             }
             Task::Fetch(_) | Task::GoSite | Task::Craft => self.prod_cancel(s),
             Task::Combat => self.combat_cancel(s), // [combat]
+            Task::Mood => self.mood_cancel(s), // [moods]
+            Task::Care => self.care_cancel(s), // [moods]
             Task::Idle | Task::Wander => {}
         }
         let ai = &mut self.ai[s];
