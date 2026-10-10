@@ -734,9 +734,10 @@ Reading it:
 - Same war outcomes per seed before and after (the r4 -> r5 seeds lose 0, 0 and 44 citizens in
   both builds).
 - 2 years `rustfort bench --standdown` on r5 (seed 1): 87 -> 47 citizens, 226 deaths, the same
-  state hash `c7c43932c5d8c7c7` with 1 and N threads. Throughput was 13.4k ticks/s on a machine
-  running four other builds; the v0.11 binary ran at 12.5k ticks/s under the same load, with the
-  same production share (31 us/tick).
+  state hash `c7c43932c5d8c7c7` with 1 and N threads (v0.11: the same 47 alive, 226 deaths).
+  Throughput on a machine running four other builds: 36.5k ticks/s (N threads), 21.0k (1
+  thread); under heavier load both this build and the v0.11 binary ran at 12.5-13.4k ticks/s
+  with the same production cost (31 us/tick), so the reactions add no measurable cost.
 - saveload N = M = 20 000: IDENTICAL. Chaos r5 seeds 1-4, 1 year each: 0 panics.
 
 ## Limitations
