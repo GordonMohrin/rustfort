@@ -58,11 +58,73 @@ pub(crate) struct BarracksT {
 }
 
 fn entry_matches(entry: &str, kind: &str, subtype: &str) -> bool {
-    let head = entry.split('@').next().unwrap_or("");
-    let mut parts = head.splitn(2, ':');
-    let k = parts.next().unwrap_or("");
-    let sub = parts.next().unwrap_or("");
+    let (k, sub, _) = uniform_parts(entry);
     !k.is_empty() && k == kind && (sub.is_empty() || sub == subtype)
+}
+
+/// [gaps10] A uniform entry `KIND[:SUBTYPE][@material]` split into (kind, subtype, material).
+pub(crate) fn uniform_parts(entry: &str) -> (&str, &str, &str) {
+    let (head, mat) = match entry.split_once('@') {
+        Some((h, m)) => (h, m.trim()),
+        None => (entry, ""),
+    };
+    let (k, sub) = head.split_once(':').unwrap_or((head, ""));
+    (k.trim(), sub.trim(), mat)
+}
+
+/// [gaps10] Does a material fit the material part of a uniform entry? `spec` is a DF token
+/// (`INORGANIC:STEEL`), a plain metal name (`steel`, `iron`, `bronze`, `copper`) or a DF entity
+/// material class (`Armor`, `Metal`, `Leather`, `Wood`, `Bone`, `Shell`, `Cloth`, ...). An empty
+/// spec fits everything; an unknown class fits everything (no filter rather than no uniform).
+pub(crate) fn uniform_mat_fits(spec: &str, m: Option<&rf_core::MaterialInfo>) -> bool {
+    if spec.is_empty() {
+        return true;
+    }
+    let Some(m) = m else { return false };
+    if spec.contains(':') {
+        return m.token.eq_ignore_ascii_case(spec);
+    }
+    let up = spec.to_ascii_uppercase();
+    let ends = |suffix: &str| m.token.ends_with(suffix);
+    match up.as_str() {
+        // DF entity material categories for metal gear (`Armor` = the civ's armor metals).
+        "METAL" | "ARMOR" | "WEAPONMELEE" | "WEAPONRANGED" | "AMMO" | "AMMO2" | "PICK" | "ANVIL" => m.is_metal,
+        "LEATHER" => ends(":LEATHER"),
+        "BONE" => ends(":BONE"),
+        "SHELL" => ends(":SHELL"),
+        "HORN" => ends(":HORN"),
+        "IVORY" | "TOOTH" => ends(":TOOTH") || ends(":IVORY"),
+        "PEARL" => ends(":PEARL"),
+        "WOOD" | "WOOD2" => m.is_wood,
+        "STONE" => m.is_stone,
+        "GEM" => m.is_gem,
+        "GLASS" => m.is_glass,
+        "SILK" => ends(":SILK"),
+        "WOOL" | "YARN" => ends(":HAIR") || ends(":WOOL") || ends(":YARN"),
+        "CLOTH" | "CLOTHING" | "PLANTFIBER" | "THREAD" => ends(":THREAD") || ends(":SILK") || ends(":HAIR") || ends(":WOOL") || ends(":YARN"),
+        name => {
+            // A plain material name: `steel` = INORGANIC:STEEL, or the material's own name. Other
+            // unknown words (classes this table does not know) do not filter.
+            const NAMED: &[&str] = &["STEEL", "IRON", "PIG_IRON", "BRONZE", "BISMUTH_BRONZE", "COPPER", "SILVER", "GOLD", "ADAMANTINE", "BRASS", "TIN"];
+            m.token.strip_prefix("INORGANIC:") == Some(name) || m.name.eq_ignore_ascii_case(spec) || !NAMED.contains(&name)
+        }
+    }
+}
+
+/// [gaps10] "Best item available (e.g. steel rather than iron rather than copper)" (wiki Uniform)
+/// when the uniform names no material: higher is better.
+pub(crate) fn uniform_mat_rank(m: Option<&rf_core::MaterialInfo>) -> i32 {
+    let Some(m) = m else { return 0 };
+    match m.token.as_str() {
+        "INORGANIC:ADAMANTINE" => 100,
+        "INORGANIC:STEEL" => 60,
+        "INORGANIC:IRON" => 50,
+        "INORGANIC:BRONZE" | "INORGANIC:BISMUTH_BRONZE" => 40,
+        "INORGANIC:COPPER" => 30,
+        "INORGANIC:SILVER" => 25,
+        _ if m.is_metal => 20,
+        _ => m.value.clamp(0, 15),
+    }
 }
 
 impl Sim {
@@ -85,6 +147,30 @@ impl Sim {
         }
     }
 
+    /// [gaps10] DF uniform option "Exact matches only" (true) or "Partial matches okay" (false, DF's
+    /// default): with exact matches a soldier goes without a piece rather than wear a substitute of
+    /// another material. (Session setting: not part of the save yet.)
+    pub fn set_squad_uniform_exact(&mut self, squad_id: i32, exact: bool) {
+        let v = &mut self.combat.mil.exact;
+        match (v.binary_search(&squad_id), exact) {
+            (Err(p), true) => v.insert(p, squad_id),
+            (Ok(p), false) => {
+                v.remove(p);
+            }
+            _ => {}
+        }
+        for f in &mut self.combat.f {
+            if f.squad == squad_id {
+                f.equip_at = 0;
+            }
+        }
+    }
+
+    /// [gaps10] Is "Exact matches only" set for this squad?
+    pub fn squad_uniform_exact(&self, squad_id: i32) -> bool {
+        self.combat.mil.exact.binary_search(&squad_id).is_ok()
+    }
+
     /// Equipment report of a squad: per position the uniform, what is worn, what is missing.
     pub fn squad_equipment(&self, squad_id: i32) -> Vec<SquadEquipment> {
         let Some(q) = self.world.squads.iter().find(|q| q.id == squad_id) else { return Vec::new() };
@@ -93,7 +179,7 @@ impl Sim {
             let uniform = self.uniform_for(q, pos);
             let mut row = SquadEquipment { position: pos, unit: uid, uniform: uniform.clone(), ..Default::default() };
             if let Some(u) = (uid >= 0).then(|| self.world.unit(uid)).flatten() {
-                let mut have: Vec<(String, String)> = Vec::new();
+                let mut have: Vec<(String, String, u16)> = Vec::new();
                 for &id in &u.inventory {
                     let Some(&i) = self.item_idx.get(&id) else { continue };
                     let it = &self.world.items[i as usize];
@@ -101,7 +187,7 @@ impl Sim {
                         continue;
                     }
                     row.worn.push((id, it.desc.clone()));
-                    have.push((it.kind.clone(), it.subtype.clone()));
+                    have.push((it.kind.clone(), it.subtype.clone(), it.mat));
                     if it.kind == "AMMO" {
                         row.ammo += it.stack.max(0);
                     }
@@ -116,7 +202,16 @@ impl Sim {
                         }
                     }
                 }
-                row.missing = uniform.iter().filter(|e| !have.iter().any(|(k, st)| entry_matches(e, k, st))).cloned().collect();
+                // [gaps10] the material counts too, unless partial matches are okay (DF default)
+                let exact = self.squad_uniform_exact(squad_id);
+                row.missing = uniform
+                    .iter()
+                    .filter(|e| {
+                        let mat = uniform_parts(e).2;
+                        !have.iter().any(|(k, st, m)| entry_matches(e, k, st) && (!exact || uniform_mat_fits(mat, self.world.material(*m))))
+                    })
+                    .cloned()
+                    .collect();
             } else {
                 row.missing = uniform;
             }
@@ -508,6 +603,57 @@ mod tests {
         let after = sim.squad_equipment(sq);
         assert!(after[0].worn.iter().any(|(i, _)| *i == id), "the axe was picked up: {after:?}");
         assert!(after[0].missing.is_empty());
+    }
+
+    #[test]
+    fn uniform_materials_exact_and_partial_matches() {
+        // [gaps10] wiki Uniform: the material must match; without a material the best item;
+        // "Partial matches okay" (default) substitutes, "Exact matches only" goes without.
+        let (w, _) = world();
+        let z = w.units[0].pos.z;
+        let mut sim = sim_of(w, 57);
+        let iron = sim.ensure_material("INORGANIC:IRON");
+        let steel = sim.ensure_material("INORGANIC:STEEL");
+        let axe = |sim: &mut Sim, mat: u16, x: i16| {
+            let id = sim.next_item_id;
+            sim.next_item_id += 1;
+            sim.push_item(Item { id, kind: "WEAPON".into(), subtype: "ITEM_WEAPON_AXE_BATTLE".into(), mat, pos: Pos::new(x, 22, z), stack: 1, container: -1, holder: -1, building: -1, desc: "battle axe".into(), flags: ItemFlags { on_ground: true, ..Default::default() }, ..Default::default() });
+            id
+        };
+        let near_iron = axe(&mut sim, iron, 21);
+        let far_steel = axe(&mut sim, steel, 30);
+        let sq = sim.create_squad("Axt");
+        sim.assign_squad_member(sq, 0, 4);
+        let s = sim.unit_slot[&4];
+        sim.combat.f[s].squad = sq;
+        sim.world.units[sim.ai[s].uidx].squad_position = 0;
+        let q = sim.world.idx(Pos::new(22, 22, z)).unwrap() as u32;
+        sim.move_to(s, q, 0);
+        // A named material: only steel fits, though the iron axe lies nearer.
+        sim.set_squad_uniform(sq, 0, &["WEAPON:ITEM_WEAPON_AXE_BATTLE@INORGANIC:STEEL"]);
+        assert_eq!(sim.find_uniform_item(s), Some(far_steel));
+        sim.set_squad_uniform(sq, 0, &["WEAPON:ITEM_WEAPON_AXE_BATTLE@steel"]);
+        assert_eq!(sim.find_uniform_item(s), Some(far_steel), "plain metal names");
+        // No material: the best metal (steel rather than iron).
+        sim.set_squad_uniform(sq, 0, &["WEAPON:ITEM_WEAPON_AXE_BATTLE"]);
+        assert_eq!(sim.find_uniform_item(s), Some(far_steel));
+        // A class: `@Metal` fits both, the best first; `@Leather` fits neither.
+        sim.set_squad_uniform(sq, 0, &["WEAPON:ITEM_WEAPON_AXE_BATTLE@Metal"]);
+        assert_eq!(sim.find_uniform_item(s), Some(far_steel));
+        // Partial matches (default): a copper axe is wanted, none exists, iron/steel substitute.
+        sim.set_squad_uniform(sq, 0, &["WEAPON:ITEM_WEAPON_AXE_BATTLE@INORGANIC:COPPER"]);
+        assert_eq!(sim.find_uniform_item(s), Some(far_steel), "something close: the best substitute");
+        sim.set_squad_uniform_exact(sq, true);
+        assert_eq!(sim.find_uniform_item(s), None, "exact matches only: go without");
+        sim.set_squad_uniform(sq, 0, &["WEAPON:ITEM_WEAPON_AXE_BATTLE@INORGANIC:IRON"]);
+        assert_eq!(sim.find_uniform_item(s), Some(near_iron));
+        // The equipment report honours the material with exact matches.
+        sim.set_squad_uniform(sq, 0, &["WEAPON:ITEM_WEAPON_AXE_BATTLE@INORGANIC:STEEL"]);
+        sim.equip(s, near_iron);
+        let rep = sim.squad_equipment(sq);
+        assert_eq!(rep[0].missing.len(), 1, "an iron axe is no steel axe: {rep:?}");
+        sim.set_squad_uniform_exact(sq, false);
+        assert!(sim.squad_equipment(sq)[0].missing.is_empty(), "partial match accepted");
     }
 
     #[test]

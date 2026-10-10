@@ -31,9 +31,14 @@
 //!   last siege (`MIN_RAIDS_BEFORE_SIEGE` / `_BETWEEN_SIEGES`), else an ambush. Siege size and
 //!   composition: see `warcal.rs`. Ambush size: 1 squad from the first tier, 2 from the Town
 //!   tier, 3 at Metropolis; 2-5 goblins per squad.
-//! - Thief visits: 1 in 2 per season if a kobold civilization exists; snatchers: 1 in 3 per
-//!   season with a goblin civilization at war and children in the fort; they arrive on a random
-//!   day of the season.
+//! - Thief visits: 1 in 2 per season if a kobold civilization is at war with the fort;
+//!   snatchers: 1 in 3 per season with a goblin civilization at war that has not sieged the
+//!   fort yet, and children in the fort; they arrive on a random day of the season.
+//!   [gaps10] Calibrated to Gordon's gamelog: Trussroads (68 springs, 16 ambushes and 5 sieges
+//!   from civ 39) saw **no** thief and no snatcher; his kobold civilization is at peace. His
+//!   earlier forts in the same DF install saw 28-45 "Snatcher!" alarms each, mostly before and
+//!   between their first sieges, which the stage rule follows; that snatchers stop for good after
+//!   the first siege is an ESTIMATE (Windrings still got some later, maybe from a second civ).
 //! - Spotting: within `3 + observer/3 - ambusher/4` tiles (at least 1, at most 8; soldiers on
 //!   duty +3), same z +-1, same walk component, 1 in 2 per 10-tick check. Sleeping or
 //!   unconscious dwarves and children spot nobody.
@@ -164,15 +169,25 @@ impl Sim {
         (0..squads).map(|_| 2 + r.below(4) as usize).sum()
     }
 
-    /// Race of the fort's thieves: kobolds (`ITEM_THIEF`) if a kobold civilization exists (or no
-    /// civilizations were exported at all).
+    /// Race of the fort's thieves: kobolds (entity `SKULKING` with `ITEM_THIEF`) if a kobold
+    /// civilization is **at war** with the fort (or no civilizations were exported at all).
+    /// [gaps10] Only hostile civilizations raid (wiki Invasion); Gordon's kobolds (Chulgis) are at
+    /// peace, and his whole Trussroads gamelog has no thief.
     pub(crate) fn thief_race(&self) -> Option<&'static str> {
-        (self.world.entities.is_empty() || self.world.entities.iter().any(|e| e.race == "KOBOLD")).then_some("KOBOLD")
+        let civ = |e: &rf_core::EntityInfo| e.race == "KOBOLD" && e.relation == "War" && (e.kind == "Civilization" || e.kind.is_empty());
+        (self.world.entities.is_empty() || self.world.entities.iter().any(civ)).then_some("KOBOLD")
     }
 
-    /// A goblin civilization at war (`BABYSNATCHER`), or no civilizations exported.
+    /// A goblin civilization at war (entity `EVIL` with `BABYSNATCHER`) that sends snatchers, or
+    /// no civilizations exported. [gaps10] Snatchers are the first stage of the invading
+    /// civilization's raids: once it has started sieging the fort (DF's `siege_tier`, Gordon's
+    /// civ 39: 4 at r5) it sends ambushes and sieges instead (see the module docs).
     pub(crate) fn snatcher_civ(&self) -> bool {
-        self.world.entities.is_empty() || self.world.entities.iter().any(|e| e.race == "GOBLIN" && e.relation == "War")
+        if self.world.entities.is_empty() {
+            return true;
+        }
+        let civ = self.war_enemy_civ();
+        civ != 9_999 && Self::war_count(&self.world.fort_history.sieges, civ) == 0
     }
 
     pub(crate) fn children_count(&self) -> usize {
@@ -402,7 +417,8 @@ impl Sim {
         let sid = self.combat.inv.next_id;
         let mut members = Vec::new();
         let mut regulars = Vec::new();
-        for (uid, gear, wtok, metal, mail, helm, legs, tile, monster, shield, heavy, cal) in kit {
+        let mut mount_slots = Vec::new(); // [gaps10]
+        for (k, (uid, gear, wtok, metal, mail, helm, legs, tile, monster, shield, heavy, cal)) in kit.into_iter().enumerate() {
             if gear {
                 self.give_item(uid, "WEAPON", wtok, metal, 0);
                 let am = if cal { "INORGANIC:IRON" } else { metal }; // [war9]
@@ -430,9 +446,16 @@ impl Sim {
             if !monster {
                 regulars.push(s as u32);
             }
+            if k >= n + monsters {
+                mount_slots.push(s as u32); // [gaps10]
+            }
         }
         if kind == RaidKind::Siege {
             self.ranged_arm_siege(&regulars); // [ranged] bowmen
+        }
+        // [gaps10] Riders mount up: one regular per mount (wiki Siege: mounted invaders).
+        for (&rider, &mount) in regulars.iter().zip(mount_slots.iter()) {
+            self.ride_start(rider as usize, mount as usize, now);
         }
         // Leader: the best weapon skill among the regulars.
         let leader = regulars
@@ -883,6 +906,9 @@ impl Sim {
         if s >= self.combat.f.len() {
             return;
         }
+        if !self.combat.inv.rides.is_empty() && self.ride_unlink(s, now) {
+            return; // [gaps10] a rider or its mount
+        }
         if self.combat.f[s].carry != NONE {
             if let Some(v) = self.carry_drop(s, now) {
                 let (cn, vn) = (self.uname(s), self.uname(v));
@@ -904,6 +930,11 @@ impl Sim {
 
     /// Hook in `leave_map`: loot and kidnapped children leave with the raider.
     pub(crate) fn raid_left_map(&mut self, s: usize, now: u64) {
+        if !self.combat.inv.rides.is_empty() {
+            if let Some(m) = self.ride_take_mount(s) {
+                self.leave_map(m); // [gaps10] the mount leaves with its rider
+            }
+        }
         let (loot, v) = (self.combat.f[s].loot, self.combat.f[s].carry);
         if loot >= 0 {
             self.combat.stats.items_lost += 1;
@@ -930,6 +961,86 @@ impl Sim {
         if let Ok(p) = self.combat.inv.hidden.binary_search(&(s as u32)) {
             self.combat.inv.hidden.remove(p);
         }
+    }
+
+    // ------------------------------------------------------------------ riding ([gaps10])
+
+    /// [gaps10] `rider` mounts `mount` (wiki Siege: invaders arrive riding beak dogs or cave
+    /// creatures). Mount and rider share a tile and move together at the mount's speed; the
+    /// rider fights from the mount; the mount itself is passive while ridden (ESTIMATE). Built on
+    /// the unit-carrying link (`carry`/`carried_by`): the rider "carries" the mount.
+    pub(crate) fn ride_start(&mut self, rider: usize, mount: usize, now: u64) {
+        if rider == mount || self.combat.f[rider].carry != NONE || self.combat.f[mount].carried_by != NONE || self.ai[rider].kind == Kind::Dead || self.ai[mount].kind == Kind::Dead {
+            return;
+        }
+        // The rider mounts where the mount stands.
+        let q = self.ai[mount].pos;
+        self.ai[rider].pos = q;
+        let uidx = self.ai[rider].uidx;
+        self.world.units[uidx].pos = self.world.pos_of(q as usize);
+        self.carry_start(rider, mount, now);
+        if self.combat.f[rider].carry != mount as u32 {
+            return;
+        }
+        let own = self.ai[rider].speed;
+        self.ai[rider].speed = self.ai[mount].speed.max(1);
+        self.combat.inv.rides.push((rider as u32, mount as u32, own));
+        self.combat.inv.rides_started += 1;
+    }
+
+    /// [gaps10] Hook in `carry_unlink`: a rider that dies, passes out or is caged lets its mount
+    /// go (it fights on its own); a mount that dies or passes out throws its rider, who goes on
+    /// foot at its own speed. True when `s` was part of a ride.
+    fn ride_unlink(&mut self, s: usize, now: u64) -> bool {
+        let Some(k) = self.combat.inv.rides.iter().position(|&(r, m, _)| r as usize == s || m as usize == s) else { return false };
+        let (rider, mount, own) = self.combat.inv.rides.remove(k);
+        let (rider, mount) = (rider as usize, mount as usize);
+        if self.combat.f[rider].carry == mount as u32 {
+            self.carry_drop(rider, now);
+        }
+        if self.ai[mount].kind != Kind::Dead {
+            self.ai[mount].wake = self.ai[mount].wake.min(now + 1);
+        }
+        if self.ai[rider].kind != Kind::Dead {
+            self.ai[rider].speed = own.max(1);
+            self.ai[rider].path.clear();
+            self.ai[rider].path_i = 0;
+            self.ai[rider].wake = self.ai[rider].wake.min(now + 1);
+        }
+        self.combat.inv.dismounts += 1;
+        let (rn, mn) = (self.uname(rider), self.uname(mount));
+        if s == mount {
+            self.combat.log_line(format!("{} falls from {mn}.", crate::combat::cap_pub(&rn)));
+        } else {
+            self.combat.log_line(format!("{} has lost its rider.", crate::combat::cap_pub(&mn)));
+        }
+        true
+    }
+
+    /// [gaps10] The rider leaves the map: unlink its mount and return the mount's slot.
+    fn ride_take_mount(&mut self, s: usize) -> Option<usize> {
+        let k = self.combat.inv.rides.iter().position(|&(r, _, _)| r as usize == s)?;
+        let (_, mount, own) = self.combat.inv.rides.remove(k);
+        let mount = mount as usize;
+        if self.combat.f[s].carry == mount as u32 {
+            self.combat.f[s].carry = NONE;
+            self.combat.f[mount].carried_by = NONE;
+            self.combat.carriers = self.combat.carriers.saturating_sub(1);
+        }
+        self.ai[s].speed = own.max(1);
+        (self.ai[mount].kind != Kind::Dead).then_some(mount)
+    }
+
+    /// [gaps10] The mount a unit rides (unit id), if any.
+    pub fn unit_mount(&self, unit_id: i32) -> Option<i32> {
+        let &s = self.unit_slot.get(&unit_id)?;
+        let &(_, m, _) = self.combat.inv.rides.iter().find(|&&(r, _, _)| r as usize == s)?;
+        Some(self.ai[m as usize].id)
+    }
+
+    /// [gaps10] Mounted raiders on the map right now, riders that arrived mounted, dismounts.
+    pub fn ride_stats(&self) -> (usize, u64, u64) {
+        (self.combat.inv.rides.len(), self.combat.inv.rides_started, self.combat.inv.dismounts)
     }
 
     // ------------------------------------------------------------------ schedule
@@ -1234,6 +1345,92 @@ mod tests {
         sim.run_ticks(rf_core::TICKS_PER_DAY as u32 + 5);
         assert!(sim.combat.inv.sieges[0].fleeing, "the siege breaks with its leader");
         assert_eq!(sim.combat.stats.leaders_killed, 1);
+    }
+
+    #[test]
+    fn thieves_and_snatchers_follow_gordons_history() {
+        // [gaps10] Trussroads: kobolds at peace, goblin civ 39 at war with 4 sieges sent -> no
+        // thief and no snatcher in its whole gamelog.
+        use rf_core::EntityInfo;
+        let civ = |id: i32, race: &str, relation: &str| EntityInfo { id, race: race.into(), kind: "Civilization".into(), relation: relation.into(), ..Default::default() };
+        let (mut sim, _hz, _sz) = fort(50);
+        sim.world.entities = vec![civ(33, "KOBOLD", "Peace"), civ(31, "GOBLIN", "War"), civ(39, "GOBLIN", "War")];
+        sim.world.fort_history.sieges = vec![(39, 4)];
+        assert_eq!(sim.thief_race(), None, "kobolds at peace send no thieves");
+        assert!(!sim.snatcher_civ(), "a civilization that sieges sends no snatchers");
+        let season = 3 * TICKS_PER_MONTH as u64;
+        for k in 0..40 {
+            sim.raids_season(k * season);
+        }
+        assert!(sim.combat.inv.pending.is_empty(), "ten years without visits: {:?}", sim.combat.inv.pending);
+        // At war with the kobolds, and goblins that have not sieged yet: visits come.
+        sim.world.entities[0].relation = "War".into();
+        sim.world.fort_history.sieges.clear();
+        assert_eq!(sim.thief_race(), Some("KOBOLD"));
+        assert!(sim.snatcher_civ());
+        let child = sim.world.units.iter().position(|u| u.is_worker()).unwrap();
+        sim.world.units[child].age = 6.0;
+        sim.world.units[child].race = "DWARF".into();
+        for k in 40..48 {
+            sim.raids_season(k * season);
+        }
+        let kinds: Vec<RaidKind> = sim.combat.inv.pending.iter().map(|p| p.1).collect();
+        assert!(kinds.contains(&RaidKind::Thief) && kinds.contains(&RaidKind::Snatcher), "{kinds:?}");
+    }
+
+    #[test]
+    fn mounted_invaders_ride_and_dismount() {
+        // [gaps10] Mount and rider move together at the mount's speed; the mount dies -> the
+        // rider falls off and walks; the rider dies -> the mount fights on its own.
+        let (mut sim, _hz, _sz) = fort(51);
+        let extra = crate::warcal::RaidExtra { mounts: 2, masters_pct: 0, civ: None };
+        let n = sim.spawn_raid_ex(RaidKind::Siege, "GOBLIN", 3, 0, 0, extra);
+        assert_eq!(n, 5);
+        assert_eq!(sim.combat.inv.rides.len(), 2, "two goblins ride");
+        let (r0, m0, own0) = sim.combat.inv.rides[0];
+        let (r1, m1, _) = sim.combat.inv.rides[1];
+        let (r0, m0, r1, m1) = (r0 as usize, m0 as usize, r1 as usize, m1 as usize);
+        assert!(sim.unit_mount(sim.ai[r0].id) == Some(sim.ai[m0].id));
+        // A fast mount carries its rider at its own speed.
+        sim.ai[m0].speed = 300;
+        sim.ai[r0].speed = 300;
+        let start = sim.ai[r0].pos;
+        for _ in 0..60 {
+            sim.run_ticks(20);
+            assert_eq!(sim.ai[r0].pos, sim.ai[m0].pos, "mount and rider share a tile");
+            assert_eq!(sim.ai[r1].pos, sim.ai[m1].pos);
+        }
+        assert_ne!(sim.ai[r0].pos, start, "the rider moved (charging the fort)");
+        // The mount dies: its rider falls and walks at its own speed.
+        let now = sim.ticks;
+        sim.combat_kill(m0, now, "has been struck down");
+        assert!(sim.unit_mount(sim.ai[r0].id).is_none());
+        assert_eq!(sim.ai[r0].speed, own0, "on foot again");
+        assert_eq!(sim.combat.f[r0].carry, NONE);
+        assert_ne!(sim.ai[r0].kind, Kind::Dead, "the rider survives the fall");
+        // The other rider dies: its mount is free and acts again.
+        let now = sim.ticks;
+        sim.combat_kill(r1, now, "has been struck down");
+        assert_eq!(sim.combat.f[m1].carried_by, NONE);
+        assert!(sim.ai[m1].wake <= now + 1, "the riderless mount wakes up");
+        assert_eq!(sim.combat.f[m1].role, Role::Hostile);
+        assert_eq!(sim.ride_stats(), (0, 2, 2));
+        sim.run_ticks(200);
+        assert_ne!(sim.ai[m1].kind, Kind::Dead);
+    }
+
+    #[test]
+    fn a_leaving_rider_takes_its_mount() {
+        let (mut sim, _hz, _sz) = fort(52);
+        let extra = crate::warcal::RaidExtra { mounts: 1, masters_pct: 0, civ: None };
+        sim.spawn_raid_ex(RaidKind::Siege, "GOBLIN", 2, 0, 0, extra);
+        let (r, m, _) = sim.combat.inv.rides[0];
+        let (r, m) = (r as usize, m as usize);
+        sim.leave_map(r);
+        assert!(sim.combat.inv.rides.is_empty());
+        let mu = &sim.world.units[sim.ai[m].uidx];
+        assert!(mu.flags.inactive, "the mount left with its rider");
+        assert_eq!(sim.combat.stats.children_abducted, 0, "a mount is no abducted child");
     }
 
     #[test]

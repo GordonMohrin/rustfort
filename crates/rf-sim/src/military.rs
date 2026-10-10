@@ -69,6 +69,8 @@ pub(crate) struct Military {
     pub cur: Option<u32>,
     /// [military2] Barracks tiles and beds per squad.
     pub barracks: Vec<crate::barracks::BarracksT>,
+    /// [gaps10] Squads with the uniform option "Exact matches only" (ascending ids).
+    pub exact: Vec<i32>,
 }
 
 fn parse_pos(s: &str) -> Option<Pos> {
@@ -502,7 +504,14 @@ impl Sim {
     }
 
     /// Nearest free item for a missing uniform piece of soldier `s`.
-    fn find_uniform_item(&mut self, s: usize) -> Option<i32> {
+    ///
+    /// [gaps10] DF uniform rules (wiki Uniform): an entry's material (`@INORGANIC:STEEL`, `@steel`,
+    /// `@Armor`, `@Leather`, ...) must match; without a material the best item is taken ("steel
+    /// rather than iron rather than copper"), then the nearest (pieces in the squad's barracks
+    /// first). With "Partial matches okay" (DF's default) a soldier who finds no exact match
+    /// takes the same item type in another material ("something close": the best one); with
+    /// "Exact matches only" he goes without.
+    pub(crate) fn find_uniform_item(&mut self, s: usize) -> Option<i32> {
         let sq = self.combat.f[s].squad;
         // [military2] per-position uniforms
         let spos = self.world.units[self.ai[s].uidx].squad_position.max(0) as usize;
@@ -510,12 +519,13 @@ impl Sim {
         if uniform.is_empty() {
             return None;
         }
+        let exact_only = self.squad_uniform_exact(sq);
         let uidx = self.ai[s].uidx;
-        let inv: Vec<(String, String)> = self.world.units[uidx]
+        let inv: Vec<(String, String, u16)> = self.world.units[uidx]
             .inventory
             .iter()
             .filter_map(|id| self.item_idx.get(id).map(|&i| &self.world.items[i as usize]))
-            .map(|it| (it.kind.clone(), it.subtype.clone()))
+            .map(|it| (it.kind.clone(), it.subtype.clone(), it.mat))
             .collect();
         let pos = self.ai[s].pos as usize;
         let c = self.nav.comp_near(pos);
@@ -525,17 +535,17 @@ impl Sim {
         let up = self.nav.xyz(pos);
         for entry in &uniform {
             // `KIND`, `KIND:SUBTYPE`, `KIND@category` or `KIND:SUBTYPE@MATERIAL` (export format).
-            let head = entry.split('@').next().unwrap_or("");
-            let mut parts = head.splitn(2, ':');
-            let kind = parts.next().unwrap_or("").to_string();
-            let sub = parts.next().unwrap_or("").to_string();
+            let (kind, sub, mat) = crate::barracks::uniform_parts(entry);
             if kind.is_empty() {
                 continue;
             }
-            if inv.iter().any(|(k, st)| *k == kind && (sub.is_empty() || *st == sub)) {
+            let fits = |m: u16| crate::barracks::uniform_mat_fits(mat, self.world.material(m));
+            // Worn already: an exact match, or (partial matches okay) the same type.
+            if inv.iter().any(|(k, st, m)| k == kind && (sub.is_empty() || st == sub) && (!exact_only || fits(*m))) {
                 continue;
             }
-            let mut best = (i32::MAX, -1);
+            // Best key per class: (exact?, material rank, -distance).
+            let mut best: (bool, i32, i32, i32) = (false, i32::MIN, i32::MIN, -1);
             for (i, it) in self.world.items.iter().enumerate() {
                 if it.kind != kind || (!sub.is_empty() && it.subtype != sub) {
                     continue;
@@ -545,15 +555,25 @@ impl Sim {
                 if m.dead || m.reserved > 0 || m.hauling || it.holder >= 0 || it.container >= 0 || it.building >= 0 || f.forbid || f.in_building || f.construction || f.in_job {
                     continue;
                 }
+                let exact = fits(it.mat);
+                if !exact && exact_only {
+                    continue;
+                }
                 let Some(t) = self.world.idx(it.pos) else { continue };
+                if self.nav.comp_near(t) != c {
+                    continue;
+                }
                 // [military2] pieces stored in the squad's barracks first
                 let d = crate::manhattan(up, self.nav.xyz(t)) - if self.in_barracks(sq, t as u32) { 1_000 } else { 0 };
-                if d < best.0 && self.nav.comp_near(t) == c {
-                    best = (d, it.id);
+                // A material token is matched exactly; a class, no material or a substitute: the best.
+                let rank = if mat.contains(':') && exact { 0 } else { crate::barracks::uniform_mat_rank(self.world.material(it.mat)) };
+                let key = (exact, rank, -d, it.id);
+                if (key.0, key.1, key.2) > (best.0, best.1, best.2) || best.3 < 0 {
+                    best = key;
                 }
             }
-            if best.1 >= 0 {
-                return Some(best.1);
+            if best.3 >= 0 {
+                return Some(best.3);
             }
         }
         None

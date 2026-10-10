@@ -68,11 +68,28 @@ pub(crate) struct Invasions {
     /// [war9] Exported wealth of the world when this session started (trades add to it).
     pub exported_base: i64,
     pub exported_base_set: bool,
+    /// [gaps10] Mounted raiders: (rider slot, mount slot, the rider's own walking speed).
+    pub rides: Vec<(u32, u32, i32)>,
+    /// [gaps10] Riders that came mounted / fell or got off their mount.
+    pub rides_started: u64,
+    pub dismounts: u64,
 }
 
 impl Invasions {
     pub fn new() -> Self {
-        Invasions { enabled: true, sieges: Vec::new(), last_season: -1, next_id: 0, hidden: Vec::new(), pending: Vec::new(), exported_base: 0, exported_base_set: false }
+        Invasions {
+            enabled: true,
+            sieges: Vec::new(),
+            last_season: -1,
+            next_id: 0,
+            hidden: Vec::new(),
+            pending: Vec::new(),
+            exported_base: 0,
+            exported_base_set: false,
+            rides: Vec::new(),
+            rides_started: 0,
+            dismounts: 0,
+        }
     }
 }
 
