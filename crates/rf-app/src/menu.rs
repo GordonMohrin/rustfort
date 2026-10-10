@@ -1012,6 +1012,12 @@ pub async fn run_menu(args: &Args, settings: Settings, start_frame: u32) -> (Opt
 /// Title screen and game in turn. `initial`: a world loaded from the command line (no title
 /// screen first).
 pub async fn app_main(mut args: Args, mut settings: Settings, mut initial: Option<Loaded>) {
+    // Automated (screenshot) runs go to virtual desktop 1 so they don't pop up on Gordon's
+    // active desktop; normal play stays where Windows opens the window.
+    if let Some(n) = crate::desktop::wanted(args.desktop, args.screenshot.is_some()) {
+        macroquad::window::next_frame().await;
+        crate::desktop::move_to(n);
+    }
     let mut frame = 0;
     loop {
         let loaded = match initial.take() {

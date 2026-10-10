@@ -24,3 +24,7 @@ zstd = { version = "0.13", features = ["zstdmt"] }
 rmp-serde = "1" # [saves10] self-describing save format (MessagePack, named fields)
 crc32fast = "1" # [saves10] save integrity check
 rf-save-v09 = { path = "../rf-save-v09" } # [saves10] reads v0.9 (format 1, bincode) saves
+
+[target.'cfg(windows)'.dependencies]
+# Move test windows to another virtual desktop (IVirtualDesktopManager).
+windows = { version = "0.58", features = ["Win32_Foundation", "Win32_System_Com", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }

@@ -14,6 +14,7 @@
 
 mod bench;
 mod crash; // [app10]
+mod desktop; // Gordon: test windows open on virtual desktop 1
 mod font;
 mod game;
 mod importer;
@@ -67,6 +68,8 @@ pub struct Args {
     pub sim_inline: bool,
     /// [round 6] Show the title screen even with `--screenshot` / a world argument.
     pub menu: bool,
+    /// Move the window to this virtual desktop (`--desktop N`, 0 = stay); screenshot runs default to 1.
+    pub desktop: Option<usize>,
     /// [round 6] Title screen page to open: `load`, `exports`, `import`, `settings`.
     pub menu_page: Option<String>,
     /// [round 6] Autosave interval in game days (overrides the settings; 0 = off).
@@ -147,6 +150,7 @@ fn parse_args() -> Result<Args, String> {
                 a.gfps_cli = true;
             }
             "--menu" => a.menu = true,
+            "--desktop" => a.desktop = Some(val("--desktop")?.parse().map_err(|e| format!("--desktop: {e}"))?),
             "--shots-at" => a.shots_at = val("--shots-at")?.split(',').filter_map(|s| s.trim().parse().ok()).collect(),
             "--menu-page" => {
                 a.menu_page = Some(val("--menu-page")?);

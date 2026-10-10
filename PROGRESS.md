@@ -1,5 +1,39 @@
 # Rustfort: progress
 
+## v0.10.0 (2026-10-10): update-proof saves, crash hunting, Gordon's playtest feedback, Maeander engravings
+
+**Gordon's v0.9 feedback, implemented:**
+- Right-click closes the topmost thing, like Steam DF: popup -> screen -> side panel -> submenu -> drag box/tool -> selection. On the bare map it opens a context menu.
+- **The military screen is a side panel** (the map stays usable; clicking a member opens their sheet beside it). It has:
+  - a Defense block with a burrow picker and an "Everyone into the burrow!" button, plus a banner with "Lift alert"
+  - checkboxes to give one order or routine to several squads
+  - per-member sprite previews with uniform slots (green = worn, orange = clothing only, red X = missing)
+- **The hostile counter, markers and alerts count only hostiles you can see.** The sealed underworld demons no longer count.
+- **Portraits** in the unit sheet, made from DF Premium's PORTRAIT layer sets with DF's frame.
+- **Engravings in Gordon's chosen style C (Maeander)**:
+  - Greek-key bands along each engraved region, seamless across tiles, with corner rosettes and lozenges inside
+  - wall friezes; silver inlay at exceptional quality, gold at masterwork
+  - Rustfort's own runtime art, no longer DF's dwarf-face picture
+- Automated screenshot and test windows open on **virtual desktop 1** (`--desktop N` or `RUSTFORT_DESKTOP`); normal play stays on the active desktop.
+
+**New since 0.9:**
+- **Saves (format 2):** named-field MessagePack plus zstd, a CRC header, write-then-verify, and a `.bak` per save, so they tolerate added and removed fields.
+  - v0.9 bincode saves are converted on load.
+  - Module runtime state is saved in `World.sim_state`: petitions and visitors, raids and hidden raiders, moods, breakdowns, melt fractions, mud.
+- **Crash hunting:** a chaos harness fires random API actions for years with invariant checks. It found and fixed 6 bugs at the root, among them 2 stack overflows under civilian alert, a station-on-a-wall freeze, dangling container contents and stale building item ids. 40 runs then finished with 0 panics.
+  - Crash dialog and rescue saves; `saves/crash.log`.
+- **Performance:**
+  - siege pathing re-plans less, so the first siege phase uses 5x fewer A* nodes
+  - wounds are mirrored once per blow (add_wound went from 190k to 335 cycles)
+  - branch-free ALT bound
+  - 2 years on r5 run at about 80-106k ticks/s
+- **Gaps closed:**
+  - uniform materials (exact and partial matches, best metal first)
+  - mounted invaders that ride and dismount
+  - thieves and snatchers calibrated to Gordon's history (0 at Trussroads)
+  - pumps and power: screw pumps, water wheels, windmills, axles and gears
+- **UI:** Tasks screen (suspend, do now, cancel), Hauling screen (read-only), DF hotkey chains for the build menu, look lines for engraved tiles, announcements on the title-screen settings page.
+- **Result:** 2 years headless with `--standdown` on r5: 87 -> 79 citizens through several large sieges, about 106k ticks/s, the same hash with 1 and N threads.
 ## v0.9.0 (2026-10-10): calibrated against Gordon's real history
 
 **Gordon's real DF fort has fallen.** At r7 (year 280) DF reports game_over, lost to goblin civ 39. Its five sieges brought 34, 58, 143, 101 and 148 units. In Rustfort the fort lives on from r5 (year 279, 87 citizens).
