@@ -68,6 +68,8 @@ pub mod social; // [social]
 pub use social::{Breakdown, MonthStress, SocialReport}; // [social]
 mod industry; // [industry]
 mod storage; // [industry]
+pub mod fluids; // [fluids]
+pub use fluids::FluidReport; // [fluids]
 pub use industry::IndustryReport; // [industry]
 pub use storage::{PileReport, StorageReport}; // [industry]
 mod rng;
@@ -525,6 +527,8 @@ pub struct Sim {
     ind: industry::Ind,
     /// [combat] Combat, military and invasions (see `combat`, `military`, `invasion`).
     combat: combat::Combat,
+    /// [fluids] Water/magma flow, aquifers, drowning (see `fluids`).
+    fluids: fluids::Fluids,
 }
 
 #[inline]
@@ -622,6 +626,7 @@ impl Sim {
             store: storage::Store::default(), // [industry]
             ind: industry::Ind::default(),    // [industry]
             combat: combat::Combat::default(), // [combat]
+            fluids: fluids::Fluids::default(), // [fluids]
         };
         sim.init_plants();
         sim.init_units();
@@ -1035,6 +1040,7 @@ impl Sim {
         self.prod_hash(&mut mix);
         self.social_hash(&mut mix); // [social]
         self.combat_hash(&mut mix); // [combat]
+        self.fluids_hash(&mut mix); // [fluids]
         h
     }
 
@@ -1137,6 +1143,7 @@ impl Sim {
             self.social_pass(now); // [social]
         }
         self.combat_tick(now); // [combat]
+        self.fluids_tick(now); // [fluids]
         let t0 = Instant::now();
         for s in 0..self.ai.len() {
             if self.ai[s].wake <= now {
@@ -2163,6 +2170,7 @@ impl Sim {
         }
         self.epoch_jobs += 1;
         self.epoch_haul += 1;
+        self.fluids_tile_changed(i); // [fluids]
     }
 
     fn reveal(&mut self, i: usize) {
