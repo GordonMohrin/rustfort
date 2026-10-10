@@ -52,6 +52,7 @@ use crate::Sim;
 use rf_core::{BuildingJob, Item, ItemFlags, MaterialInfo, NO_MAT};
 use std::collections::HashMap;
 mod saves10; // [saves10] save/load of melt fractions and counters
+pub(crate) mod reactions; // [metal12] raw reactions (alloys, steel, coke, kiln, ashery, soap)
 
 pub const F_CHARCOAL: u8 = 1;
 pub const F_ASH: u8 = 2;
@@ -73,6 +74,25 @@ pub const F_ENGRAVE: u8 = 17;
 pub const F_WOOD_ITEM: u8 = 18;
 /// [audit-eco] "Melt a metal object" at a smelter (wiki "Melt item").
 pub const F_MELT: u8 = 19;
+/// [metal12] A reaction of `reactions::REACTIONS` (raw reactions and hard-coded ashery/glass jobs).
+pub const F_REACT: u8 = 20;
+
+/// [metal12] The plain workshop whose jobs a magma workshop runs (wiki: magma smelter, magma
+/// forge, magma glass furnace and magma kiln work like their counterparts without fuel).
+pub fn base_shop(sub: &str) -> &str {
+    match sub {
+        "MagmaSmelter" => "Smelter",
+        "MagmaForge" => "MetalsmithsForge",
+        "MagmaGlassFurnace" => "GlassFurnace",
+        "MagmaKiln" => "Kiln",
+        s => s,
+    }
+}
+
+/// [metal12] Is this a magma workshop (no fuel, needs magma below)?
+pub fn is_magma_shop(sub: &str) -> bool {
+    matches!(sub, "MagmaSmelter" | "MagmaForge" | "MagmaGlassFurnace" | "MagmaKiln")
+}
 
 const CRAFT_KINDS: [&str; 7] = ["FIGURINE", "AMULET", "SCEPTER", "CROWN", "RING", "EARRING", "BRACELET"];
 
@@ -192,6 +212,8 @@ pub(crate) struct IndCensus {
     pub slabs: i32,
     /// Free metal items designated for melting.
     pub melt: i32,
+    /// [metal12] Reagents of the raw reactions.
+    pub rx: reactions::RxCensus,
 }
 
 /// What a running industry job will make (filled at claim time).
@@ -392,6 +414,9 @@ impl Sim {
         let mut c = IndCensus::default();
         for idx in 0..self.world.items.len() {
             let p = self.imeta[idx].pc;
+            if !self.imeta[idx].dead {
+                self.rx_census_item(&mut c.rx, idx, now); // [metal12]
+            }
             if self.world.items[idx].flags.melt && self.is_meltable(idx) && self.item_free(idx, now) {
                 c.melt += 1;
             }
@@ -443,14 +468,42 @@ impl Sim {
         matches!(r.workshop, "Smelter" | "MetalsmithsForge" | "GlassFurnace" | "Kiln")
     }
 
-    /// [industry] Are the reagents of an industry recipe in stock?
-    pub(crate) fn ind_available(&self, f: u8, r: &Recipe) -> bool {
+    /// [metal12] Does the magma workshop `bi` have magma at least 4/7 deep directly below one of
+    /// its eight non-center tiles (wiki Magma forge)?
+    pub(crate) fn magma_shop_ok(&self, bi: usize) -> bool {
+        let Some(b) = self.world.buildings.get(bi) else { return false };
+        if b.z <= 0 {
+            return false;
+        }
+        for y in b.y1..=b.y2 {
+            for x in b.x1..=b.x2 {
+                if x == b.center.x && y == b.center.y {
+                    continue;
+                }
+                let below = rf_core::Pos { x, y, z: b.z - 1 };
+                if let Some(t) = self.world.idx(below) {
+                    let tile = &self.world.tiles[t];
+                    if tile.is_magma() && tile.liquid_depth() >= 4 {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// [industry] Are the reagents of an industry recipe in stock? (`magma`: [metal12] the
+    /// workshop is a magma workshop and needs no fuel.)
+    pub(crate) fn ind_available(&self, f: u8, r: &Recipe, magma: bool) -> bool {
         let c = &self.ind.census;
         let p = &self.prod.census;
         if f >= crate::animals::F_FIRST {
             return self.animals_available(f); // [animals]
         }
-        let fuel = !self.needs_fuel(r) || c.fuel > 0;
+        if f == F_REACT {
+            return self.rx_available(r, magma); // [metal12]
+        }
+        let fuel = magma || !self.needs_fuel(r) || c.fuel > 0;
         fuel && match f {
             F_CHARCOAL | F_ASH | F_CRAFTS_WOOD | F_WOOD_ITEM => p.logs > 0,
             F_CRAFTS_STONE => p.boulders > 0,
@@ -519,7 +572,7 @@ impl Sim {
     /// Pick `units` units of items matching `pred` (several stacks if needed) into `wj`.
     fn ind_pick(&mut self, site: u32, c: u32, now: u64, units: i32, wj: &mut WJob, pred: impl Fn(&Sim, usize) -> bool) -> bool {
         let mut found = Vec::new();
-        let slots = 4 - wj.n as usize;
+        let slots = wj.items.len() - wj.n as usize; // [metal12] 6 slots
         if slots == 0 {
             return false;
         }
@@ -564,7 +617,10 @@ impl Sim {
         let subtype = if qjob.item_subtype.is_empty() { rec.item_subtype.to_string() } else { qjob.item_subtype.clone() };
         let mats = self.job_mats(&qjob.mat);
         let mat_ok = |sim: &Sim, i: usize| mats.as_ref().map(|v| v.contains(&sim.world.items[i].mat)).unwrap_or(true);
+        // [metal12] Magma workshops need no fuel.
+        let magma = self.prod.shops.iter().find(|sh| sh.site == site).map(|sh| is_magma_shop(&sh.subtype)).unwrap_or(false);
         let ok = match f {
+            F_REACT => self.rx_claim(rec, site, c, now, wj), // [metal12]
             F_CHARCOAL | F_ASH | F_CRAFTS_WOOD | F_WOOD_ITEM => self.ind_pick(site, c, now, 1, wj, |sim, i| sim.imeta[i].pc == pc::LOG),
             F_CRAFTS_STONE => self.ind_pick(site, c, now, 1, wj, |sim, i| sim.imeta[i].pc == pc::BOULDER && mat_ok(sim, i)),
             F_SMELT => self.ind_pick(site, c, now, 1, wj, |sim, i| sim.is_ore(i) && mat_ok(sim, i)),
@@ -598,7 +654,7 @@ impl Sim {
         if !ok {
             return false;
         }
-        if self.needs_fuel(rec) && !self.ind_pick(site, c, now, 1, wj, |sim, i| sim.is_fuel(i)) {
+        if !magma && self.needs_fuel(rec) && !self.ind_pick(site, c, now, 1, wj, |sim, i| sim.is_fuel(i)) {
             return false;
         }
         if self.ind.jobs.len() <= s {
@@ -786,6 +842,7 @@ impl Sim {
                 }
                 self.ind.melted += 1;
             }
+            F_REACT => self.rx_finish(wj, rec, site, &mut keep, &mut r), // [metal12]
             F_ENGRAVE => {
                 keep.push(first);
                 self.world.items[fi].name = "memorial".into();

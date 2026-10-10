@@ -96,6 +96,66 @@ pub(crate) fn quality_roll(rating: i32, r: &mut Rng) -> u8 {
     }
 }
 
+/// [metal12] Attributes that feed the quality roll of a skill: (physical, mental), primary first
+/// (wiki Attribute: the skills each attribute affects; Kinesthetic sense "most skills involving
+/// any movement"). The order inside a group is an ESTIMATE (the wiki lists no primaries).
+pub(crate) fn quality_attrs(skill: &str) -> (&'static [&'static str], &'static [&'static str]) {
+    const KIN: &[&str] = &["KINESTHETIC_SENSE"];
+    const ART: &[&str] = &["CREATIVITY", "SPATIAL_SENSE", "KINESTHETIC_SENSE"];
+    const SMITH: &[&str] = &["STRENGTH", "AGILITY", "ENDURANCE"];
+    match skill {
+        // Crafters: Agility + Creativity, Spatial sense, Kinesthetic sense.
+        "STONECRAFT" | "WOODCRAFT" | "BONECARVE" | "CLOTHESMAKING" | "POTTERY" | "GLAZING" | "WAX_WORKING" => (&["AGILITY"], ART),
+        "WEAVING" => (&[], ART),
+        "LEATHERWORK" | "GLASSMAKER" => (SMITH, ART),
+        "FORGE_WEAPON" | "FORGE_ARMOR" | "FORGE_FURNITURE" | "METALCRAFT" | "MASONRY" => (SMITH, KIN),
+        "CARPENTRY" => (&["STRENGTH", "AGILITY"], KIN),
+        "MECHANICS" => (SMITH, &["ANALYTICAL_ABILITY", "KINESTHETIC_SENSE"]),
+        "BOWYER" | "ENGRAVE_STONE" | "CUTGEM" | "ENCRUSTGEM" => (&["AGILITY"], KIN),
+        "COOK" => (&["AGILITY"], &["ANALYTICAL_ABILITY", "CREATIVITY", "KINESTHETIC_SENSE"]),
+        _ => (&["AGILITY"], KIN),
+    }
+}
+
+/// [metal12] DF's item quality roll (wiki "Skill", item quality formula), in quality points:
+/// 1. effective level `level` (Dabbling 0 .. Legendary 15, uncapped, penalties applied);
+/// 2. `rand(0..10) + rand(0..5 level / 2) + rand(0..5 level / 2)`;
+/// 3./4. `rand(0..attr1) / 100 + rand(0..attr2) / 250 + rand(0..attr3) / 250` for the skill's
+///    physical and mental attributes (`phys`, `ment`: current values, 0 = none);
+/// 5. `points * focus / 100` (current / undistracted focus in percent);
+/// 6. status penalties again (`penalty_pct`); 7. no curses; 8./9. +10 per matching item and
+///    material preference (`prefs`);
+/// 10. 0-21 ordinary, 22-29 well-crafted, 30-34 finely-crafted, 35-44 superior, 45-54
+///    exceptional, 55+ masterwork with chance 1/3, else exceptional.
+pub(crate) fn quality_points_roll(level: i32, phys: [i32; 3], ment: [i32; 3], focus_pct: i32, penalty_pct: i32, prefs: i32, r: &mut Rng) -> u8 {
+    let pen = penalty_pct.clamp(0, 100);
+    let lv = (level.max(0) * pen / 100) as u32;
+    let half = lv * 5 / 2;
+    let mut pts = r.below(10) as i64 + r.below(half) as i64 + r.below(half) as i64;
+    let attr = |a: [i32; 3], r: &mut Rng| -> i64 {
+        r.below(a[0].max(0) as u32) as i64 / 100 + r.below(a[1].max(0) as u32) as i64 / 250 + r.below(a[2].max(0) as u32) as i64 / 250
+    };
+    pts += attr(phys, r);
+    pts += attr(ment, r);
+    pts = pts * focus_pct.max(0) as i64 / 100;
+    pts = pts * pen as i64 / 100;
+    pts += 10 * prefs.clamp(0, 2) as i64;
+    match pts {
+        i64::MIN..=21 => 0,
+        22..=29 => 1,
+        30..=34 => 2,
+        35..=44 => 3,
+        45..=54 => 4,
+        _ => {
+            if r.chance(1, 3) {
+                5
+            } else {
+                4
+            }
+        }
+    }
+}
+
 /// Experience in tenths: the whole part plus one more with the remainder as a chance.
 fn tenths(t: i32, r: &mut Rng) -> i32 {
     t / 10 + i32::from((r.below(10) as i32) < t % 10)
@@ -134,7 +194,20 @@ impl Sim {
     pub(crate) fn skills_job_done(&mut self, s: usize, skill: &'static str, first: i32, now: u64) {
         let mut quality = false;
         if !skill.is_empty() {
-            let rating = self.social_rating(s, self.world.units[self.ai[s].uidx].skill(skill));
+            // [metal12] wiki item quality formula: skill level, the skill's attributes, focus.
+            let (level, phys, ment) = {
+                let u = &self.world.units[self.ai[s].uidx];
+                let (pa, ma) = quality_attrs(skill);
+                let get = |v: &[(String, i32)], names: &[&str]| {
+                    let mut a = [0i32; 3];
+                    for (k, n) in names.iter().take(3).enumerate() {
+                        a[k] = v.iter().find(|(id, _)| id == n).map(|e| e.1).unwrap_or(0);
+                    }
+                    a
+                };
+                (u.skill(skill), get(&u.phys_attrs, pa), get(&u.ment_attrs, ma))
+            };
+            let focus = self.social_rating(s, 100);
             let mut r = Rng::for_unit(self.seed, s, now, 0x9A11);
             let mut masterworks: Vec<i32> = Vec::new(); // [calib11-social]
             for id in first..self.next_item_id {
@@ -144,7 +217,7 @@ impl Sim {
                     continue;
                 }
                 quality = true;
-                let q = quality_roll(rating, &mut r);
+                let q = quality_points_roll(level, phys, ment, focus, 100, 0, &mut r); // [metal12]
                 if it.value > 0 && q != it.quality {
                     let old = crate::trade::quality_mult(it.quality).max(1);
                     it.value = (it.value as i64 * crate::trade::quality_mult(q) / old) as i32;
@@ -340,6 +413,34 @@ pub struct SkillsReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wiki_quality_points_follow_skill_attributes_and_focus() {
+        let mut r = Rng::new(11);
+        let mut mean = |level: i32, phys: [i32; 3], ment: [i32; 3], focus: i32| {
+            let mut h = [0u32; 6];
+            for _ in 0..20_000 {
+                h[quality_points_roll(level, phys, ment, focus, 100, 0, &mut r) as usize] += 1;
+            }
+            let m = h.iter().enumerate().map(|(q, &n)| q as f64 * n as f64).sum::<f64>() / 20_000.0;
+            (m, h)
+        };
+        // A median dwarf crafter (Agility 900; Creativity 1250, Spatial 1500, Kinesthetic 1000).
+        let craft = ([900, 0, 0], [1250, 1500, 1000]);
+        // A median mason (Strength 1250, Agility 900, Endurance 1000; Kinesthetic 1000).
+        let mason = ([1250, 900, 1000], [1000, 0, 0]);
+        let (c0, _) = mean(0, craft.0, craft.1, 100);
+        let (m0, _) = mean(0, mason.0, mason.1, 100);
+        assert!(c0 > m0, "creative crafters score more points: {c0} vs {m0}");
+        let (c5, _) = mean(5, craft.0, craft.1, 100);
+        assert!(c5 > c0 + 1.0, "{c5} vs {c0}");
+        let (cf, _) = mean(5, craft.0, craft.1, 60);
+        assert!(cf < c5, "distraction lowers quality: {cf} vs {c5}");
+        let (_, legend) = mean(20, craft.0, craft.1, 100);
+        // 55+ points: masterwork with chance 1/3, else exceptional; a high skill "almost always"
+        // makes at least exceptional items.
+        assert!(legend[5] < 6_700 && legend[4] + legend[5] > 16_000, "{legend:?}");
+    }
 
     #[test]
     fn quality_follows_skill_and_caps_masterworks() {
