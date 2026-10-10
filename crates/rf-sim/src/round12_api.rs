@@ -70,6 +70,13 @@ impl Sim {
 
     /// Assign a minecart (or wheelbarrow) item to a route.
     pub fn assign_vehicle(&mut self, route: i32, item: i32) {
+        // [carts12] A vehicle belongs to one route.
+        if !self.world.haul_routes.iter().any(|r| r.id == route) {
+            return;
+        }
+        for r in self.world.haul_routes.iter_mut().filter(|r| r.id != route) {
+            r.vehicles.retain(|&v| v != item);
+        }
         if let Some(r) = self.world.haul_routes.iter_mut().find(|r| r.id == route) {
             if !r.vehicles.contains(&item) {
                 r.vehicles.push(item);
@@ -78,7 +85,7 @@ impl Sim {
     }
 
     pub fn route_status(&self, route: i32) -> RouteStatus {
-        RouteStatus { id: route, ..Default::default() }
+        self.route_status_impl(route) // [carts12]
     }
 
     /// Order a built siege engine to fire at a target tile (or `None` = fire at will).
