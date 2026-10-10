@@ -890,15 +890,15 @@ impl Sim {
                 continue;
             }
             let cond = parse_conditions(&stop.conditions);
-            let mut more = false;
+            let (mut more, mut waiting) = (false, false);
             if !stop.take_from.is_empty() && !cond.empty {
-                more = self.plan_load(k, &stop, &cands);
+                (more, waiting) = self.plan_load(k, &stop, &cands);
             }
             let busy = self.carts.jobs.iter().any(|j| j.cart == c.item);
             if busy {
                 continue;
             }
-            if self.depart_ok(k, &cond, more, now) {
+            if self.depart_ok(k, &cond, more, waiting, now) {
                 let kind = match cond.mode {
                     DepartMode::Push => JobK::Push,
                     DepartMode::Ride => JobK::Ride,
@@ -1002,10 +1002,26 @@ impl Sim {
         v
     }
 
-    /// Load jobs for cart `k`; true if more could be loaded (items waiting that fit).
-    fn plan_load(&mut self, k: usize, stop: &rf_core::HaulStop, cands: &[(u32, i32)]) -> bool {
+    /// Load jobs for cart `k`: (more items that fit are waiting, any items are waiting). Only
+    /// items that a later stop's linked piles take are loaded (stand-in for DF's stop filter).
+    fn plan_load(&mut self, k: usize, stop: &rf_core::HaulStop, cands: &[(u32, i32)]) -> (bool, bool) {
         let c = self.carts.carts[k];
         let piles: Vec<u32> = stop.take_from.iter().filter_map(|&b| self.pile_index_of(b)).collect();
+        let mut accept = 0u32;
+        if let Some(r) = self.world.haul_routes.iter().find(|r| r.id == c.route) {
+            for (i, st) in r.stops.iter().enumerate() {
+                if i as u32 != c.stop {
+                    for &b in &st.give_to {
+                        if let Some(p) = self.pile_index_of(b) {
+                            accept |= self.piles[p as usize].cats;
+                        }
+                    }
+                }
+            }
+        }
+        if accept == 0 {
+            accept = u32::MAX;
+        }
         let mut vol = self.cart_volume(c.item);
         let mut jobs_here = 0;
         for j in self.carts.jobs.iter().filter(|j| j.cart == c.item && j.kind == JobK::Load) {
@@ -1015,15 +1031,16 @@ impl Sim {
                 vol += item_volume(&it.kind, &it.subtype, it.stack);
             }
         }
-        let mut more = false;
+        let (mut more, mut waiting) = (false, false);
         for &(p, id) in cands {
             if !piles.contains(&p) {
                 continue;
             }
             let Some(&idx) = self.item_idx.get(&id) else { continue };
-            if self.imeta[idx as usize].reserved > 0 {
+            if self.imeta[idx as usize].reserved > 0 || accept & self.imeta[idx as usize].cat.bit() == 0 {
                 continue;
             }
+            waiting = true;
             let it = &self.world.items[idx as usize];
             let v = item_volume(&it.kind, &it.subtype, it.stack);
             if vol + v > CART_CAPACITY {
@@ -1038,10 +1055,10 @@ impl Sim {
             self.reserve(id);
             self.new_job(CJob { kind: JobK::Load, cart: c.item, item: id, ..Default::default() });
         }
-        more
+        (more, waiting)
     }
 
-    fn depart_ok(&self, k: usize, cond: &Conditions, more: bool, now: u64) -> bool {
+    fn depart_ok(&self, k: usize, cond: &Conditions, more: bool, waiting: bool, now: u64) -> bool {
         let c = self.carts.carts[k];
         if self.stop_count(c.route) < 2 && cond.mode != DepartMode::Push {
             return false;
@@ -1055,7 +1072,8 @@ impl Sim {
         }
         if let Some(pct) = cond.fill {
             let vol = self.cart_volume(c.item) as i64;
-            return vol * 100 >= pct as i64 * CART_CAPACITY as i64 || (pct >= 100 && !more && n_items > 0 && vol + 5_000 > CART_CAPACITY as i64);
+            // Also "full" when items wait but none of them fits any more.
+            return vol * 100 >= pct as i64 * CART_CAPACITY as i64 || (waiting && !more && n_items > 0);
         }
         // No fill condition: leave when nothing more can be loaded here.
         !more && (n_items > 0 || cond.wait > 0 || self.route_stop(c.route, c.stop).map(|s| s.take_from.is_empty()).unwrap_or(true))

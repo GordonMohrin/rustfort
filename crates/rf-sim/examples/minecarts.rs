@@ -109,7 +109,7 @@ fn main() {
         // Unload pile beside the far end.
         let side = [y - 1, y + 1].into_iter().map(|yy| Pos::new(x1, yy, z)).find(|p| sim.is_walkable(*p) && !sim.world.buildings.iter().any(|o| o.contains(*p)));
         if let Some(sp) = side {
-            let dump = sim.create_stockpile(sp, sp, &["stone"]);
+            let dump = sim.create_stockpile(Pos::new(sp.x - 5, sp.y, z), sp, &["stone"]);
             r2 = sim.create_haul_route("Gleis");
             let t0 = sim.add_route_stop(r2, "West", Pos::new(x0, y, z));
             let t1 = sim.add_route_stop(r2, "Ost", Pos::new(x1, y, z));
@@ -119,7 +119,7 @@ fn main() {
             sim.set_stop_conditions(r2, t1, &["Push", "Leave when empty"]);
             let cart2 = sim.spawn_vehicle(false, Pos::new(x0, y, z), oak);
             sim.assign_vehicle(r2, cart2);
-            println!("route Gleis: track y {y} x {x0}..{x1} z {z} ({} tiles), unload pile at {sp:?}, cart {cart2}, pushed", x1 - x0 + 1);
+            println!("route Gleis: track y {y} x {x0}..{x1} z {z} ({} tiles), unload pile x {}..{} y {}, cart {cart2}, pushed", x1 - x0 + 1, sp.x - 5, sp.x, sp.y);
         }
     } else {
         println!("route Gleis: no straight free floor run found next to the pile");
@@ -152,6 +152,15 @@ fn main() {
         );
     }
     let secs = t0.elapsed().as_secs_f64();
+    for r in [r1, r2] {
+        if r < 0 {
+            continue;
+        }
+        for (cart, _) in sim.route_status(r).vehicles {
+            let inside: Vec<String> = sim.world.items.iter().filter(|it| it.container == cart).map(|it| it.desc.clone()).collect();
+            println!("route {r} cart {cart}: {} items inside {:?}", inside.len(), inside);
+        }
+    }
     println!("{ticks} ticks in {secs:.1}s = {:.0} ticks/s | carts {:?}", ticks as f64 / secs, sim.carts_report());
 }
 
