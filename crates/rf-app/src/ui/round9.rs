@@ -1544,7 +1544,26 @@ fn update_fights(g: &mut Game) {
     }
     let k = log.len().min(3);
     g.r9.cl_tail = log[log.len() - k..].to_vec();
+    // The participant names are rebuilt at most once a second (or when units arrive).
     let w = &g.sim.world;
+    if g.r9.cl_names.is_empty() || now - g.r9.cl_names_at > 1.0 || g.r9.cl_names_n != w.units.len() {
+        g.r9.cl_names = fight_names(w);
+        g.r9.cl_names_at = now;
+        g.r9.cl_names_n = w.units.len();
+    }
+    let date = date_string(&w.calendar);
+    let tick = g.sim.ticks();
+    let pos_of = |id: i32| w.unit(id).map(|u| u.pos);
+    let mut fights = std::mem::take(&mut g.r9.fights);
+    let mut next = g.r9.next_fight;
+    group_lines(&mut fights, &log[from..], tick, &date, &g.r9.cl_names, &pos_of, &mut next);
+    g.r9.fights = fights;
+    g.r9.next_fight = next;
+}
+
+/// Fight participants: citizens by name, then everybody else (hostiles, wildlife, pets) by the
+/// name the sim writes, longest first.
+fn fight_names(w: &World) -> Vec<(i32, String, bool)> {
     let mut names: Vec<(i32, String, bool)> = w.citizens().filter(|u| !u.name.is_empty()).map(|u| (u.id, u.name.clone(), true)).collect();
     // Everybody else on the map (hostiles, also ones killed this frame, wildlife, pets); unnamed
     // ones of the same kind ("the goblin") count as one participant.
@@ -1555,14 +1574,7 @@ fn update_fights(g: &mut Game) {
         }
     }
     names.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
-    let date = date_string(&w.calendar);
-    let tick = g.sim.ticks();
-    let pos_of = |id: i32| w.unit(id).map(|u| u.pos);
-    let mut fights = std::mem::take(&mut g.r9.fights);
-    let mut next = g.r9.next_fight;
-    group_lines(&mut fights, &log[from..], tick, &date, &names, &pos_of, &mut next);
-    g.r9.fights = fights;
-    g.r9.next_fight = next;
+    names
 }
 
 /// "Urist McAxe, Kib Ustuth vs Snang Skulkspider" (citizens first).
@@ -1909,6 +1921,10 @@ pub struct R9Ui {
     pub cl_tail: Vec<String>,
     pub cl_key: u64,
     pub cl_at: f64,
+    /// Cached participant names, when they were built and the unit count then.
+    pub cl_names: Vec<(i32, String, bool)>,
+    pub cl_names_at: f64,
+    pub cl_names_n: usize,
     pub fight_sel: Option<u32>,
     pub fight_scroll: usize,
     pub fight_lscroll: usize,

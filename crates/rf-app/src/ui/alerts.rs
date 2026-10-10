@@ -137,8 +137,11 @@ impl Game {
         // hoard from skulking filth!"); it is already in the log.
         let now = get_time();
         if let Some((t, txt, _)) = self.r9.raid_hint.take() {
+            // A monster keeps its own title ("Ngokang has come!").
+            if crate::ui::round9::ANN_TYPES[t].id != "MEGABEAST" || ty != t {
+                title = crate::ui::round9::title_of(t).to_string();
+            }
             ty = t;
-            title = crate::ui::round9::title_of(t).to_string();
             text = txt;
         }
         let logged = self.log.iter().rev().take(64).any(|l| l.text == text && now - l.born < 1.0);

@@ -4,7 +4,7 @@
 
 use super::orders::screen_rect;
 use super::panels::{unit_name, unit_profession};
-use super::{clip, col, list_row, panel, pretty, skill_level_name, text_button, wheel_over, BtnState};
+use super::{clip, col, list_row, panel, pretty, text_button, wheel_over, BtnState};
 use crate::game::{Game, Screen, Tool};
 use macroquad::prelude::*;
 use rf_core::{Pos, Squad, Unit, World};
@@ -30,7 +30,7 @@ pub fn best_combat_skill(u: &Unit) -> Option<(String, i32)> {
     let best = |set: &[&str]| u.skills.iter().filter(|k| set.contains(&k.id.as_str()) && k.rating > 0).max_by_key(|k| (k.rating, k.xp));
     best(WEAPON_SKILLS)
         .or_else(|| best(COMBAT_SKILLS))
-        .map(|k| (format!("{} {}", skill_level_name(k.rating), pretty(&k.id).to_lowercase()), k.rating))
+        .map(|k| (crate::ui::round9::skill_title(k), k.rating)) // [app9] DF skill names
 }
 
 /// Human text of one DF-like order string (`Station x,y,z`, `Kill <id>`, `Train`).
