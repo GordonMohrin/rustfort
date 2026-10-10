@@ -166,6 +166,8 @@ pub(crate) struct Cx {
     /// (tiletype material, NSEW bits) -> floor track tiletype.
     track_dirs: HashMap<(TtMaterial, u8), u16>,
     stats: ConstructReport,
+    /// [r7] Cave-in state.
+    pub(crate) cave: crate::caveins::CaveIns,
 }
 
 fn stone_like(m: TtMaterial) -> bool {
@@ -906,8 +908,8 @@ impl Sim {
             }
             let Some(t) = self.world.idx(it.pos) else { continue };
             let d = manhattan(sp, self.nav.xyz(t));
-            if (d, it.id) >= best || self.nav.comp_near(t) != c {
-                continue;
+            if (d, it.id) >= best || self.nav.comp_near(t) != c || self.alert_blocks_cur(t) {
+                continue; // [r7] civilian alert: material inside the burrow only
             }
             best = (d, it.id);
         }
@@ -945,6 +947,10 @@ impl Sim {
                 continue;
             }
             if no_mat && matches!(job.kind, CK::Build(_)) && job.item < 0 {
+                continue;
+            }
+            // [r7] Civilian alert: only work tiles inside the burrow; no refuse dumping.
+            if (job.kind == CK::Dump || self.alert_blocks(s, job.tile as usize)) && self.alert_restricted(s) {
                 continue;
             }
             let target = if job.kind == CK::Dump {
@@ -989,6 +995,12 @@ impl Sim {
                     Some(id) => {
                         self.reserve(id);
                         self.cx.jobs[j].item = id;
+                    }
+                    None if self.alert_restricted(s) => {
+                        // [r7] Nothing inside the burrow: skip this job for a while (only for
+                        // this search), the fort-wide "no material" pause stays untouched.
+                        self.cx.jobs[j].blocked_until = now + crate::RESEARCH_TICKS;
+                        return self.construct_try(s, now);
                     }
                     None => {
                         self.cx.no_mat_until = now + rf_core::TICKS_PER_DAY as u64;
@@ -1568,6 +1580,7 @@ impl Sim {
         if above_changed {
             self.after_tile_change(i + layer);
         }
+        self.cavein_check(&[i, if above_changed { i + layer } else { usize::MAX }]); // [r7]
         self.cx_refresh_wall_dirs(i);
         // Give the building material back.
         let drop = if self.nav.walkable(i) { i as u32 } else { self.ai[s].pos };

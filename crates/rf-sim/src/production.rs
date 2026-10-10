@@ -1603,8 +1603,8 @@ impl Sim {
             if best.len() == want && d >= best[want - 1].0 {
                 continue;
             }
-            if self.nav.comp_near(t) != c {
-                continue;
+            if self.nav.comp_near(t) != c || self.alert_blocks_cur(t) {
+                continue; // [r7] civilian alert: reagents inside the burrow only
             }
             let pos = best.partition_point(|e| *e <= (d, it.id));
             best.insert(pos, (d, it.id));
@@ -1639,8 +1639,8 @@ impl Sim {
         // 0 = shop (index, avail entry), 1 = farm work entry, 2 = construction.
         let mut best = (i32::MAX, 0u8, 0usize, 0usize);
         for (si, sh) in self.prod.shops.iter().enumerate() {
-            if sh.busy != NONE || sh.blocked_until > now || sh.labors & labors == 0 {
-                continue;
+            if sh.busy != NONE || sh.blocked_until > now || sh.labors & labors == 0 || self.alert_blocks(s, sh.site as usize) {
+                continue; // [r7] civilian alert: workshops inside the burrow only
             }
             let d = manhattan(up, self.nav.xyz(sh.site as usize));
             if d >= best.0 {
@@ -1655,8 +1655,8 @@ impl Sim {
         if labors & labor::PLANT != 0 {
             for (wi, &(fi, k)) in self.prod.farm_work.iter().enumerate() {
                 let t = &self.prod.farms[fi as usize].tiles[k as usize];
-                if t.claimed || t.blocked_until > now {
-                    continue;
+                if t.claimed || t.blocked_until > now || self.alert_blocks(s, t.tile as usize) {
+                    continue; // [r7] civilian alert
                 }
                 let d = manhattan(up, self.nav.xyz(t.tile as usize));
                 if d < best.0 && self.nav.walkable(t.tile as usize) && self.nav.comp_root(t.tile as usize) == c {
@@ -1665,8 +1665,8 @@ impl Sim {
             }
         }
         for (ci, cs) in self.prod.cons.iter().enumerate() {
-            if cs.claimed || cs.blocked_until > now || cs.labor & labors == 0 {
-                continue;
+            if cs.claimed || cs.blocked_until > now || cs.labor & labors == 0 || self.alert_blocks(s, cs.site as usize) {
+                continue; // [r7] civilian alert
             }
             let d = manhattan(up, self.nav.xyz(cs.site as usize));
             if d < best.0 && self.site_goals(cs.site, c).n > 0 {
