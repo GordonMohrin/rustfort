@@ -513,6 +513,14 @@ impl Sim {
                 it.container = -1;
                 it.flags.in_container = false;
             }
+            let bld = self.world.items[i].building;
+            if bld >= 0 {
+                // Taken out of the workshop that made it.
+                self.world.items[i].building = -1;
+                if let Some(b) = self.world.buildings.iter_mut().find(|b| b.id == bld) {
+                    b.items.retain(|&x| x != id);
+                }
+            }
             if kind == "AMMO" {
                 if let Some(q) = quiver {
                     let it = &mut self.world.items[i];
@@ -982,7 +990,16 @@ impl Sim {
         let mut best = (i32::MIN, i32::MAX, -1);
         for (i, it) in self.world.items.iter().enumerate() {
             let Some(score) = want(it) else { continue };
-            if self.imeta[i].reserved > 0 || !self.item_free(i, now) {
+            let m = &self.imeta[i];
+            let free = if it.building >= 0 {
+                // Finished bolts still lying in the forge that made them (DF lets soldiers take them).
+                let f = &it.flags;
+                !m.dead && m.reserved == 0 && m.blocked_until <= now && it.holder < 0 && !f.forbid && !f.in_job && !f.construction && !f.in_building
+                    && self.world.building(it.building).map(|b| b.kind == "Workshop" || b.kind == "Furnace").unwrap_or(false)
+            } else {
+                m.reserved == 0 && self.item_free(i, now)
+            };
+            if !free {
                 continue;
             }
             let Some(t) = self.world.idx(it.pos) else { continue };
