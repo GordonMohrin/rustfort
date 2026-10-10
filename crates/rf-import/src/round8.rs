@@ -479,6 +479,7 @@ mod tests {
             convicted: a,
             punishment: "Hammerstrikes 4, Jail 2".into(),
             witnesses: vec![b],
+            ..Default::default()
         }];
         w.haul_routes = vec![HaulRoute {
             id: 1,

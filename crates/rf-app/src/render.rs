@@ -366,6 +366,10 @@ pub fn draw_map(g: &mut Game) {
         if g.sim.world.tile(u.pos).map(|t| t.hidden()).unwrap_or(true) {
             continue;
         }
+        // Hidden ambushers, thieves and snatchers stay invisible until spotted (DF).
+        if u.flags.hostile && g.sim.unit_hidden(u.id) {
+            continue;
+        }
         let r = tile_rect(g, u.pos.x, u.pos.y);
         sprites.clear();
         g.gfx.unit(&g.sim.world, u, &mut sprites);
