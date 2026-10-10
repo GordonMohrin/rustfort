@@ -807,6 +807,15 @@ impl Game {
                     }
                 }
                 "mood" => self.unit_tab = 9,
+                "fake-constructions" => crate::ui::round5::debug_constructions(self),
+                "fake-mood" => {
+                    // Test hook: the selected unit is taken by a mood (`Unit::mood`).
+                    if let Selected::Unit(id) = self.selected {
+                        if let Some(u) = self.sim.world.units.iter_mut().find(|u| u.id == id) {
+                            u.mood = if v.is_empty() { "Fey".into() } else { v.to_string() };
+                        }
+                    }
+                }
                 "tile" => {
                     let c = self.cam;
                     self.selected = Selected::Tile(Pos::new(c.x as i16, c.y as i16, c.z as i16));

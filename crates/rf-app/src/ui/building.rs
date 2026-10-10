@@ -28,6 +28,7 @@ pub fn building_title(g: &Game, b: &Building) -> String {
         "Armorstand" => "Armor stand".into(),
         "Box" => "Chest".into(),
         "Trap" => super::devices::trap_name(&b.subtype), // [round 4]
+        "Construction" => super::round5::construction_title(b), // [round 5]
         "TradeDepot" => "Trade depot".into(),
         k => words(k),
     }

@@ -17,6 +17,10 @@ pub fn cp437(c: char) -> u8 {
     if (32..127).contains(&u) {
         return u as u8;
     }
+    // [round 5] DF strings carry raw CP437 control-range glyphs (e.g. 0x0F = ☼ masterwork).
+    if (1..32).contains(&u) {
+        return u as u8;
+    }
     if c == '⌂' {
         return 127;
     }

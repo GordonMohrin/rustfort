@@ -299,7 +299,7 @@ fn unit_sheet(g: &mut Game, id: i32, r: Rect) {
                     break;
                 }
                 let (txt, known) = match g.sim.world.item(*iid) {
-                    Some(it) => (format!("{}{}", item_label(g, it), super::round5::item_tags(it)), true),
+                    Some(it) => (item_label(g, it), true),
                     None => (format!("item #{iid} (unknown)"), false),
                 };
                 // [round 5] forbid / dump toggles per item, like DF's item sheet.
@@ -314,17 +314,20 @@ fn unit_sheet(g: &mut Game, id: i32, r: Rect) {
 }
 
 fn item_label(g: &Game, it: &rf_core::Item) -> String {
+    // [round 5] DF's own description already carries the quality marks (-x-, +x+, *x*, ≡x≡,
+    // ☼x☼); only a generated label gets them added.
     let base = if !it.name.is_empty() {
         it.name.clone()
     } else if !it.desc.is_empty() {
         it.desc.clone()
     } else {
         let m = if it.mat != NO_MAT { g.sim.world.material(it.mat).map(|m| m.name.clone()).unwrap_or_default() } else { String::new() };
-        format!("{m} {}", pretty(&it.kind).to_lowercase()).trim().to_string()
+        let base = format!("{m} {}", pretty(&it.kind).to_lowercase()).trim().to_string();
+        let q = ["", "-", "+", "*", "≡", "☼", "!"][it.quality.min(6) as usize];
+        if q.is_empty() { base } else { format!("{q}{base}{q}") }
     };
-    let q = ["", "-", "+", "*", "≡", "☼", "!"][it.quality.min(6) as usize];
-    let base = if q.is_empty() { base } else { format!("{q}{base}{q}") };
-    if it.stack > 1 {
+    // DF's description already ends with the stack size ("[2]").
+    if it.stack > 1 && !base.contains(&format!("[{}]", it.stack)) {
         format!("{base} [{}]", it.stack)
     } else {
         base
@@ -444,7 +447,7 @@ fn tile_sheet(g: &mut Game, p: Pos, r: Rect) {
         .items
         .iter()
         .filter(|it| it.pos == p && it.flags.on_ground)
-        .map(|it| (it.id, format!("{}{}", item_label(g, it), super::round5::item_tags(it)), it.flags.forbid))
+        .map(|it| (it.id, item_label(g, it), it.flags.forbid))
         .collect();
     if !items.is_empty() {
         g.font.draw(&format!("Items ({})", items.len()), x, y, s, col::BORDER_HI);
@@ -596,11 +599,14 @@ pub fn draw_citizens(g: &mut Game, top: f32, bottom: f32) {
         let cap = if p.population_cap > 0 { format!("cap {}", p.population_cap) } else { "no cap".into() };
         let wave = p.next_wave_in.map(|t| format!("migrants in {}", super::round4::ticks_span(t))).unwrap_or_else(|| "no migrants expected".into());
         let car = p.caravan_expected.clone().map(|c| format!("caravan: {c}")).unwrap_or_default();
-        let mut t = format!("{} citizens, {} children, {cap}; {wave}", p.citizens, p.children);
-        if !car.is_empty() {
-            t.push_str(&format!("; {car}"));
-        }
         let maxc = ((r.w - 2.0 * pad) / (8.0 * s)) as usize;
+        // [round 5] Only whole parts (the tooltip has everything), no half-cut "ca.".
+        let mut t = format!("{} citizens, {} children, {cap}", p.citizens, p.children);
+        for part in [wave, car] {
+            if !part.is_empty() && t.chars().count() + 2 + part.chars().count() <= maxc {
+                t.push_str(&format!("; {part}"));
+            }
+        }
         let hr = Rect::new(x, y - 2.0 * s, r.w - 2.0 * pad, lh);
         g.font.draw(&clip(&t, maxc), x, y, s, col::TEXT_DIM);
         if g.ui.hovered(hr) {

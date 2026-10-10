@@ -188,6 +188,25 @@ impl MapRenderer {
     }
 }
 
+/// Title of a construction building: `Wall (planned)`, `Remove construction`.
+pub fn construction_title(b: &Building) -> String {
+    if is_removal(b) {
+        return "Remove construction".into();
+    }
+    let sub = b.subtype.as_str();
+    let name = match planned_index(sub) {
+        Some(i) => ["Wall", "Floor", "Ramp", "Up stair", "Down stair", "Up/down stair", "Fortification", "Reinforced wall"][i].to_string(),
+        None if sub.starts_with("Track") => "Track".to_string(),
+        None if sub.is_empty() => "Construction".to_string(),
+        None => super::words(sub),
+    };
+    if b.built {
+        name
+    } else {
+        format!("{name} (planned)")
+    }
+}
+
 pub fn constr_label(k: ConstructionKind) -> &'static str {
     CONSTRUCTIONS.iter().find(|c| c.kind == k).map(|c| c.label).unwrap_or("Construction")
 }
@@ -432,6 +451,45 @@ pub fn draw_constructions(g: &mut Game, r: Rect, gy: f32, cell_w: f32, cols: usi
     }
 }
 
+/// Test hook (`--ui fake-constructions`): planned constructions next to the camera, so the
+/// blueprint look can be checked while the sim's construction jobs are not there. The
+/// buildings are what DF's planned constructions are: kind `Construction`, not built.
+pub fn debug_constructions(g: &mut Game) {
+    let c = Pos::new(g.cam.x as i16, g.cam.y as i16, g.cam.z as i16);
+    let mut id = g.sim.world.buildings.iter().map(|b| b.id).max().unwrap_or(0) + 1;
+    let mut placed = 0;
+    let kinds = ["Wall", "Wall", "Wall", "Floor", "UpStair", "DownStair", "UpDownStair", "Ramp", "Fortification", "TrackWE", "TrackWE", "TrackWE"];
+    for (k, sub) in kinds.iter().enumerate() {
+        let p = Pos::new(c.x - 6 + k as i16, c.y + 2, c.z);
+        let kind = match *sub {
+            "Floor" => ConstructionKind::Floor,
+            _ => ConstructionKind::Wall,
+        };
+        if !can_construct(&g.sim.world, kind, p) {
+            continue;
+        }
+        g.sim.world.buildings.push(Building {
+            id,
+            kind: "Construction".into(),
+            subtype: sub.to_string(),
+            x1: p.x,
+            y1: p.y,
+            x2: p.x,
+            y2: p.y,
+            z: p.z,
+            center: p,
+            mat: NO_MAT,
+            stage: 0,
+            built: false,
+            owner: -1,
+            ..Default::default()
+        });
+        id += 1;
+        placed += 1;
+    }
+    g.set_status(format!("Test hook: {placed} planned constructions"));
+}
+
 // ------------------------------------------------------------------ map overlays
 
 /// Tile designation overlays of the visible area: smooth/engrave markers, carve marks and,
@@ -613,11 +671,11 @@ fn construction_tint(w: &World, b: &Building) -> [u8; 4] {
         if let Some(m) = w.material(b.mat) {
             if m.rgb != [0, 0, 0] {
                 let k = |c: u8| (c as u16 / 2 + 128).min(255) as u8;
-                return [k(m.rgb[0]), k(m.rgb[1]), k(m.rgb[2]), 170];
+                return [k(m.rgb[0]), k(m.rgb[1]), k(m.rgb[2]), 215];
             }
         }
     }
-    [235, 240, 255, 150]
+    [205, 220, 255, 215]
 }
 
 /// Connection mask from a DF track construction name (`TrackNS`, `TrackNSEW`, `TrackRampN`).
@@ -763,8 +821,8 @@ pub fn draw_caged(g: &mut Game, uid: i32, r: Rect, sprites: &[Sprite]) -> bool {
     } else {
         draw_rectangle(r.x + 1.0, r.y + 1.0, r.w - 2.0, r.h - 2.0, Color::from_rgba(40, 32, 26, 220));
     }
-    // The creature, 80 % size, standing on the cage floor.
-    let k = 0.8;
+    // The creature, 85 % size, standing on the cage floor.
+    let k = 0.85;
     let (ix, iy) = (r.x + r.w * (1.0 - k) / 2.0, r.y + r.h * (1.0 - k) - r.h * 0.04);
     let mut drawn = false;
     for s in sprites {
@@ -778,16 +836,16 @@ pub fn draw_caged(g: &mut Game, uid: i32, r: Rect, sprites: &[Sprite]) -> bool {
             g.font.glyph(code, r.x + (r.w - gw) / 2.0, r.y + (r.h - gh) / 2.0, gw, gh, Color::from_rgba(230, 200, 160, 255));
         }
     }
-    // Front bars in the cage's color.
-    let c = g.sim.world.material(mat).map(|m| m.rgb).filter(|c| *c != [0, 0, 0]).unwrap_or([150, 110, 70]);
-    let bar = Color::from_rgba((c[0] as u16 * 3 / 4 + 40).min(255) as u8, (c[1] as u16 * 3 / 4 + 40).min(255) as u8, (c[2] as u16 * 3 / 4 + 40).min(255) as u8, 235);
-    let th = (r.w / 16.0).max(1.0);
-    let (top, bot) = (r.y + r.h * 0.10, r.y + r.h * 0.94);
-    for i in 0..5 {
-        let x = r.x + r.w * (0.16 + 0.17 * i as f32);
-        draw_line(x, top, x, bot, th, bar);
+    // The bars in front: the same cage sprite again, faint, so the creature is behind them.
+    if let Some(c) = cage {
+        g.rend.draw_sprite(&g.gfx, &c.mul_tint([255, 255, 255, 80]), r.x, r.y, tp);
+    } else {
+        let th = (r.w / 16.0).max(1.0);
+        for i in 0..4 {
+            let x = r.x + r.w * (0.2 + 0.2 * i as f32);
+            draw_line(x, r.y + r.h * 0.1, x, r.y + r.h * 0.94, th, Color::from_rgba(170, 130, 90, 200));
+        }
     }
-    draw_line(r.x + r.w * 0.06, top, r.x + r.w * 0.94, top, th, bar);
     true
 }
 
@@ -881,8 +939,11 @@ pub fn draw_mood_tab(g: &mut Game, u: &Unit, area: Rect) {
             y += GH * s + 14.0 * s;
         }
         None => {
-            g.font.draw("No workshop claimed yet (needs a free one of the right kind).", x, y, s, col::TEXT_HI);
-            y += lh * 1.5;
+            for l in super::psyche::wrap("No workshop claimed yet (needs a free one of the right kind).", maxc, 2) {
+                g.font.draw(&l, x, y, s, col::TEXT_HI);
+                y += lh;
+            }
+            y += lh * 0.5;
         }
     }
     g.font.draw("Materials needed", x, y, s, col::BORDER_HI);
@@ -892,13 +953,18 @@ pub fn draw_mood_tab(g: &mut Game, u: &Unit, area: Rect) {
         y += lh;
     }
     for n in &mi.needs {
-        g.font.draw(&clip(&format!("· {n}"), maxc), x, y, s, col::TEXT);
-        y += lh;
+        for l in super::psyche::wrap(&format!("· {n}"), maxc, 2) {
+            g.font.draw(&l, x, y, s, col::TEXT);
+            y += lh;
+        }
     }
     if let Some(t) = mi.ticks_left {
         y += lh * 0.5;
         let c = if t < rf_core::TICKS_PER_MONTH as u64 / 2 { col::TEXT_BAD } else { col::TEXT_HI };
-        g.font.draw(&format!("Goes insane in about {} without them.", super::round4::ticks_span(t)), x, y, s, c);
+        for l in super::psyche::wrap(&format!("Goes insane in about {} without them.", super::round4::ticks_span(t)), maxc, 2) {
+            g.font.draw(&l, x, y, s, c);
+            y += lh;
+        }
     }
 }
 
@@ -917,24 +983,28 @@ pub fn treatment_rows(g: &Game, u: &Unit) -> Vec<super::psyche::Row> {
     let has = |w: &rf_core::Wound, f: &[&str]| w.flags.iter().any(|x| f.contains(&x.as_str()));
     let any = |f: &[&str]| active.iter().any(|w| has(w, f));
     let all = |f: &[&str]| active.iter().all(|w| has(w, f));
-    let bone = |w: &rf_core::Wound| w.layer.to_ascii_uppercase().contains("BONE") || has(w, &["BROKEN", "FRACTURED", "SMASHED", "SMASHED_APART"]);
+    // Fractures: damaged bone layers (a smashed nail is not a broken bone).
+    let bone = |w: &rf_core::Wound| w.layer.to_ascii_uppercase().contains("BONE") && (w.severity > 0 || has(w, &["BROKEN", "FRACTURED", "SMASHED", "SMASHED_APART"]));
     let mut need: Vec<(&str, Color)> = Vec::new();
     let mut done: Vec<&str> = Vec::new();
-    if !all(&["DIAGNOSED"]) {
+    // DF diagnoses the patient once (the flag lands on the wounds known at that time).
+    if !any(&["DIAGNOSED"]) {
         need.push(("Diagnosis required", col::TEXT_HI));
-    } else {
+    } else if all(&["DIAGNOSED"]) {
         done.push("diagnosed");
+    } else {
+        need.push(("New wounds not yet diagnosed", col::TEXT_HI));
     }
     if any(&["INFECTION", "INFECTED"]) {
         need.push(("Cleaning required (infection)", Color::from_rgba(200, 220, 80, 255)));
     }
-    let bleeding_open = active.iter().any(|w| (w.bleeding > 0 || has(w, &["BLEEDING", "CUT", "EDGED_DAMAGE"])) && !has(w, &["SUTURED"]));
+    let bleeding_open = active.iter().any(|w| (w.bleeding > 0 || has(w, &["BLEEDING"]) || (has(w, &["CUT"]) && w.severity > 0)) && !has(w, &["SUTURED"]));
     if bleeding_open {
         need.push(("Suturing required", col::TEXT_BAD));
     } else if any(&["SUTURED"]) {
         done.push("sutured");
     }
-    if active.iter().any(|w| (w.bleeding > 0 || has(w, &["CUT", "EDGED_DAMAGE"])) && !has(w, &["BANDAGED", "DRESSED", "DRESSING"])) {
+    if active.iter().any(|w| w.bleeding > 0 && !has(w, &["BANDAGED", "DRESSED", "DRESSING"])) {
         need.push(("Dressing required", col::TEXT_HI));
     } else if any(&["BANDAGED", "DRESSED", "DRESSING"]) {
         done.push("dressed");
@@ -948,7 +1018,7 @@ pub fn treatment_rows(g: &Game, u: &Unit) -> Vec<super::psyche::Row> {
     } else if !broken.is_empty() {
         done.push("immobilized");
     }
-    if any(&["SEVERED", "SMASHED_APART", "SENSORY_NERVE_SEVERED", "MOTOR_NERVE_SEVERED"]) {
+    if any(&["SEVERED", "SENSORY_NERVE_SEVERED", "MOTOR_NERVE_SEVERED"]) {
         rows.push(Row::Text("Permanent damage (severed part or nerve): cannot be treated.".into(), col::TEXT_DIM));
     }
     for (t, c) in need {

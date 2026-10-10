@@ -164,7 +164,11 @@ fn caravan_arrived(g: &mut Game) {
     let civ = if t.civ.is_empty() { "the mountainhomes".to_string() } else { t.civ.clone() };
     let text = format!("A caravan from {civ} has arrived.");
     let pos = g.sim.world.building(t.depot).map(|b| b.center);
-    if !g.r4.sim_announced_caravan {
+    // [round 5] The sim's own arrival line can come a few frames before the (throttled)
+    // caravan poll notices the caravan: do not log it twice.
+    let now = get_time();
+    let logged = g.log.iter().rev().take(200).any(|l| now - l.born < 2.0 && is_caravan_text(&l.text));
+    if !g.r4.sim_announced_caravan && !logged {
         let date = date_string(&g.sim.world.calendar);
         g.log.push(LogLine::new(text.clone(), pos, AnnouncementKind::Warning, get_time(), date));
     }
