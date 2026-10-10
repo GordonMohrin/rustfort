@@ -699,8 +699,32 @@ fn look_down(g: &Gfx, world: &World, p: Pos, out: &mut Vec<Sprite>) {
 #[allow(clippy::too_many_arguments)]
 fn tree_tile(g: &Gfx, world: &World, p: Pos, tile: &rf_core::Tile, tt: &rf_core::TiletypeInfo, cls: TreeTt, h: u32, out: &mut Vec<Sprite>, depth: u8) {
     let plant = g.plant_of_mat(tile.mat);
-    let set = &g.plants_t.trees[plant.map(|p| p.tree as usize).unwrap_or(0).min(g.plants_t.trees.len().saturating_sub(1))];
+    let ti = plant.map(|p| p.tree as usize).unwrap_or(0).min(g.plants_t.trees.len().saturating_sub(1));
+    let set = &g.plants_t.trees[ti];
     let dead = plants::is_dead(tt);
+    // Seasons (DF growth timing/prints): autumn colors, bare in winter, blossoms, fruit.
+    let look = plant.map(|pg| pg.season(world.calendar.year_tick)).unwrap_or_default();
+    let ss = g.plants_t.season.get(ti).or(g.plants_t.season.first());
+    let leaf = |pick: &dyn Fn(&plants::TreeSet) -> Option<Sprite>, out: &mut Vec<Sprite>| {
+        let base = match (look.leaves, ss) {
+            (4, _) => None,
+            (v @ 1..=3, Some(ss)) => pick(&ss.autumn[v as usize - 1]).or_else(|| pick(set)),
+            _ => pick(set),
+        };
+        out.extend(base);
+        if let Some(ss) = ss {
+            if look.flowers > 0 {
+                if let Some(s) = pick(&ss.flowers[(look.flowers as usize - 1).min(1)]) {
+                    out.push(g.recolor_row(s, look.flower_row));
+                }
+            }
+            if look.fruit > 0 {
+                if let Some(s) = pick(&ss.fruit[(look.fruit as usize - 1).min(2)]) {
+                    out.push(g.recolor_row(s, look.fruit_row));
+                }
+            }
+        }
+    };
     let nb = |dx: i16, dy: i16| g.tree_tt_at(world, p.offset(dx, dy, 0));
     let mask_of = |f: &dyn Fn(TreeTt) -> bool| -> u8 { (f(nb(0, -1)) as u8) | (f(nb(0, 1)) as u8) << 1 | (f(nb(-1, 0)) as u8) << 2 | (f(nb(1, 0)) as u8) << 3 };
     match cls {
@@ -732,7 +756,7 @@ fn tree_tile(g: &Gfx, world: &World, p: Pos, tile: &rf_core::Tile, tt: &rf_core:
                 if let TreeTt::Trunk(m) = cls {
                     let leafy = mask_of(&|c| matches!(c, TreeTt::Twigs | TreeTt::Branches | TreeTt::Heavy(_)));
                     if m != 0 && leafy != 0 && !base {
-                        out.extend(set.over_trunk[m as usize]);
+                        leaf(&|s| s.over_trunk[m as usize], out);
                     }
                 }
             }
@@ -743,7 +767,7 @@ fn tree_tile(g: &Gfx, world: &World, p: Pos, tile: &rf_core::Tile, tt: &rf_core:
             }
             out.extend(set.heavy_branch[m as usize].or(set.heavy_branch[15]));
             if !dead {
-                out.extend(set.over_heavy[m as usize]);
+                leaf(&|s| s.over_heavy[m as usize], out);
             }
         }
         TreeTt::Branches => {
@@ -753,20 +777,24 @@ fn tree_tile(g: &Gfx, world: &World, p: Pos, tile: &rf_core::Tile, tt: &rf_core:
             let m = mask_of(&|c| c.is_tree_solid());
             out.extend(set.branch[m as usize].or(set.branch[0]));
             if !dead {
-                out.extend(set.twigs_full[(h as usize >> 3) % 4]);
+                let k = (h as usize >> 3) % 4;
+                leaf(&|s| s.twigs_full[k], out);
             }
         }
         TreeTt::Twigs => {
             // Open tile: the renderer draws the level below first (DF's look-down).
             let m = mask_of(&|c| c.is_tree_solid());
-            let s = if dead {
-                set.leafless[m as usize].or(set.leafless[0])
-            } else if m == 0 {
-                set.twigs_full[(h as usize >> 3) % 4].or(set.twigs[0])
+            if dead || look.leaves == 4 {
+                // Dead trees, and living ones in winter after their leaves dropped.
+                out.extend(set.leafless[m as usize].or(set.leafless[0]));
+                if !dead {
+                    leaf(&|_| None, out);
+                }
             } else {
-                set.twigs[m as usize].or(set.twigs[0])
-            };
-            out.extend(s);
+                let k = (h as usize >> 3) % 4;
+                let pick = move |s: &plants::TreeSet| if m == 0 { s.twigs_full[k].or(s.twigs[0]) } else { s.twigs[m as usize].or(s.twigs[0]) };
+                leaf(&pick, out);
+            }
         }
         TreeTt::CapWall(m) => out.extend(set.cap_wall[m as usize].or(set.cap_pillar)),
         TreeTt::CapThick(i) => out.extend(set.cap_thick[i as usize].or(set.cap_pillar)),

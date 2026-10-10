@@ -173,6 +173,130 @@ impl TreeSet {
     }
 }
 
+/// [gfx6] When a growth is on the plant and how it looks, from the PLANT raws:
+/// `[GROWTH_TIMING:start:end]` and `[GROWTH_PRINT:c:c:fg:bg:bright:start:end:prio]` (year ticks).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Growth {
+    pub start: i32,
+    pub end: i32,
+    /// (start, end, DF 16-color index fg + 8 * bright).
+    pub prints: Vec<(i32, i32, u8)>,
+    /// Standard palette row of the growth's material color (`STATE_COLOR`), 0 = none.
+    pub row: u16,
+}
+
+fn in_range(t: i32, a: i32, b: i32) -> bool {
+    if a <= b {
+        t >= a && t <= b
+    } else {
+        t >= a || t <= b
+    }
+}
+
+impl Growth {
+    pub(crate) fn active(&self, t: i32) -> bool {
+        in_range(t, self.start, self.end)
+    }
+    /// Print color at year tick `t` (the first print whose range holds it).
+    pub(crate) fn color(&self, t: i32) -> Option<u8> {
+        self.prints.iter().find(|p| in_range(t, p.0, p.1)).map(|p| p.2)
+    }
+}
+
+/// [gfx6] Seasonal leaf, blossom and fruit pieces of one tree set (`TREES_LEAVES` autumn
+/// colors 1..3 = yellow, orange, red; `TREES_FLOWERS` 1..2; `TREES_FRUIT` 1..3; or a tree's own
+/// pages like `TREE_MAPLE_LEAVES`). Only the leaf fields of the `TreeSet`s are used.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct SeasonSets {
+    pub autumn: [TreeSet; 3],
+    pub flowers: [TreeSet; 2],
+    pub fruit: [TreeSet; 3],
+    /// Pages of the flower/fruit pieces (palette pages, recolored by the growth material).
+    pub pages: Vec<u16>,
+}
+
+impl SeasonSets {
+    /// Put `<name>_<AUTUMN|FLOWER|FRUIT>` with variant `v` (1-based); false if not seasonal.
+    fn put(&mut self, name: &str, v: usize, s: Sprite) -> bool {
+        let (base, set): (&str, &mut [TreeSet]) = if let Some(b) = name.strip_suffix("_AUTUMN") {
+            (b, &mut self.autumn[..])
+        } else if let Some(b) = name.strip_suffix("_FLOWER") {
+            (b, &mut self.flowers[..])
+        } else if let Some(b) = name.strip_suffix("_FRUIT") {
+            (b, &mut self.fruit[..])
+        } else {
+            return false;
+        };
+        let flower_or_fruit = !name.ends_with("_AUTUMN");
+        if let Some(ts) = set.get_mut(v.max(1) - 1) {
+            ts.put(base, s);
+            if flower_or_fruit && !self.pages.contains(&s.page) {
+                self.pages.push(s.page);
+            }
+        }
+        true
+    }
+    fn fill_from(&mut self, std: &SeasonSets) {
+        for (a, b) in self.autumn.iter_mut().zip(std.autumn.iter()) {
+            a.fill_from(b);
+        }
+        for (a, b) in self.flowers.iter_mut().zip(std.flowers.iter()) {
+            a.fill_from(b);
+        }
+        for (a, b) in self.fruit.iter_mut().zip(std.fruit.iter()) {
+            a.fill_from(b);
+        }
+        for p in &std.pages {
+            if !self.pages.contains(p) {
+                self.pages.push(*p);
+            }
+        }
+    }
+}
+
+/// [gfx6] The seasonal look of a tree at a year tick.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct SeasonLook {
+    /// 0 = summer leaves, 1..=3 = autumn color variant, 4 = bare (leaves dropped).
+    pub leaves: u8,
+    /// Blossoms: variant 1..=2 (0 = none) and palette row.
+    pub flowers: u8,
+    pub flower_row: u16,
+    /// Fruit: variant 1..=3 (0 = none) and palette row.
+    pub fruit: u8,
+    pub fruit_row: u16,
+}
+
+/// DF's 16 console colors (index fg + 8 * bright) as RGB.
+pub(crate) const DF_COLORS: [[u8; 3]; 16] = [
+    [0, 0, 0],
+    [0, 0, 128],
+    [0, 128, 0],
+    [0, 128, 128],
+    [128, 0, 0],
+    [128, 0, 128],
+    [128, 128, 0],
+    [192, 192, 192],
+    [128, 128, 128],
+    [0, 0, 255],
+    [0, 255, 0],
+    [0, 255, 255],
+    [255, 0, 0],
+    [255, 0, 255],
+    [255, 255, 0],
+    [255, 255, 255],
+];
+
+/// Autumn variant for a leaf print color: green = summer (0), yellow 1, orange/brown 2, red 3.
+fn autumn_variant(c: u8) -> u8 {
+    match c {
+        2 | 10 | 3 | 11 => 0,
+        14 | 15 | 7 => 1,
+        6 | 12 | 8 => 2,
+        _ => 3,
+    }
+}
+
 /// Graphics of one plant.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct PlantGfx {
@@ -195,6 +319,34 @@ pub(crate) struct PlantGfx {
     pub edges: [Option<Sprite>; 8],
     /// [gfx6] `CUSTOM_RAMP`: ramps are the plant's `GRASS_1` plus the ramp overlay.
     pub custom_ramp: bool,
+    /// [gfx6] Seasonal growths: leaves (autumn colors, dropped in winter), blossoms and fruit
+    /// with the variant of their standard pieces (`STANDARD_FLOWERS_n`, `STANDARD_FRUIT_n`).
+    pub leaves: Option<Growth>,
+    pub flowers: Option<(u8, Growth)>,
+    pub fruit: Option<(u8, Growth)>,
+}
+
+impl PlantGfx {
+    /// The tree's look at year tick `t` (allocation-free).
+    pub(crate) fn season(&self, t: i32) -> SeasonLook {
+        let mut l = SeasonLook::default();
+        if let Some(g) = &self.leaves {
+            l.leaves = if !g.active(t) { 4 } else { g.color(t).map(autumn_variant).unwrap_or(0) };
+        }
+        if let Some((v, g)) = &self.flowers {
+            if g.active(t) && l.leaves != 4 {
+                l.flowers = *v;
+                l.flower_row = g.row;
+            }
+        }
+        if let Some((v, g)) = &self.fruit {
+            if g.active(t) {
+                l.fruit = *v;
+                l.fruit_row = g.row;
+            }
+        }
+        l
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -205,6 +357,8 @@ pub(crate) struct PlantTables {
     pub trees: Vec<TreeSet>,
     /// Plant id -> (local material id -> growth id), from the PLANT object raws.
     pub growth_mats: HashMap<String, Vec<(String, String)>>,
+    /// [gfx6] Seasonal pieces per tree set (parallel to `trees`, 0 = standard).
+    pub season: Vec<SeasonSets>,
 }
 
 impl PlantTables {
@@ -220,6 +374,19 @@ impl PlantTables {
             }
         }
         t.trees.push(std.clone());
+        // Seasonal standard pieces: TREES_LEAVES/_FLOWERS/_FRUIT with a variant number.
+        let mut std_season = SeasonSets::default();
+        for td in &g.db.tiles {
+            if !matches!(td.page.as_str(), "TREES_LEAVES" | "TREES_FLOWERS" | "TREES_FRUIT") {
+                continue;
+            }
+            let Some(page) = g.page_id(&td.page) else { continue };
+            let v = td.extra.first().and_then(|e| e.trim().parse::<usize>().ok()).unwrap_or(1);
+            std_season.put(&td.name, v, Sprite::simple(page, td.x, td.y));
+        }
+        t.season.push(std_season.clone());
+        // Which growth of each plant uses which standard pieces (from PLANT_GRAPHICS).
+        let mut uses: Vec<(u16, u8, u8, String)> = Vec::new(); // (plant, kind 0 leaves 1 flowers 2 fruit, variant, growth id)
         let sp = |g: &Gfx, tok: &rf_raws::Token, i: usize| -> Option<Sprite> {
             let page = g.page_id(tok.arg(i))?;
             Some(Sprite::simple(page, tok.arg_i32(i + 1)?.max(0) as u16, tok.arg_i32(i + 2)?.max(0) as u16))
@@ -231,6 +398,7 @@ impl PlantTables {
             });
             let mut pg = t.plants[idx as usize].clone();
             let mut own = TreeSet::default();
+            let mut own_season = SeasonSets::default();
             let mut has_own = false;
             let mut growth: Option<String> = None;
             for tok in &o.tokens[1..] {
@@ -265,6 +433,12 @@ impl PlantTables {
                         }
                     }
                     "GROWTH" => growth = Some(tok.arg(0).to_string()),
+                    "STANDARD_LEAVES" => uses.push((idx, 0, 0, growth.clone().unwrap_or_default())),
+                    n if n.starts_with("STANDARD_FLOWERS_") || n.starts_with("STANDARD_FRUIT_") => {
+                        let v: u8 = n.rsplit('_').next().and_then(|x| x.parse().ok()).unwrap_or(1);
+                        let kind = if n.starts_with("STANDARD_FLOWERS_") { 1 } else { 2 };
+                        uses.push((idx, kind, v, growth.clone().unwrap_or_default()));
+                    }
                     "GROWTH_PICKED" => {
                         if let (Some(gid), Some(s)) = (&growth, sp(g, tok, 0)) {
                             if !pg.growths.iter().any(|(id, _)| id == gid) {
@@ -276,6 +450,11 @@ impl PlantTables {
                         if let Some(s) = sp(g, tok, 1) {
                             own.put(tok.arg(0), s);
                             has_own = true;
+                        } else if let (Ok(v), Some(s)) = (tok.arg(1).trim().parse::<usize>(), sp(g, tok, 2)) {
+                            // Own seasonal pieces: `TREE_TILE:<NAME>_AUTUMN:1:PAGE:x:y`.
+                            if own_season.put(tok.arg(0), v, s) {
+                                has_own = true;
+                            }
                         }
                     }
                     _ => {}
@@ -283,8 +462,10 @@ impl PlantTables {
             }
             if has_own {
                 own.fill_from(&std);
+                own_season.fill_from(&t.season[0]);
                 pg.tree = t.trees.len() as u16;
                 t.trees.push(own);
+                t.season.push(own_season);
             }
             t.plants[idx as usize] = pg;
         }
@@ -292,13 +473,52 @@ impl PlantTables {
         for o in raws.of_kind("PLANT") {
             let mut cur: Option<&str> = None;
             let mut v: Vec<(String, String)> = Vec::new();
+            // [gfx6] Growths (timing, prints, material) and material colors of this plant.
+            let mut growths: Vec<(String, Growth, String)> = Vec::new();
+            let mut mat_cur: Option<&str> = None;
+            let mut mat_color: Vec<(&str, &str)> = Vec::new();
             for tok in &o.tokens[1..] {
                 match tok.name.as_str() {
-                    "GROWTH" => cur = Some(tok.arg(0)),
+                    "GROWTH" => {
+                        cur = Some(tok.arg(0));
+                        mat_cur = None;
+                        growths.push((tok.arg(0).to_string(), Growth { start: 0, end: 403_199, ..Default::default() }, String::new()));
+                    }
                     "GROWTH_ITEM" => {
                         if let Some(gid) = cur {
                             if let Some(i) = tok.args.iter().position(|a| a == "LOCAL_PLANT_MAT") {
                                 v.push((tok.arg(i + 1).to_string(), gid.to_string()));
+                                if let Some(gr) = growths.last_mut() {
+                                    gr.2 = tok.arg(i + 1).to_string();
+                                }
+                            }
+                        }
+                    }
+                    "GROWTH_TIMING" => {
+                        if let (Some(gr), Some(a), Some(b)) = (growths.last_mut(), tok.arg_i32(0), tok.arg_i32(1)) {
+                            gr.1.start = a;
+                            gr.1.end = b;
+                        }
+                    }
+                    "GROWTH_PRINT" => {
+                        if let Some(gr) = growths.last_mut() {
+                            let fg = tok.arg_i32(2).unwrap_or(7).clamp(0, 7) as u8;
+                            let br = tok.arg_i32(4).unwrap_or(0).clamp(0, 1) as u8;
+                            let (a, b) = match (tok.arg_i32(5), tok.arg_i32(6)) {
+                                (Some(a), Some(b)) => (a, b),
+                                _ => (0, 403_199),
+                            };
+                            gr.1.prints.push((a, b, fg + 8 * br));
+                        }
+                    }
+                    "USE_MATERIAL_TEMPLATE" | "MATERIAL" => {
+                        mat_cur = Some(tok.arg(0));
+                        cur = None;
+                    }
+                    "STATE_COLOR" => {
+                        if let Some(m) = mat_cur {
+                            if matches!(tok.arg(0), "ALL" | "ALL_SOLID" | "SOLID") && !mat_color.iter().any(|(k, _)| *k == m) {
+                                mat_color.push((m, tok.arg(1)));
                             }
                         }
                     }
@@ -307,6 +527,32 @@ impl PlantTables {
             }
             if !v.is_empty() {
                 t.growth_mats.insert(o.id.clone(), v);
+            }
+            let Some(&pi) = t.by_id.get(&o.id) else { continue };
+            let row_of = |gr: &(String, Growth, String)| -> u16 {
+                let tokc = mat_color.iter().find(|(k, _)| *k == gr.2).map(|(_, c)| *c);
+                match tokc.and_then(|c| g.std_rows.get(c).copied()) {
+                    Some(r) => r,
+                    None => gr.1.prints.first().map(|p| g.std_row_for_rgb(DF_COLORS[p.2 as usize & 15])).unwrap_or(0),
+                }
+            };
+            let pg = &mut t.plants[pi as usize];
+            for (pl, kind, var, gid) in uses.iter().filter(|u| u.0 == pi) {
+                let Some(gr) = growths.iter().find(|x| &x.0 == gid) else { continue };
+                let mut growth = gr.1.clone();
+                growth.row = row_of(gr);
+                let _ = pl;
+                match kind {
+                    0 => pg.leaves = Some(growth),
+                    1 => pg.flowers = Some((*var, growth)),
+                    _ => pg.fruit = Some((*var, growth)),
+                }
+            }
+            // Trees with their own leaf pages but no STANDARD_LEAVES: the LEAVES growth.
+            if pg.leaves.is_none() && pg.tree != 0 {
+                if let Some(gr) = growths.iter().find(|x| x.0 == "LEAVES") {
+                    pg.leaves = Some(gr.1.clone());
+                }
             }
         }
         t

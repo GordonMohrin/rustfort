@@ -489,6 +489,19 @@ impl Gfx {
         world.material(mat).map(|m| self.std_row_for_rgb(m.rgb)).unwrap_or(0)
     }
 
+    /// Recolor a sprite with a standard palette row (baked variant page if `prepare` made one,
+    /// else unchanged).
+    #[inline]
+    pub(crate) fn recolor_row(&self, s: Sprite, row: u16) -> Sprite {
+        match self.std_pal {
+            Some(pal) if row != 0 => match self.variant(s.page, pal, row) {
+                Some(v) => Sprite { page: v, ..s },
+                None => s,
+            },
+            _ => s,
+        }
+    }
+
     /// Recolor a sprite with a world material through the standard palette: uses the baked
     /// variant page if `prepare` made one, else a multiply tint (approximation).
     pub(crate) fn recolor(&self, s: Sprite, world: &World, mat: u16) -> Sprite {
@@ -595,6 +608,26 @@ impl Gfx {
             }
         }
         for (p, row) in pages_for {
+            self.make_variant(p, pal, row);
+        }
+        // [gfx6] Blossom and fruit colors of the world's trees (palette pages per growth color).
+        let mut seen: HashSet<u16> = HashSet::new();
+        let mut want: Vec<(u16, u16)> = Vec::new();
+        for &pi in &self.mat_plant {
+            if pi == u16::MAX || !seen.insert(pi) {
+                continue;
+            }
+            let pg = &self.plants_t.plants[pi as usize];
+            let Some(ss) = self.plants_t.season.get(pg.tree as usize).or(self.plants_t.season.first()) else { continue };
+            for row in [pg.flowers.as_ref().map(|f| f.1.row), pg.fruit.as_ref().map(|f| f.1.row)].into_iter().flatten() {
+                if row != 0 {
+                    for &p in &ss.pages {
+                        want.push((p, row));
+                    }
+                }
+            }
+        }
+        for (p, row) in want {
             self.make_variant(p, pal, row);
         }
         // Corpses, body parts and remains: the creature's own sprite.
