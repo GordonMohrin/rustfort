@@ -49,7 +49,7 @@ pub fn draw_ui(g: &mut Game) {
     if let Some((t, p)) = g.ui.tooltip.take() {
         let lines: Vec<(String, Color)> = t.split('\n').map(|l| (l.to_string(), col::TEXT)).collect();
         tooltip_box(g, &lines, p, true);
-    } else if !g.ui.over_ui && !g.menu_open && !g.help_open && g.alert.is_none() && g.r4.popup.is_none() && g.r9.popups.is_empty() && g.screen == Screen::None && !matches!(g.tool, Tool::Build(_) | Tool::Construct(_)) && g.r10.ctx.is_none() {
+    } else if !g.ui.over_ui && !g.menu_open && !g.help_open && g.alert.is_none() && g.r4.popup.is_none() && g.r9.popups.is_empty() && super::military::map_open(g) /* [mil-ui] */ && !matches!(g.tool, Tool::Build(_) | Tool::Construct(_)) && g.r10.ctx.is_none() {
         map_tooltip(g);
     }
 }

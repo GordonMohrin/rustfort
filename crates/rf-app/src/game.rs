@@ -160,6 +160,8 @@ pub struct MilitaryUi {
     pub pscroll: usize,
     /// The "Kill" target list is open.
     pub kill_list: bool,
+    /// [mil-ui] Side panel: ticked squads, civilian alert burrow, pending map orders.
+    pub panel: crate::ui::military::PanelState,
 }
 
 /// Burrow menu state.
@@ -942,6 +944,7 @@ impl Game {
                 _ if crate::ui::round8::ui_arg(self, k, v) => {}
                 _ if crate::ui::round9::ui_arg(self, k, v) => {} // [app9]
                 _ if crate::ui::round10::ui_arg(self, k, v) => {} // [app10]
+                _ if crate::ui::military::ui_arg(self, k, v) => {} // [mil-ui]
                 _ => eprintln!("unknown --ui state {u}"),
             }
         }
@@ -1479,6 +1482,8 @@ impl Game {
             self.bui.crop_season = None;
         } else if self.orders.new_open {
             self.orders.new_open = false;
+        } else if self.screen == Screen::Military && self.mil.panel.dd_open {
+            self.mil.panel.dd_open = false; // [mil-ui] burrow dropdown first
         } else if self.screen == Screen::Military && (self.mil.picker.is_some() || self.mil.kill_list) {
             self.mil.picker = None;
             self.mil.kill_list = false;
@@ -1595,8 +1600,10 @@ impl Game {
     /// Map clicks (after the UI had its chance).
     fn map_input(&mut self) {
         let m = self.mouse();
-        self.hover = if self.ui.over_ui || self.menu_open || self.screen != Screen::None { None } else { self.tile_at(m) };
-        if self.menu_open || self.screen != Screen::None {
+        // [mil-ui] The squads side panel leaves the map usable.
+        let map_open = crate::ui::military::map_open(self);
+        self.hover = if self.ui.over_ui || self.menu_open || !map_open { None } else { self.tile_at(m) };
+        if self.menu_open || !map_open {
             return;
         }
         let lp = self.ui.lpressed && !self.ui.click_used && !self.ui.over_ui;
@@ -1668,11 +1675,7 @@ impl Game {
             }
             Tool::SquadStation(sq) => {
                 if lp {
-                    self.sim.order_squad(sq, rf_sim::SquadOrder::Station(h));
-                    let name = crate::ui::military::squad_name(&self.sim.world, sq);
-                    self.set_status(format!("{name}: station at {}, {}, z {}", h.x, h.y, h.z));
-                    self.tool = Tool::None;
-                    self.screen = Screen::Military;
+                    crate::ui::military::station_click(self, sq, h); // [mil-ui] all ticked squads
                 }
             }
             Tool::Link(lever) => {
@@ -1692,17 +1695,7 @@ impl Game {
             }
             Tool::SquadKill(sq) => {
                 if lp {
-                    match crate::ui::military::kill_target_at(self, h) {
-                        Some(uid) => {
-                            self.sim.order_squad(sq, rf_sim::SquadOrder::Kill(uid));
-                            let name = crate::ui::military::squad_name(&self.sim.world, sq);
-                            let who = self.sim.world.unit(uid).map(crate::ui::panels::unit_name).unwrap_or_default();
-                            self.set_status(format!("{name}: kill {who}"));
-                            self.tool = Tool::None;
-                            self.screen = Screen::Military;
-                        }
-                        None => self.set_status("No creature to attack there (citizens cannot be targeted)".into()),
-                    }
+                    crate::ui::military::kill_click(self, sq, h); // [mil-ui] all ticked squads
                 }
             }
         }

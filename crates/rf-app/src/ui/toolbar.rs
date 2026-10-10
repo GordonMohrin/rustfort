@@ -251,12 +251,12 @@ pub fn draw_toolbar(g: &mut Game) -> f32 {
                 top = draw_hint(g, cx, y, &format!("{}: drag a rectangle. Right-click cancels.", kind_label(k)));
             }
             Tool::SquadStation(sq) => {
-                let n = super::military::squad_name(&g.sim.world, sq);
-                top = draw_hint(g, cx, y, &format!("Station {n}: click a tile. Right-click: back to the squads."));
+                let n = super::military::tool_label(g, sq); // [mil-ui] all ticked squads
+                top = draw_hint(g, cx, y, &format!("Station {n}: click a tile. Right-click cancels."));
             }
             Tool::SquadKill(sq) => {
-                let n = super::military::squad_name(&g.sim.world, sq);
-                top = draw_hint(g, cx, y, &format!("{n}: click a creature to kill. Right-click: back to the squads."));
+                let n = super::military::tool_label(g, sq); // [mil-ui] all ticked squads
+                top = draw_hint(g, cx, y, &format!("{n}: click a creature to kill. Right-click cancels."));
             }
             Tool::PileLink(..) => {
                 let h = super::round8::link_hint(g).unwrap_or_default(); // [app8]

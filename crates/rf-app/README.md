@@ -307,6 +307,25 @@ position to jump there.
   (`Sim::order_squad`). "+ Assign" opens a citizen picker (best weapon skill first), "Remove"
   empties a position, "+ Create squad" makes a new one. Right-click or Esc during Station/Kill
   returns to the squads.
+  [mil-ui] Since v0.10 the squads screen is a **side panel** in the left column like DF Steam's:
+  the map stays visible and usable next to it (pan, zoom, z-levels, hover, clicking creatures
+  and tiles, the Station/Kill/Patrol tools work with the panel open). Clicking a member opens
+  their unit sheet at the right, so both are visible, and centers the map on them. From top to
+  bottom: *Defense* (a burrow dropdown of `World::burrows`, default the largest, and
+  "Everyone into the burrow!" = `Sim::set_civilian_alert`; while the alert is on, a red
+  "CIVILIAN ALERT, everyone into <burrow>" banner with one-click *Lift alert*), the squad
+  list with a checkbox per squad plus *Select all* (click a row to open the squad), one row of
+  orders and one of routines (Off duty / Staggered / Constant / Ready) that go to all ticked
+  squads (or the open one when none is ticked; Station and Kill give every ticked squad the
+  same tile or target), then the open squad with its tabs. Member rows show the unit's map
+  sprite (body, clothing and worn equipment layers from rf-gfx) and seven uniform slots
+  (body, head, legs, hands, feet, shield, weapon) with the worn item's sprite: green border =
+  armor worn, orange = only clothing where the uniform wants armor, red with a cross =
+  missing (`Sim::squad_equipment`), dim = not in the uniform; hover a slot for the item. Empty
+  positions get short rows; the lists scroll with the wheel. The citizens list and the panel
+  share the left column (the one opened last wins). `--ui` states: `mil-check:all` or
+  `mil-check:72+73` (tick squads), `mil-alert[:burrow]` (dropdown open), `mil-alert-on[:burrow]`,
+  `mil-member[:position]` (unit sheet), `mil-tool:station|kill` (map tool for the ticked squads).
   [app9] Tabs below the orders: *Members*; *Equipment* (DF's per-position uniform screen: the
   positions with worn and missing pieces, and for the selected position one row per slot
   (body, head, legs, hands, feet, shield, weapon) with `<` `>` for the item (none, any, or a type
