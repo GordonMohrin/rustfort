@@ -23,7 +23,8 @@
 //! - Rotting takes 28 days (one month) of exposure, rotten food rots away after another 28.
 //! - Existing containers on a pile are used even beyond the pile's maximum; the maximum only
 //!   limits how many empty containers are brought.
-//! - Wheelbarrows are not simulated yet (all of Gordon's piles have `max_wheelbarrows` 0).
+//! - [carts12] Wheelbarrows are simulated in `minecarts` (all of Gordon's piles have
+//!   `max_wheelbarrows` 0).
 
 use crate::items::Cat;
 use crate::{manhattan, Sim, NONE};

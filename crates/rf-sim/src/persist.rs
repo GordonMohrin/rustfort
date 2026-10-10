@@ -210,6 +210,7 @@ impl Sim {
         v.push(("caverns", fnv(|mix| self.caverns_hash(mix))));
         v.push(("animals", fnv(|mix| self.animals_hash(mix))));
         v.push(("society2", fnv(|mix| self.society2_hash(mix))));
+        v.push(("carts", fnv(|mix| self.carts_hash(mix)))); // [carts12]
         v
     }
 }

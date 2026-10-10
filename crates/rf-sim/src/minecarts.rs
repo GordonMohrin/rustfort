@@ -1700,6 +1700,7 @@ impl Sim {
                     self.carts.carts[c].rider = NONE;
                 }
                 self.carts.jobs.remove(k);
+                self.ai[s].wake = now + 1; // riders sleep with wake u64::MAX
             }
             (JobK::Guide | JobK::Fetch, _) => {
                 self.put_down(s, j.cart, here);

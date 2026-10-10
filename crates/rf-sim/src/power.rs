@@ -30,8 +30,8 @@
 //!   (pumps and millstones also above).
 //! - Manual pumping: one job lasts `PUMP_TICKS` (then the repeat job is free again), 30 XP to
 //!   Pump operating; a manual pump runs only while somebody works it.
-//! - Gear assemblies are always engaged (disengaging by lever is not modelled); minecarts and
-//!   rollers moving carts are not modelled (rollers only use power).
+//! - Gear assemblies are always engaged (disengaging by lever is not modelled). [carts12]
+//!   Powered rollers move minecarts (see `minecarts`).
 
 use crate::path::Goals;
 use crate::rng::Rng;
