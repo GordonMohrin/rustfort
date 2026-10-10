@@ -393,6 +393,16 @@ pub struct Engraving {
     pub skill: i32,
 }
 
+/// [audit-eco] A pending carve-fortification or carve-track designation (DF keeps these in the
+/// tile designation; saved so that they survive save/load like smooth/engrave designations).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CarveDesignation {
+    pub pos: Pos,
+    /// 0 = carve fortification, else carve track with these direction bits (N 1, S 2, W 4, E 8).
+    pub track: u8,
+}
+
 /// [construct] A finished construction (DF `world.constructions`): what was there before and
 /// which item it was built from (DF 53 keeps the item in the world with `flags.construction`).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

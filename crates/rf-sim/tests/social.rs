@@ -217,3 +217,30 @@ fn social_sim_is_deterministic_across_thread_counts() {
     assert_eq!(a, run(4));
     assert!(a.2 > 0, "thoughts were produced");
 }
+
+#[test]
+fn room_value_counts_floor_walls_and_engravings() {
+    // [audit-eco] wiki "Room"/"Engraving": room value = furniture + floor and bordering wall
+    // tiles (origin multiplier x material value) + engravings (10 x material value x quality
+    // multiplier).
+    let (mut w, cx, cy, hz) = world();
+    let uid = w.units.iter().find(|u| u.flags.citizen).unwrap().id;
+    let (a, b) = (Pos::new(cx - 6, cy - 6, hz), Pos::new(cx - 4, cy - 4, hz));
+    add_building(&mut w, "Bed", "", Pos::new(cx - 5, cy - 5, hz), Pos::new(cx - 5, cy - 5, hz), -1, Some(("BED", 120)));
+    add_building(&mut w, "Civzone", "Bedroom", a, b, uid, None);
+    let zone = w.buildings.last().unwrap().id;
+    let floor_mat = w.tile(Pos::new(cx - 5, cy - 5, hz)).unwrap().mat;
+    w.materials[floor_mat as usize].value = 3;
+    for y in cy - 6..=cy - 4 {
+        for x in cx - 6..=cx - 4 {
+            w.tile_mut(Pos::new(x, y, hz)).unwrap().mat = floor_mat;
+        }
+    }
+    let plain = Sim::new(w.clone(), 1).room_value(zone).unwrap();
+    let walls = plain - 120 - 9 * 3;
+    assert!(walls >= 0 && walls % 3 == 0, "furniture + 9 rough floor tiles (x1) + rough walls (x1): {plain}");
+    w.engravings.push(rf_core::Engraving { pos: Pos::new(cx - 6, cy - 6, hz), quality: 0, floor: true, mat: floor_mat, engraver: -1, skill: 0 });
+    w.engravings.push(rf_core::Engraving { pos: Pos::new(cx - 4, cy - 4, hz), quality: 5, floor: true, mat: floor_mat, engraver: -1, skill: 0 });
+    let engraved = Sim::new(w, 1).room_value(zone).unwrap();
+    assert_eq!(engraved - plain, 10 * 3 * (1 + 12), "ordinary (x1) and masterful (x12) engravings");
+}

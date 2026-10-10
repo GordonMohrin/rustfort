@@ -10,6 +10,8 @@
 //! - Arriving at the depot the merchants unload their goods ("The merchants have arrived and are
 //!   unloading their goods."), stay a while, warn ("will be leaving soon"), and leave the map
 //!   again ("have embarked on their journey"). Unsold goods go with them.
+//!   They stay 30 000-40 000 ticks after unloading and warn about 4 days before leaving
+//!   (wiki "Caravan").
 //! - Fort goods are brought to the depot by haulers (DF "Move goods to/from depot", labor
 //!   HAUL_TRADE) and stay there until traded. Trading needs the broker at the depot: the
 //!   appointed BROKER, else the expedition leader/mayor (who does all jobs early on), else the
@@ -20,9 +22,8 @@
 //!   displayed values, not the merchants' decision. Merchants want a profit; elves refuse wood.
 //!
 //! # Estimates (not on the wiki)
-//! - Arrival 7-27 days into the season; stay 16 days after unloading (+2 days per trade, at
-//!   most +8); leaving warning 3 days before; give up after a month if the depot is never
-//!   reached. Merchants 2-4, pack animals 3-6 (2 draft animals per wagon), wagons 1-3.
+//! - Arrival 7-27 days into the season; +2 days per trade (at most +8); give up after a month
+//!   if the depot is never reached. Merchants 2-4, pack animals 3-6 (2 draft animals per wagon), wagons 1-3.
 //! - Merchants accept when the offer is worth at least 110 % of the request; replies by ratio.
 //! - Displayed values deviate by up to (25 - 2 x Appraisal) % per item.
 //! - Goods lists per race and the base values of item types are approximations.
@@ -36,7 +37,11 @@ const DAY: u64 = TICKS_PER_DAY as u64;
 const MONTH: u64 = TICKS_PER_MONTH as u64;
 /// Merchants' required profit in percent (estimate).
 pub const PROFIT_PCT: i64 = 10;
-const STAY_TICKS: u64 = 16 * DAY;
+/// Wiki "Caravan": merchants stay about 30 000-40 000 ticks after arriving at the depot.
+const STAY_TICKS: u64 = 30_000;
+const STAY_SPREAD: u32 = 10_000;
+/// Wiki "Caravan": the "will be leaving soon" warning comes about 4 days before they leave.
+const WARN_TICKS: u64 = 4 * DAY;
 
 pub(crate) struct Member {
     pub slot: u32,
@@ -677,7 +682,7 @@ impl Sim {
         if !leaving {
             if unloaded.is_none() && now >= arrived + MONTH {
                 self.caravan_leave(now);
-            } else if !warned && unloaded.is_some() && now + 3 * DAY >= leave_at {
+            } else if !warned && unloaded.is_some() && now + WARN_TICKS >= leave_at {
                 let civ = c.civ.clone();
                 self.trade.caravan.as_mut().unwrap().warned = true;
                 self.announce(now, format!("The merchants from {civ} will be leaving soon."), None, AnnouncementKind::Info);
@@ -1008,7 +1013,7 @@ impl Sim {
         }
         let c = self.trade.caravan.as_mut().unwrap();
         c.unloaded = Some(now);
-        c.leave_at = now + STAY_TICKS;
+        c.leave_at = now + STAY_TICKS + Rng::for_unit(self.seed, 7, now, 0x57A7).below(STAY_SPREAD + 1) as u64;
         let li = c.log;
         let n = goods.len();
         c.goods = goods;
@@ -1157,8 +1162,9 @@ mod tests {
         assert!(!d.flags.forbid && d.building < 0, "bought drink belongs to the fort");
         assert!(sim.item_idx.get(&wood).map(|&i| sim.imeta[i as usize].dead).unwrap_or(true), "log went to the merchants");
         assert_eq!(sim.trade_report().trades.len(), 1);
-        // They leave after their stay.
-        sim.run_ticks(30 * DAY as u32);
+        // They leave after their stay (30 000-40 000 ticks, wiki "Caravan").
+        assert!(sim.trade_status().unwrap().leaves_in >= 20 * DAY, "they stay about a month");
+        sim.run_ticks(45 * DAY as u32);
         let log = sim.trade_report().caravans[0].clone();
         assert!(log.left.is_some(), "{log:?}");
         assert!(sim.trade_status().is_none());

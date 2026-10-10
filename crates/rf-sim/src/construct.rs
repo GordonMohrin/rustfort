@@ -31,19 +31,24 @@
 //!   obsidian, feature stone and ice walls and floors become the SMOOTH tiletypes. Smoothed and
 //!   constructed walls connect to each other with DF's direction strings (`N-S-W-E-`). Soil and
 //!   constructions cannot be smoothed.
-//! - **Engraving**: only on smoothed natural tiles. The quality comes from the engraver's skill
+//! - **Engraving**: on smoothed natural stone and on constructed walls and floors (wiki
+//!   "Engraving": constructions are already smooth); removing a construction removes its
+//!   engraving. The quality comes from the engraver's skill
 //!   (DF item quality levels 0..5); engravings are kept in `World::engravings`, and
 //!   [`Sim::engraving_value`] / [`Sim::engraving_value_in`] give their value for room value.
 //! - **Carve fortification**: smoothed natural walls become a fortification of the same stone.
 //! - **Carve track**: natural stone floors and constructed floors get `*FloorTrack*` tiletypes;
 //!   the directions follow the dragged line (ends get one direction, like DF).
+//! - Pending carve designations are kept in `World::carve_designations` (smooth/engrave ones in
+//!   the tile flags), so they survive save/load.
 //! - **Traffic** ([`Sim::set_traffic`]): the tile bits feed the A* costs (high 1, normal 2, low 5,
 //!   restricted 25); changing them recomputes the navigation flags and clears the path cache.
 //! - **Item designations** ([`Sim::set_item_flag`]): forbidden items are not hauled, eaten, used
 //!   or dumped, and units already going for them give up; claim unforbids. Items marked for
 //!   dumping are not stockpiled: dwarves with Refuse hauling carry them to the nearest Garbage
 //!   dump zone (civzone `Dump`), where they are forbidden on arrival (as observed in the export:
-//!   dumped items lie in the dump forbidden). Melt only sets the flag (no melt job yet).
+//!   dumped items lie in the dump forbidden). Melt sets the flag; a "Melt a metal object" job
+//!   at a smelter melts it (see `industry`).
 //!
 //! # Estimates (not on the wiki)
 //! - Work times: construct 100 ticks with blocks, 150 with boulders, logs or bars; remove 100;
@@ -317,6 +322,18 @@ impl Sim {
                 self.world.tiles[i].flags &= !mask;
             }
         }
+        // [audit-eco] Carve fortification / track designations saved in the world.
+        let carve = std::mem::take(&mut self.world.carve_designations);
+        for d in carve {
+            let k = if d.track == 0 { CK::CarveFort } else { CK::CarveTrack };
+            if let Some(i) = self.world.idx(d.pos) {
+                if self.cx_detail_ok(k, i) && !self.cx.at.contains_key(&(i as u32)) {
+                    self.cx_add(k, i as u32, -1, -1, d.track);
+                }
+            }
+        }
+        // Room values count engravings, which are indexed only now.
+        self.social_revalue_rooms();
     }
 
     fn cx_ensure(&mut self, s: usize) {
@@ -344,6 +361,12 @@ impl Sim {
             self.cx.dump_of.insert(item, j);
         } else {
             self.cx.at.insert(tile, j);
+        }
+        if matches!(kind, CK::CarveFort | CK::CarveTrack) {
+            // [audit-eco] Kept in the world so that a save keeps the designation.
+            let pos = self.world.pos_of(tile as usize);
+            let track = if kind == CK::CarveTrack { track.max(1) } else { 0 };
+            self.world.carve_designations.push(rf_core::CarveDesignation { pos, track });
         }
         self.cx.open += 1;
         self.cx.epoch += 1;
@@ -381,6 +404,10 @@ impl Sim {
         match job.kind {
             CK::Smooth => t.flags &= !tile_flags::DESIG_SMOOTH,
             CK::Engrave => t.flags &= !tile_flags::DESIG_ENGRAVE,
+            CK::CarveFort | CK::CarveTrack => {
+                let pos = self.world.pos_of(job.tile as usize);
+                self.world.carve_designations.retain(|d| d.pos != pos);
+            }
             _ => {}
         }
         if job.bid >= 0 {
@@ -481,7 +508,13 @@ impl Sim {
                         tt.find(Shape::Floor, m, TtSpecial::Smooth, 0).map(|t| tt.get(t).special == TtSpecial::Smooth).unwrap_or(false)
                     }
             }
-            CK::Engrave => stone_like(m) && matches!(sh, Shape::Wall | Shape::Floor) && sp == TtSpecial::Smooth && !self.cx.engr_at.contains_key(&(i as u32)),
+            // [audit-eco] w:Engraving: smoothed natural stone, and constructed walls and floors
+            // (already smooth; "a constructed wood/glass wall can be engraved").
+            CK::Engrave => {
+                ((stone_like(m) && sp == TtSpecial::Smooth) || m == TtMaterial::Construction)
+                    && matches!(sh, Shape::Wall | Shape::Floor)
+                    && !self.cx.engr_at.contains_key(&(i as u32))
+            }
             CK::CarveFort => {
                 stone_like(m) && sh == Shape::Wall && sp == TtSpecial::Smooth && tt.find(Shape::Fortification, m, TtSpecial::None, 0).map(|t| tt.get(t).shape == Shape::Fortification).unwrap_or(false)
             }
@@ -1525,6 +1558,7 @@ impl Sim {
                 }
             }
         }
+        self.cx_drop_engraving(i); // [audit-eco] constructions can be engraved
         let mut above_changed = false;
         if was_ramp && i + layer < self.world.tiles.len() && self.shape_at(i + layer) == Shape::RampTop {
             self.set_tile(i + layer, Shape::Empty, TtMaterial::Air, 0, NO_MAT);
@@ -1650,6 +1684,13 @@ impl Sim {
     pub fn engraving_value(&self, e: &Engraving) -> i32 {
         let mv = self.world.material(e.mat).map(|m| m.value).unwrap_or(1).max(1);
         10 * mv * QUALITY_MULT[e.quality.min(5) as usize]
+    }
+
+    /// Changes with every finished construction, removal, smoothing, engraving or carving
+    /// (room values are recomputed when it moves).
+    pub(crate) fn detail_epoch(&self) -> u64 {
+        let st = &self.cx.stats;
+        st.built + st.removed + st.smoothed + st.engraved + st.fortifications + st.tracks
     }
 
     /// Engraving at a tile, if any.
@@ -1787,9 +1828,13 @@ mod tests {
         assert!(b.flags.construction && !b.flags.on_ground && b.pos == site, "DF 53 keeps the boulder in the wall");
         assert!(!sim.world.buildings.iter().any(|b| b.kind == "Construction"), "planned construction is gone");
         assert_eq!(sim.construct_report().built, 1);
+        // [audit-eco] Constructed walls are smooth and can be engraved (w:Engraving).
+        assert_eq!(sim.designate_detail(site, site, DetailKind::Engrave), 1);
+        assert!(run_until(&mut sim, 20_000, |s| s.engraving_at(site).is_some()), "constructed wall engraved");
         // Remove it again: the tile is floor again and the boulder comes back.
         assert_eq!(sim.build_construction(CKind::Remove, site, site), 1);
         assert!(run_until(&mut sim, 20_000, |s| s.world.shape(site) == Shape::Floor), "wall removed");
+        assert!(sim.engraving_at(site).is_none() && sim.world.engravings.is_empty(), "the engraving goes with the wall");
         assert!(sim.is_walkable(site));
         let b = sim.world.items.iter().find(|i| i.id == 5000).unwrap();
         assert!(!b.flags.construction && b.flags.on_ground);
@@ -1923,6 +1968,26 @@ mod tests {
         assert_eq!(sim.world.tt(Pos::new(20, 26, hz)).direction, "E");
         assert_eq!(sim.world.tt(Pos::new(21, 26, hz)).direction, "EW");
         assert_eq!(sim.world.tt(Pos::new(22, 26, hz)).direction, "W");
+    }
+
+    #[test]
+    fn carve_designations_survive_save_and_load() {
+        // [audit-eco] Before: carve fortification/track designations lived only in the job list
+        // and were lost on save/load.
+        let w = world();
+        let hz = hall_z();
+        let mut sim = Sim::new(w, 7);
+        assert_eq!(sim.designate_detail(Pos::new(20, 26, hz), Pos::new(22, 26, hz), DetailKind::CarveTrack), 3);
+        assert_eq!(sim.world.carve_designations.len(), 3);
+        // "Save" right away and load into a fresh simulation.
+        let saved = sim.world.clone();
+        let mut sim = Sim::new(saved, 7);
+        assert_eq!(sim.construct_report().open_jobs, 3, "designations restored as jobs");
+        assert!(run_until(&mut sim, 40_000, |s| s.construct_report().tracks == 3));
+        assert_eq!(sim.world.tt(Pos::new(20, 26, hz)).direction, "E");
+        assert_eq!(sim.world.tt(Pos::new(21, 26, hz)).direction, "EW");
+        assert_eq!(sim.world.tt(Pos::new(22, 26, hz)).direction, "W");
+        assert!(sim.world.carve_designations.is_empty(), "finished designations are removed");
     }
 
     #[test]
