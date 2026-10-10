@@ -63,8 +63,73 @@ after them. A module that cannot read its entry starts fresh, as before.
 
 "exact" = restoring and saving again gives the identical JSON (`examples/saveload.rs`).
 
+Since round 11 these entries are the **fallback**: a save also holds the exact snapshot below,
+and `sim_state` is used only when the snapshot cannot be (a save from a build with other sim
+state, an edited world).
+
+## Exact snapshot (`World::sim_exact`, round 11, `[saves11]`)
+
+`Sim` and every module struct derive `serde::Serialize`/`Deserialize`. `Sim::world_for_save`
+puts a MessagePack snapshot (named fields) of the whole sim except the world into
+`World::sim_exact` (one `bin` value of the save body, compressed with it). `Sim::new` restores
+it instead of running the init passes: unit AI (tasks, paths, carried hauls, think-wheel
+timers), the job lists and their spatial index, workshop/production jobs with claims and
+progress, construction jobs, piles and reservations, the haul queue, the path cache, caravans,
+animals (training, pregnancy, eggs), the health care queue, caverns and forgotten beasts,
+population timers, justice and lifestyle counters, report counters, the navigation grid with its
+walk components and landmark tables. RNG streams are derived from (seed, slot, tick), so there
+is no generator state to save. Result: **run N, save, load, run M == run N+M (full
+`state_hash`)**.
+
+- **Encoding:** big per-tile tables of the navigation grid are little-endian byte columns; the
+  landmark distances (`Nav::lm`, 16 per walkable tile) are stored column-wise as residuals of a
+  left/above prediction (`saves11::lm_encode`, LOCO-I median predictor), so they compress to a
+  fraction; the landmark index maps are rebuilt. `&'static str` fields are interned on load.
+- **When the snapshot is used:** `version` matches, the world matches (`WorldCheck`: dims,
+  unit/item/building counts, date, a hash of unit and item ids and item positions), table sizes
+  match, and the **layout** matches: the set of (path, field name) pairs of the snapshot equals
+  that of the restored sim encoded again, i.e. no field was filled with a default and none was
+  ignored. A save from a Rustfort build that added or dropped sim state therefore never skips
+  the init passes with a table missing; it falls back to `sim_state` (close continuation).
+  `Sim::restore_mode()` says which way a sim was restored (`exact`, `close (reason)`, or empty).
+- **Crashes:** a sim whose tick panicked (state possibly half-updated) writes no snapshot, so
+  such a save restarts the AI like round 10 instead of replaying the crash (the automatic
+  rescue save stores the bare world anyway). `RUSTFORT_CLOSE_LOAD=1` ignores snapshots on load
+  (escape hatch if a save ever re-crashes on the same tick).
+- **Rule for new sim state** (also in `ARCHITECTURE.md`): derive serde for it, or
+  `#[serde(skip)]` for a pure cache that `Sim::after_exact_load` rebuilds; module structs get
+  `#[serde(default)]`; `&'static str` fields are `crate::saves11::SStr` with
+  `#[serde(with = "crate::saves11::interned")]`.
+- **Tests:** `cargo test -p rf-sim --release --test saves11` (synthetic and bench worlds, four
+  reloads in a row, the real fort N 100 / M 100 and N 2000 / M 1000, and the fallbacks); the
+  chaos harness alternates exact reloads (flagged if the state hash changes) and bare-world
+  reloads; `examples/saveload.rs` for long runs (`--sizes` prints the snapshot by part).
+
 ### Continuation (gold standard)
 
+Round 11, r5 seed 1, through the save encoding (MessagePack round trip as in format 2):
+
+| N | M | full state hash after N+M |
+|---|---|---|
+| 100 | 100 | identical |
+| 20,000 | 20,000 | identical |
+| 403,200 | 403,200 | identical |
+
+Also identical: r6 seed 2 N 50,000 / M 50,000, r4 seed 3 N 100,000 / M 60,000, and through a
+real save file (`rustfort savebench`, +2,000 ticks after the load).
+
+Cost on the real fort after 20,000 ticks (`savebench`, measured while other builds and a chaos
+run loaded the machine, so absolute times are pessimistic):
+
+| | round 10 | round 11 |
+|---|---|---|
+| snapshot (raw, in the body) | | 45 MB (nav 35 MB, item index 8 MB) |
+| snapshot compressed (zstd-3 alone) | | 1.5 MB (landmark tables 0.84 MB) |
+| file | 1.9 MB | 3.4 MB |
+| `world_for_save` + save total | 0.36 s | 0.30 s + 0.51 s |
+| load + `Sim::new` | 0.43 s + 0.69 s | 0.30 s + 0.35 s (no init passes, no landmark build; the layout check is ~0.2 s of it) |
+
+Round 10 (before the snapshot), for reference:
 `cargo run -p rf-sim --release --example saveload -- --n 20000 --m 20000 --every 100` on r5:
 right after the load the `ticks`, `units` (positions and needs of every unit), `tiles`, `items`,
 `social` and `moods` parts of the state hash are identical; `prod`, `combat`, `fluids`,
@@ -77,7 +142,4 @@ the same citizens alive (82), dead units (16), petitions and moods; item counts 
 121 dead units, 5 / 5 moods, 21 / 21 petitions, items within 0.5 %, i.e. inside the spread of
 different seeds. So a reload continues the fort closely, not bit-identically.
 
-Not saved yet (next steps for exact continuation): the job lists (`Sim::jobs`, production
-workshop jobs), unit tasks/paths/carried hauls, caravans in progress (`trade`), animal module
-state (training, pregnancy timers kept in the sim), health care queue, cavern/beast timers,
-population timers (migrant waves), lifestyle/justice counters.
+Round 11 saves all of that (see the exact snapshot above).

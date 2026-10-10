@@ -8,7 +8,7 @@ use crate::Sim;
 use rf_core::Pos;
 
 /// DF "Build > Constructions" kinds.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)] // [saves11]
 pub enum ConstructionKind {
     Wall,
     Floor,
@@ -23,7 +23,7 @@ pub enum ConstructionKind {
 }
 
 /// Stone detailing designations (DF "Smooth / Engrave / Carve").
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)] // [saves11]
 pub enum DetailKind {
     Smooth,
     Engrave,
@@ -33,7 +33,7 @@ pub enum DetailKind {
 }
 
 /// Traffic designation levels (DF: high 1, normal 2, low 5, restricted 25 path cost).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)] // [saves11]
 pub enum Traffic {
     High,
     Normal,

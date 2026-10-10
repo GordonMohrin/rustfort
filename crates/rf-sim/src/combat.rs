@@ -105,7 +105,8 @@ pub(crate) mod zone {
 }
 
 /// Mechanical properties of a material (DF raw units: density kg/m³, yields/fractures kPa).
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct Mech {
     pub dens: f32,
     pub iy: f32,
@@ -207,7 +208,7 @@ fn tissue_info(name: &str) -> (i32, i32, i32, bool) {
     (1, 5, 1, false)
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)] // [saves11]
 pub(crate) struct LayerT {
     pub tissue: String,
     pub mech: Mech,
@@ -220,7 +221,7 @@ pub(crate) struct LayerT {
     pub hair: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)] // [saves11]
 pub(crate) struct PartT {
     pub token: String,
     pub name: String,
@@ -239,7 +240,7 @@ pub(crate) struct PartT {
     pub children: Vec<u16>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)] // [saves11]
 #[allow(dead_code)]
 pub(crate) struct AtkT {
     pub verb2: String,
@@ -256,7 +257,7 @@ pub(crate) struct AtkT {
     pub skill: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)] // [saves11]
 #[allow(dead_code)]
 pub(crate) struct BodyT {
     pub race: String,
@@ -286,7 +287,7 @@ pub(crate) struct Blow {
     pub momentum: Option<f32>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)] // [saves11]
 pub(crate) struct WeapT {
     pub name: String,
     pub skill: String,
@@ -295,7 +296,8 @@ pub(crate) struct WeapT {
 }
 
 /// One wound on one layer of one body part (sim side; mirrored into `Unit::wounds`).
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub(crate) struct WoundS {
     pub part: u16,
     /// Flat layer index, or u16::MAX for a part-level wound (severed).
@@ -307,7 +309,7 @@ pub(crate) struct WoundS {
     pub age: i32,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)] // [saves11]
 pub(crate) enum Role {
     #[default]
     None,
@@ -319,7 +321,7 @@ pub(crate) enum Role {
     Leave,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)] // [saves11]
 pub(crate) enum Sub {
     #[default]
     None,
@@ -329,7 +331,7 @@ pub(crate) enum Sub {
 }
 
 /// Per-unit combat state.
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)] // [saves11]
 pub(crate) struct Fighter {
     pub role: Role,
     pub sub: Sub,
@@ -438,7 +440,8 @@ impl Default for Fighter {
 }
 
 /// Counters for reports and tests.
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct CombatStats {
     pub attacks: u64,
     pub hits: u64,
@@ -502,6 +505,7 @@ pub struct CombatStats {
 }
 
 /// Combat, military and invasion state of the simulation.
+#[derive(serde::Serialize, serde::Deserialize)] // [saves11]
 pub(crate) struct Combat {
     pub f: Vec<Fighter>,
     pub bodies: Vec<BodyT>,

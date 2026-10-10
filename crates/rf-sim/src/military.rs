@@ -43,7 +43,7 @@ use crate::{Kind, Sim, Task, NONE};
 use rf_core::Pos;
 use std::collections::HashSet;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)] // [saves11]
 pub(crate) enum Duty {
     #[default]
     None,
@@ -56,7 +56,8 @@ pub(crate) enum Duty {
     Patrol,
 }
 
-#[derive(Default)]
+#[derive(serde::Serialize, serde::Deserialize, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub(crate) struct Military {
     pub alert: Option<i32>,
     pub alert_tiles: HashSet<u32>,

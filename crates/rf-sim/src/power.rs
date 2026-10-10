@@ -52,7 +52,7 @@ pub const PUMP_TICKS: u64 = 600;
 const FLOW_FRESH: u64 = 200;
 const POWER_PERIOD: u64 = 100;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)] // [saves11]
 pub enum MachineKind {
     WaterWheel,
     Windmill,
@@ -64,7 +64,7 @@ pub enum MachineKind {
     Rollers,
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)] // [saves11]
 pub(crate) struct Machine {
     pub bid: i32,
     pub kind: MachineKind,
@@ -79,7 +79,8 @@ pub(crate) struct Machine {
 }
 
 /// One machine network.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct PowerNet {
     pub produced: i32,
     pub used: i32,
@@ -87,14 +88,15 @@ pub struct PowerNet {
 }
 
 /// Manual pump work: the pump's building id, who works it, until when.
-#[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug)] // [saves11]
 pub(crate) struct PumpWork {
     pub bid: i32,
     pub claimed: u32,
     pub until: u64,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub(crate) struct Power {
     pub sig: u64,
     pub checked: bool,
@@ -108,7 +110,8 @@ pub(crate) struct Power {
 }
 
 /// Counters for reports and tests.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct PowerStats {
     pub machines: usize,
     pub networks: usize,

@@ -35,7 +35,7 @@ pub const MAX_NEIGHBORS: usize = 26;
 
 /// [perf] Division by a fixed divisor `d` (1..2^16) as `(n * m) >> s`, exact for n < 2^31
 /// (Granlund-Montgomery: s = 31 + ceil(log2 d), m = ceil(2^s / d), so n * m < 2^63).
-#[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug)] // [saves11]
 pub struct Magic {
     m: u64,
     s: u32,
@@ -55,21 +55,28 @@ impl Magic {
     }
 }
 
+#[derive(serde::Serialize, serde::Deserialize)] // [saves11] exact snapshot (big tables as byte columns)
+#[serde(default = "Nav::empty")] // [saves11]
 pub struct Nav {
     pub dx: usize,
     pub dy: usize,
     pub dz: usize,
     pub layer: usize,
+    #[serde(with = "crate::saves11::le_u8")] // [saves11]
     pub flags: Vec<u8>,
     /// Component id per tile (0 = not walkable). Compare with [`Nav::comp_root`].
+    #[serde(with = "crate::saves11::le_u32")] // [saves11]
     pub comp: Vec<u32>,
+    #[serde(with = "crate::saves11::le_u32")] // [saves11]
     parent: Vec<u32>,
+    #[serde(with = "crate::saves11::le_u32")] // [saves11]
     size: Vec<u32>,
     /// Some walkable tiles/edges were removed since the last rebuild; components may be split.
     pub suspect: bool,
     /// Smallest traffic cost present on the map (admissible A* heuristic factor).
     pub min_cost: u32,
     shapes: Vec<Shape>,
+    #[serde(with = "crate::saves11::le_u64")] // [saves11]
     blocked: Vec<u64>,
     any_blocked: bool,
     pub rebuilds: u64,
@@ -80,7 +87,9 @@ pub struct Nav {
     pub version: u64,
     // [defense] Building overrides (bit sets, allocated on first use): lowered bridges and
     // hatches give a floor over open space; locked hatches block stairs/ramps through them.
+    #[serde(with = "crate::saves11::le_u64")] // [saves11]
     floor_force: Vec<u64>,
+    #[serde(with = "crate::saves11::le_u64")] // [saves11]
     novert: Vec<u64>,
     any_override: bool,
     /// [perf9] Landmark distances for the A* heuristic (see [`Landmarks`]).
@@ -123,9 +132,62 @@ pub struct Landmarks {
     queue: std::collections::VecDeque<u32>,
     /// Relaxations done by incremental updates (stats).
     pub relaxed: u64,
+    /// [saves11] Map width (tile index -> row above, for the snapshot's predictor).
+    dx: u32,
+}
+
+/// [saves11] Snapshot form of [`Landmarks`]: `id` and `inq` are rebuilt from `tile` and
+/// `queue`, the distances are predicted from the tiles left and above (see
+/// `saves11::lm_encode`).
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+#[serde(default)]
+struct LmSnap {
+    on: bool,
+    dx: u32,
+    n: u64,
+    #[serde(with = "crate::saves11::le_u32")]
+    tile: Vec<u32>,
+    #[serde(with = "crate::saves11::le_u8")]
+    d: Vec<u8>,
+    marks: Vec<u32>,
+    queue: std::collections::VecDeque<u32>,
+    relaxed: u64,
+}
+
+// [saves11] Landmarks are saved through `LmSnap`.
+impl serde::Serialize for Landmarks {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let d = crate::saves11::lm_encode(self.dx as usize, &self.id, &self.tile, &self.d);
+        let snap = LmSnap { on: self.on, dx: self.dx, n: self.id.len() as u64, tile: self.tile.clone(), d, marks: self.marks.clone(), queue: self.queue.clone(), relaxed: self.relaxed };
+        snap.serialize(s)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Landmarks {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = LmSnap::deserialize(d)?;
+        if s.n > 1 << 31 || s.tile.iter().any(|&t| t as u64 >= s.n) || s.queue.iter().any(|&k| k as usize >= s.tile.len()) {
+            return Err(serde::de::Error::custom("landmark table out of range"));
+        }
+        let mut lm = Landmarks { on: s.on, dx: s.dx, id: vec![u32::MAX; s.n as usize], tile: s.tile, marks: s.marks, queue: s.queue, relaxed: s.relaxed, ..Default::default() };
+        for (k, &t) in lm.tile.iter().enumerate() {
+            lm.id[t as usize] = k as u32;
+        }
+        lm.inq = vec![false; lm.tile.len()];
+        for &k in &lm.queue {
+            lm.inq[k as usize] = true;
+        }
+        lm.d = crate::saves11::lm_decode(lm.dx as usize, &lm.id, &lm.tile, &s.d).ok_or_else(|| serde::de::Error::custom("landmark distances"))?;
+        Ok(lm)
+    }
 }
 
 impl Nav {
+    /// [saves11] Grid of an empty world (defaults of a snapshot's missing fields).
+    pub(crate) fn empty() -> Nav {
+        Nav::new(&World::default(), &[])
+    }
+
     pub fn new(world: &World, blocked_tiles: &[usize]) -> Nav {
         let (dx, dy, dz) = (world.dims.x as usize, world.dims.y as usize, world.dims.z as usize);
         let n = dx * dy * dz;
@@ -262,7 +324,7 @@ impl Nav {
     pub fn build_landmarks(&mut self) {
         use rayon::prelude::*;
         let n = self.flags.len();
-        let mut lm = Landmarks { id: vec![u32::MAX; n], ..Default::default() };
+        let mut lm = Landmarks { id: vec![u32::MAX; n], dx: self.dx as u32, ..Default::default() }; // [saves11] dx
         let mut by_comp: std::collections::BTreeMap<u32, Vec<u32>> = Default::default();
         for i in 0..n {
             if self.flags[i] & WALK != 0 {

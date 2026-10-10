@@ -91,7 +91,8 @@ const FLOOR_SHAPE: u8 = 64;
 
 const DIRS8: [(i32, i32); 8] = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)];
 
-#[derive(Clone, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Default)] // [saves11]
+#[serde(default)] // [saves11]
 struct Bits(Vec<u64>);
 
 impl Bits {
@@ -118,7 +119,8 @@ impl Bits {
 }
 
 /// Counters for reports and the bench (all since the sim started).
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct FluidReport {
     /// Tiles holding any liquid, and how many of them hold magma.
     pub liquid_tiles: usize,
@@ -152,7 +154,7 @@ pub struct FluidReport {
     pub time_s: f64,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug)] // [saves11]
 struct Sub {
     slot: u32,
     air: u32,
@@ -162,6 +164,7 @@ struct Sub {
 }
 
 /// Fluid state kept by the sim (`Sim::fluids`).
+#[derive(serde::Serialize, serde::Deserialize)] // [saves11]
 pub(crate) struct Fluids {
     pub(crate) on: bool,
     ready: bool,

@@ -234,7 +234,7 @@ fn emotion_word(emotion: &str) -> String {
 }
 
 /// Valence class of a thought: decides which emotions the personality can pick.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)] // [saves11]
 pub(crate) enum Class {
     PosMild,
     Pos,
@@ -249,7 +249,7 @@ pub(crate) enum Class {
 }
 
 /// Personality facets that drive emotions and stress (0..=100, DF 50 = average).
-#[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug)] // [saves11]
 pub(crate) struct Facets {
     anger: i32,
     depression: i32,
@@ -394,7 +394,7 @@ fn pick_emotion(c: Class, f: &Facets, r: &mut Rng) -> Option<&'static str> {
 }
 
 /// Mental breakdown state (DF `soldier_mood` Tantrum / Depressed / Oblivious).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)] // [saves11]
 pub enum Breakdown {
     #[default]
     None,
@@ -414,7 +414,7 @@ impl Breakdown {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)] // [saves11]
 pub(crate) enum RoomKind {
     Bedroom,
     Dormitory,
@@ -426,7 +426,7 @@ pub(crate) enum RoomKind {
     Other,
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)] // [saves11]
 pub(crate) struct Room {
     kind: RoomKind,
     owner: i32,
@@ -467,24 +467,25 @@ const TIER_WORD: [&str; 8] = ["meager", "modest", "ordinary", "decent", "fine", 
 const QUALITY_WORD: [&str; 7] = ["", "well-crafted", "finely-crafted", "superior", "exceptional", "masterful", "artifact"];
 const FOOD_WORD: [&str; 7] = ["", "well-prepared", "finely-prepared", "superior", "exceptional", "masterful", "legendary"];
 
-#[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug)] // [saves11]
 struct Seat {
     tile: u32,
     room: u32,
     occupant: u32,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug)] // [saves11]
 struct Furn {
     pos: Pos,
     bid: i32,
     quality: u8,
     room: u32,
-    kind: &'static str,
+    #[serde(with = "crate::saves11::interned")] // [saves11]
+    kind: crate::saves11::SStr,
 }
 
 /// Per-unit social state that is not part of `rf_core::Unit` (rebuilt on load).
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)] // [saves11]
 pub(crate) struct Psy {
     facets: Facets,
     breakdown: Breakdown,
@@ -536,7 +537,8 @@ impl Default for Psy {
 }
 
 /// Stress distribution of the living citizens at the start of a month.
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct MonthStress {
     pub year: i32,
     /// 0-based month.
@@ -549,7 +551,8 @@ pub struct MonthStress {
 }
 
 /// Social statistics for reports and the benchmark.
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct SocialReport {
     pub months: Vec<MonthStress>,
     /// Thought counts (DF `unit_thought_type` name), most frequent first.
@@ -570,7 +573,8 @@ pub struct SocialReport {
     pub stress_by_thought: Vec<(String, i64, u64)>,
 }
 
-#[derive(Default)]
+#[derive(serde::Serialize, serde::Deserialize, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub(crate) struct Social {
     psy: Vec<Psy>,
     rooms: Vec<Room>,
@@ -585,6 +589,7 @@ pub(crate) struct Social {
     known_detail: u64,
     last_month: i32,
     months: Vec<MonthStress>,
+    #[serde(with = "crate::saves11::interned")] // [saves11]
     counts: BTreeMap<&'static str, u64>,
     tantrums: u64,
     depressions: u64,

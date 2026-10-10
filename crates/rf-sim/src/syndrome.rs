@@ -31,14 +31,14 @@ use crate::combat::{wf, Role, WoundS};
 use crate::rng::Rng;
 use crate::{Kind, Sim, NONE};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)] // [saves11]
 pub(crate) enum Delivery {
     Venom,
     Breath,
     Web,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)] // [saves11]
 pub(crate) enum Effect {
     Paralysis,
     Unconscious,
@@ -50,13 +50,14 @@ pub(crate) enum Effect {
 }
 
 /// Special attack of one forgotten beast.
-#[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug)] // [saves11]
 pub(crate) struct BeastPower {
     pub delivery: Delivery,
     pub effect: Effect,
     pub next: u64,
     /// "poisonous bite", "deadly dust", ... for the announcements.
-    pub noun: &'static str,
+    #[serde(with = "crate::saves11::interned")] // [saves11]
+    pub noun: crate::saves11::SStr,
 }
 
 impl Effect {

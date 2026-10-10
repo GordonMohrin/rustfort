@@ -113,7 +113,8 @@ pub const NO_PLANT: u16 = u16::MAX;
 const ANY_MAT: u8 = 200;
 
 /// What the simulation knows about a plant species.
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct PlantInfo {
     pub token: String,
     pub name: String,
@@ -147,7 +148,7 @@ impl PlantInfo {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq, Eq, Debug)] // [saves11]
 pub enum Input {
     BrewPlant,
     BrewFruit,
@@ -317,7 +318,7 @@ const UNDERGROUND_CROPS: &[(&str, u8, i32)] = &[
 /// DF's default GROWDUR (300) in ticks, for crops without an explicit value.
 const DEFAULT_GROWDUR: i32 = 30_000;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)] // [saves11]
 pub(crate) enum WK {
     #[default]
     None,
@@ -341,7 +342,8 @@ pub(crate) enum WK {
 }
 
 /// The production job a unit is working on.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub(crate) struct WJob {
     pub kind: WK,
     pub site: u32,
@@ -351,6 +353,7 @@ pub(crate) struct WJob {
     pub got: u8,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)] // [saves11]
 pub(crate) struct Shop {
     pub bid: i32,
     pub bi: usize,
@@ -363,7 +366,7 @@ pub(crate) struct Shop {
     pub labors: u64, // [industry] u64 labor bits
 }
 
-#[derive(Clone, Copy)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy)] // [saves11]
 pub(crate) struct FTile {
     pub tile: u32,
     pub plant: u16,
@@ -375,6 +378,7 @@ pub(crate) struct FTile {
     pub skill: u8,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)] // [saves11]
 pub(crate) struct Farm {
     pub bid: i32,
     pub bi: usize,
@@ -382,6 +386,7 @@ pub(crate) struct Farm {
     pub tiles: Vec<FTile>,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)] // [saves11]
 pub(crate) struct Cons {
     pub bid: i32,
     pub bi: usize,
@@ -389,12 +394,14 @@ pub(crate) struct Cons {
     pub claimed: bool,
     pub blocked_until: u64,
     /// What has to be brought: material classes (with an item kind for furniture).
+    #[serde(with = "crate::saves11::interned")] // [saves11]
     pub needs: Vec<(u8, &'static str)>,
     pub labor: u64, // [industry] u64 labor bits
 }
 
 /// Stock counts (free items only) used for job availability and order conditions.
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct Census {
     pub drinks: i32,
     pub meals: i32,
@@ -416,7 +423,8 @@ pub struct Census {
     pub seeds_total: Vec<i32>,
 }
 
-#[derive(Default)]
+#[derive(serde::Serialize, serde::Deserialize, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub(crate) struct Prod {
     pub plants: Vec<PlantInfo>,
     pub plant_by_token: HashMap<String, u16>,
@@ -446,7 +454,8 @@ pub(crate) struct Prod {
 }
 
 /// Stock and production overview (for the bench report and the UI).
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct ProductionReport {
     pub drinks: i32,
     pub meals: i32,
@@ -464,6 +473,7 @@ pub struct ProductionReport {
     pub farm_tiles: usize,
     pub planted_tiles: usize,
     /// Completed jobs since the start, by DF-style label.
+    #[serde(with = "crate::saves11::interned")] // [saves11]
     pub jobs_done: Vec<(&'static str, u64)>,
     /// Work orders / workshop jobs the sim cannot perform yet, by job name.
     pub unsupported: Vec<(String, u32)>,

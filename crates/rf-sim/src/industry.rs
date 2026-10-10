@@ -173,7 +173,8 @@ pub fn bars_needed(kind: &str, subtype: &str) -> i32 {
 }
 
 /// Free reagent counts, refreshed with the production census.
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub(crate) struct IndCensus {
     pub fuel: i32,
     pub ores: i32,
@@ -194,13 +195,15 @@ pub(crate) struct IndCensus {
 }
 
 /// What a running industry job will make (filled at claim time).
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub(crate) struct IJob {
     pub kind: String,
     pub subtype: String,
 }
 
-#[derive(Default)]
+#[derive(serde::Serialize, serde::Deserialize, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub(crate) struct Ind {
     pub census: IndCensus,
     pub jobs: Vec<IJob>,
@@ -249,7 +252,8 @@ pub fn melt_tenths(kind: &str, subtype: &str, stack: i32) -> i32 {
 }
 
 /// Industry overview for the bench/acceptance report.
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct IndustryReport {
     /// Items made since the start by item kind.
     pub made: Vec<(String, i64)>,

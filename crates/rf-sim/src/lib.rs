@@ -108,6 +108,7 @@ pub mod lifestyle; // [society2] clothing wear, meal quality, kitchen, miasma, r
 pub mod skills; // [skills9] experience per job, item quality, training, social skills
 pub mod growth; // [skills9] saplings grow into trees, trees regrow
 pub mod persist; // [saves10] module runtime state across save/load (World::sim_state)
+mod saves11; // [saves11] exact runtime snapshot (World::sim_exact)
 pub use persist::saved_ticks; // [saves10]
 pub use justice::JusticeReport; // [society2]
 pub use lifestyle::LifestyleReport; // [society2]
@@ -296,7 +297,7 @@ pub struct UnitStatus {
     pub tiredness: u8,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)] // [saves11]
 pub enum AnnouncementKind {
     Info,
     Job,
@@ -304,7 +305,7 @@ pub enum AnnouncementKind {
     Death,
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)] // [saves11]
 pub struct Announcement {
     /// Absolute sim tick.
     pub tick: u64,
@@ -314,12 +315,14 @@ pub struct Announcement {
 }
 
 /// Counters for the UI and the benchmark.
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct SimStats {
     pub ticks: u64,
     pub open_jobs: usize,
     pub active_units: usize,
     /// Wall-clock seconds spent per phase in the last `run_ticks` call (name, seconds).
+    #[serde(skip)] // [saves11] wall-clock timings only
     pub phase_times: Vec<(&'static str, f64)>,
     /// Path searches run (A*), path cache hits and A* node expansions since the start.
     pub paths: u64,
@@ -347,7 +350,7 @@ pub struct SimStats {
 }
 
 /// A designation job (dig, fell tree, gather plants).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)] // [saves11]
 pub enum JobKind {
     Dig(Dig),
     Chop,
@@ -397,7 +400,7 @@ const PATH_CACHE_MAX: usize = 4096;
 const PHASES: usize = 10;
 const PHASE_NAMES: [&str; PHASES] = ["think", "paths", "commit", "items", "production", "social", "combat", "fluids", "society", "defense"];
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq, Eq, Debug)] // [saves11]
 enum Kind {
     Worker,
     Animal,
@@ -405,7 +408,7 @@ enum Kind {
     Dead,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq, Eq, Debug)] // [saves11]
 enum Task {
     Idle,
     Wander,
@@ -443,6 +446,7 @@ enum Task {
     Animal,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)] // [saves11]
 struct UnitAi {
     uidx: usize,
     id: i32,
@@ -473,7 +477,7 @@ struct UnitAi {
     no_food_until: u64,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug)] // [saves11]
 struct Job {
     kind: JobKind,
     tile: u32,
@@ -485,6 +489,7 @@ struct Job {
     access: bool,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)] // [saves11]
 struct JobChunk {
     x0: i32,
     y0: i32,
@@ -494,6 +499,7 @@ struct JobChunk {
 
 const CHUNK: usize = 16;
 
+#[derive(serde::Serialize, serde::Deserialize)] // [saves11]
 struct Pile {
     cats: u32,
     tiles: Vec<u32>,
@@ -502,13 +508,14 @@ struct Pile {
     free: u32,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)] // [saves11]
 struct Bed {
     tile: u32,
     owner: i32,
     occupant: u32,
 }
 
-#[derive(Clone, Copy)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy)] // [saves11]
 struct Zone {
     x1: i16,
     y1: i16,
@@ -517,7 +524,7 @@ struct Zone {
     z: i16,
 }
 
-#[derive(Clone, Copy)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy)] // [saves11]
 struct ItemMeta {
     reserved: i32,
     hauling: bool,
@@ -530,6 +537,7 @@ struct ItemMeta {
     plant: u16,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)] // [saves11]
 struct PathJob {
     slot: usize,
     req: u32,
@@ -544,10 +552,21 @@ thread_local! {
     static ASTAR: RefCell<AStar> = RefCell::new(AStar::new());
 }
 
+#[derive(serde::Serialize, serde::Deserialize)] // [saves11] exact snapshot (see `saves11`)
+#[serde(default = "Sim::blank")] // [saves11]
 pub struct Sim {
+    #[serde(skip)] // [saves11] saved on its own
     pub world: World,
     pub seed: u64,
     ticks: u64,
+    /// [saves11] How this sim was restored from a save: "" (not loaded), "exact" (snapshot,
+    /// bit-identical continuation) or "close (...)" (round-10 module state only).
+    #[serde(skip)]
+    restore: String,
+    /// [saves11] Inside `run_ticks` (true after a panic unwound out of a tick: the state may
+    /// be half-updated, so `world_for_save` leaves the exact snapshot out).
+    #[serde(skip)]
+    mid_tick: bool,
     announcements: Vec<Announcement>,
     nav: Nav,
     ai: Vec<UnitAi>,
@@ -664,6 +683,22 @@ fn blocks_movement(kind: &str) -> bool {
 impl Sim {
     pub fn new(mut world: World, seed: u64) -> Sim {
         let saved = std::mem::take(&mut world.sim_state); // [saves10] module state of a save
+        let exact = std::mem::take(&mut world.sim_exact); // [saves11] exact snapshot of a save
+        let mut restore = String::new(); // [saves11]
+        if !exact.is_empty() && std::env::var_os("RUSTFORT_CLOSE_LOAD").is_some() {
+            restore = "close (RUSTFORT_CLOSE_LOAD)".into(); // [saves11] escape hatch
+        } else if !exact.is_empty() {
+            match Sim::from_exact(&exact, &world) {
+                Ok(mut sim) => {
+                    sim.world = world;
+                    sim.seed = seed;
+                    sim.after_exact_load();
+                    sim.restore = "exact".into();
+                    return sim;
+                }
+                Err(e) => restore = format!("close ({e})"),
+            }
+        }
         let mut blocked = Vec::new();
         for b in &world.buildings {
             if blocks_movement(&b.kind) {
@@ -684,6 +719,8 @@ impl Sim {
             world,
             seed,
             ticks: 0,
+            restore: if restore.is_empty() && !saved.is_empty() { "close".into() } else { restore }, // [saves11]
+            mid_tick: false, // [saves11]
             announcements: Vec::new(),
             nav,
             ai: Vec::new(),
@@ -993,10 +1030,12 @@ impl Sim {
 
     pub fn run_ticks(&mut self, n: u32) {
         self.phase = [0.0; PHASES]; // [perf]
+        self.mid_tick = true; // [saves11] still set if a tick panics: no exact snapshot then
         for _ in 0..n {
             self.tick_inner();
         }
         self.sync_units();
+        self.mid_tick = false; // [saves11]
     }
 
     pub fn ticks(&self) -> u64 {

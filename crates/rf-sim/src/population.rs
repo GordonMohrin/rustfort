@@ -87,14 +87,14 @@ pub const PREGNANCY_TICKS: u64 = 9 * MONTH;
 /// Gordon's fort).
 pub const CONCEIVE_IN: u32 = 36;
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)] // [saves11]
 pub(crate) struct Pregnancy {
     pub mother: i32,
     pub father: i32,
     pub due: u64,
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)] // [saves11]
 pub(crate) struct Dead {
     pub unit_id: i32,
     pub name: String,
@@ -107,7 +107,7 @@ pub(crate) struct Dead {
     pub old: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)] // [saves11]
 pub(crate) struct BuryJob {
     pub corpse: i32,
     pub coffin: i32,
@@ -115,7 +115,7 @@ pub(crate) struct BuryJob {
     pub claimed: u32,
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)] // [saves11]
 pub(crate) struct Mandate {
     pub noble: String,
     pub text: String,
@@ -126,7 +126,8 @@ pub(crate) struct Mandate {
 }
 
 /// What happened to the population (for the UI, the bench and tests).
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct PopulationReport {
     /// Migrant waves: (tick, number of migrants).
     pub waves: Vec<(u64, usize)>,
@@ -156,7 +157,8 @@ pub struct PopulationReport {
     pub waves_blocked: usize,
 }
 
-#[derive(Default)]
+#[derive(serde::Serialize, serde::Deserialize, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub(crate) struct Pop {
     pub ready: bool,
     pub last_season: i32,

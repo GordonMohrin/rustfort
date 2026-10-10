@@ -520,8 +520,10 @@ dependencies = [
  "rayon",
  "rf-core",
  "rf-import",
+ "rmp-serde",
  "serde",
  "serde_json",
+ "zstd",
 ]
 
 [[package]]

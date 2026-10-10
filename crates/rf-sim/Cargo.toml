@@ -11,11 +11,13 @@ rf-core.workspace = true
 rayon = "1"
 serde.workspace = true # [saves10] module state in World::sim_state
 serde_json.workspace = true # [saves10]
+rmp-serde = "1" # [saves11] exact runtime snapshot (MessagePack, named fields)
 
 [dev-dependencies]
 rf-import.workspace = true
 serde_json.workspace = true # [combat] siege example reads the round-3 raws
 bincode = "1.3" # [chaos10] save/load round trips like rf-app
+zstd = "0.13" # [saves11] saveload example: compressed snapshot sizes
 
 [[example]]
 name = "siege"

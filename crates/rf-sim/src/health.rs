@@ -68,7 +68,7 @@ mod ml {
 
 const OPEN: u16 = wf::CUT | wf::TORN | wf::SEVERED;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)] // [saves11]
 pub enum Treat {
     Diagnose,
     Suture,
@@ -138,7 +138,7 @@ impl Treat {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)] // [saves11]
 enum CStep {
     Open,
     GoItem,
@@ -148,7 +148,7 @@ enum CStep {
     Carry(i32),
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug)] // [saves11]
 pub(crate) struct CareJob {
     patient: u32,
     treat: Treat,
@@ -162,7 +162,8 @@ pub(crate) struct CareJob {
 pub(crate) const CRAWL_FACTOR: i32 = 4;
 
 /// Counters and recent events.
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct HealthReport {
     pub diagnoses: u32,
     pub sutures: u32,
@@ -181,7 +182,8 @@ pub struct HealthReport {
 }
 
 /// Health summary of one unit for the UI.
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct HealthInfo {
     pub diagnosed: bool,
     pub infected: bool,
@@ -193,7 +195,8 @@ pub struct HealthInfo {
     pub doctor: Option<i32>,
 }
 
-#[derive(Default)]
+#[derive(serde::Serialize, serde::Deserialize, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub(crate) struct Health {
     pub off: bool,
     inited: bool,

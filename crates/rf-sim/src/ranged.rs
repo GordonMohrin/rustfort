@@ -77,7 +77,8 @@ const QUIVER_WANT: i32 = 50;
 const EQUIP_PERIOD: u64 = 300;
 
 /// Counters for reports and tests.
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct RangedStats {
     /// Shots at units (combat), by the fort's side and by hostiles.
     pub shots: u64,
@@ -107,7 +108,7 @@ pub struct RangedStats {
     pub bowmen_spawned: u64,
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)] // [saves11]
 pub(crate) struct Launcher {
     pub skill: String,
     pub class: String,
@@ -115,7 +116,7 @@ pub(crate) struct Launcher {
     pub maxvel: f32,
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)] // [saves11]
 pub(crate) struct AmmoT {
     pub name: String,
     pub class: String,
@@ -123,7 +124,8 @@ pub(crate) struct AmmoT {
     pub atk: AtkT,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub(crate) struct ShooterS {
     pub check_at: u64,
     pub launcher: Option<u16>,
@@ -141,7 +143,7 @@ pub(crate) struct ShooterS {
     pub no_practice_until: u64,
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)] // [saves11]
 pub(crate) struct ArcheryT {
     pub pos: Pos,
     /// Archery range zone next to/around the target: (x1, y1, x2, y2, z), or the target itself.
@@ -149,7 +151,8 @@ pub(crate) struct ArcheryT {
     pub user: u32,
 }
 
-#[derive(Default)]
+#[derive(serde::Serialize, serde::Deserialize, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub(crate) struct Ranged {
     pub init: bool,
     pub s: Vec<ShooterS>,

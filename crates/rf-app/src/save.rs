@@ -620,6 +620,18 @@ pub fn bench(world: World, seed: u64) {
             );
             let same = sim2.world.tiles == world.tiles && sim2.world.items.len() == world.items.len();
             println!("roundtrip tiles identical: {same}; ticks {} -> {}; state hash {:016x} -> {:016x}", sim.ticks(), sim2.ticks(), sim.state_hash(), sim2.state_hash());
+            // [saves11] Exact snapshot: the loaded game continues bit-identically.
+            let mut sim2 = sim2;
+            sim.run_ticks(2000);
+            sim2.run_ticks(2000);
+            println!(
+                "restore: {}; snapshot {} raw; +2000 ticks: state hash {:016x} vs {:016x} ({})",
+                sim2.restore_mode(),
+                fmt_bytes(world.sim_exact.len() as u64),
+                sim.state_hash(),
+                sim2.state_hash(),
+                if sim.state_hash() == sim2.state_hash() { "identical" } else { "DIFFERENT" }
+            );
         }
         Err(e) => eprintln!("load failed: {e}"),
     }
@@ -628,6 +640,7 @@ pub fn bench(world: World, seed: u64) {
     let p = dir.join("v09-check.rfsave");
     let mut plain = world.clone();
     plain.sim_state.clear();
+    plain.sim_exact.clear(); // [saves11] v0.9 has no snapshot either
     match write_v09_file(&plain, seed, &p) {
         Ok(()) => {
             let bytes = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);

@@ -25,6 +25,7 @@ There is also `tools/dfhack/rustfort-export.lua`, a read-only DFHack exporter th
    - No `HashMap` iteration where the order affects results.
    - RNG is seeded per world and tick (`rand_pcg` or a small splitmix).
    - Parallel phases may only read; writes are applied in a fixed order.
+   - [saves11] All sim state is saved: `Sim` and every module struct derive `serde::Serialize`/`Deserialize` (the save holds an exact snapshot, see `docs/SAVES.md`). A new field must be serializable, or `#[serde(skip)]` if it is a pure cache rebuilt in `Sim::after_exact_load`. Give module structs `#[serde(default)]`. A `&'static str` field is written as `crate::saves11::SStr` with `#[serde(with = "crate::saves11::interned")]`. Check with `cargo test -p rf-sim --release --test saves11`.
 4. **Speed is a feature.** Keep hot loops allocation-free. Benchmark with `rustfort bench`.
 5. **Clean-room.** The spec is the DF wiki plus observed behavior. Never decompile DF.
 6. **Commits** are authored by `Claude Code <noreply@anthropic.com>` (set in the repo's local git config). Write short imperative English messages that end with the Co-Authored-By trailer.
