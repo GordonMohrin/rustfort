@@ -25,6 +25,7 @@
 --        + (round 4) entities.json nobles.json settings.json hist_figs.json caravans.json diplomats.json
 --        + (round 5) engravings.json
 --        + (round 8) work_details.json kitchen.json locations.json crimes.json punishments.json haul_routes.json
+--        + (round 9) stockpile_options.json invasions.json
 
 local VERSION = 1
 -- round 2 (2026-10-10a): work orders, workshop jobs, crops, plant raws, mods, gaits
@@ -37,7 +38,11 @@ local VERSION = 1
 -- round 8 (2026-10-10e): work details, kitchen, locations + occupations, crimes, haul routes, stockpile filters and
 --                        links, animal fields (owner/training/pasture/slaughter/pregnancy), caste animal products,
 --                        DF's room evaluation of civzones
-local SCRIPT_REV = '2026-10-10e'
+-- round 9 (2026-10-10f): units DF does not simulate are inactive (caravan animals that left, units outside
+--                        world.units.active), caged units take the cage item's position, chain/cage extras;
+--                        squad ammo, per-position uniforms, patrol waypoints, supplies; DF's wealth statistics,
+--                        invasion tiers and history (settings.other, invasions.json); stockpile_options.json
+local SCRIPT_REV = '2026-10-10f'
 
 -- ------------------------------------------------------------------------------------------- args
 local args = { ... }
@@ -970,6 +975,44 @@ function r8.prepare_units()
       end
     end
   end)
+  -- round 9: which units DF simulates (world.units.active), which cage item / built cage holds a unit,
+  -- which chain restrains it. Caravan animals that left with their caravan stay in units.all with
+  -- flags1.forest, pos -30000 and inactive = false, but DF no longer simulates them.
+  r8.active_set, r8.cage_of, r8.chain_of = {}, {}, {}
+  r8.r9 = { offsite = 0, cage_pos = 0, chained = 0, caged = 0 }
+  pcall(function() for _, u in ipairs(df.global.world.units.active) do r8.active_set[u.id] = true end end)
+  pcall(function()
+    for _, it in ipairs(df.global.world.items.other.CAGE) do
+      for _, r in ipairs(it.general_refs) do
+        if r:getType() == df.general_ref_type.CONTAINS_UNIT then
+          local x, y, z = dfhack.items.getPosition(it)
+          if type(x) == 'userdata' then x, y, z = x.x, x.y, x.z end
+          local hb = try(dfhack.items.getHolderBuilding, it)
+          r8.cage_of[r.unit_id] = { item = it.id, x = x or -30000, y = y or -30000, z = z or -30000, bld = hb and hb.id or -1 }
+        end
+      end
+    end
+  end)
+  pcall(function()
+    for _, b in ipairs(df.global.world.buildings.other.CHAIN) do
+      local cu = try(function() return b.chained end)
+      if cu then r8.chain_of[cu.id] = b.id end
+    end
+  end)
+end
+-- round 9: the position DF would draw a unit at (a caged unit inside a caravan's cage item keeps pos -30000)
+function r8.unit_pos(u, count)
+  local x, y, z, src = u.pos.x, u.pos.y, u.pos.z, 'unit'
+  local c = r8.cage_of and r8.cage_of[u.id]
+  if x < 0 and c and c.x >= 0 then x, y, z, src = c.x, c.y, c.z, 'cage_item'; if count then r8.r9.cage_pos = r8.r9.cage_pos + 1 end end
+  if x < 0 then src = 'offsite' end
+  return x, y, z, src
+end
+-- round 9: flags.inactive = DF does not simulate the unit (flags1.inactive, or not in world.units.active)
+function r8.unit_inactive(u)
+  local ina = not q(dfhack.units.isActive, u) or (r8.active_set ~= nil and next(r8.active_set) ~= nil and not r8.active_set[u.id])
+  if ina and u.pos.x < 0 then r8.r9.offsite = r8.r9.offsite + 1 end
+  return ina
 end
 -- rf_core::Unit round-8 fields: pet_owner, training, pasture, slaughter, pregnancy, work_details (+ extras)
 function r8.unit_kv(u, is_animal)
@@ -991,6 +1034,10 @@ function r8.unit_kv(u, is_animal)
   if slaughter then r8.slaughter = r8.slaughter + 1 end
   if preg > 0 then r8.pregnant = r8.pregnant + 1 end
   if training ~= '' and training ~= 'WildUntamed' and training ~= 'Domesticated' then r8.trained = r8.trained + 1 end
+  local c9 = r8.cage_of and r8.cage_of[u.id]
+  local src9 = select(4, r8.unit_pos(u))
+  if u.flags1.caged then r8.r9.caged = r8.r9.caged + 1 end
+  if u.flags1.chained or (r8.chain_of and r8.chain_of[u.id]) then r8.r9.chained = r8.r9.chained + 1 end
   local wds = {}
   for _, nm in ipairs(r8.wd_of[u.id] or {}) do wds[#wds + 1] = js(nm) end
   r8.wd_members = r8.wd_members + #wds
@@ -1000,7 +1047,12 @@ function r8.unit_kv(u, is_animal)
            'gelded', jb(try(function() return u.flags3.gelded end) or false),
            'only_do_assigned_jobs', jb(try(function() return u.flags4.only_do_assigned_jobs end) or false),
            'pregnancy_caste', ji(try(function() return u.pregnancy_caste end) or -1),
-           'pregnancy_spouse', ji(try(function() return u.pregnancy_spouse end) or -1) }
+           'pregnancy_spouse', ji(try(function() return u.pregnancy_spouse end) or -1),
+           -- round 9 extras: cage / restraint, where the position came from, DF's active list
+           'chained', jb(u.flags1.chained or (r8.chain_of and r8.chain_of[u.id] ~= nil) or false),
+           'chain_building', ji(r8.chain_of and r8.chain_of[u.id] or -1),
+           'cage_item', ji(c9 and c9.item or -1), 'cage_building', ji(c9 and c9.bld or -1),
+           'pos_source', ja(src9), 'in_active_list', jb(r8.active_set ~= nil and r8.active_set[u.id] == true) }
 end
 
 local function unit_json(u)
@@ -1041,7 +1093,7 @@ local function unit_json(u)
     'tame', jb(q(U.isTame, u)), 'dead', jb(q(U.isDead, u)),
     'hostile', jb(hostile),
     'visitor', jb(q(U.isVisitor, u)), 'merchant', jb(q(U.isMerchant, u)), 'caged', jb(u.flags1.caged),
-    'forest', jb(q(U.isForest, u)), 'inactive', jb(not q(U.isActive, u)) })
+    'forest', jb(q(U.isForest, u)), 'inactive', jb(r8.unit_inactive(u)) })
   -- round 3: psychology, relationships, wounds, blood, squad position, invader civ
   local needs, emotions, values, rels, wounds = {}, {}, {}, {}, {}
   if soul then
@@ -1079,7 +1131,7 @@ local function unit_json(u)
   local kv = {
     'id', ji(u.id), 'race', ja(cr.creature_id), 'caste', ja(caste.caste_id), 'name', js(name), 'name_native', js(native),
     'profession', ja(df.profession[u.profession] or ''), 'custom_profession', js(u.custom_profession),
-    'pos', jpos(u.pos.x, u.pos.y, u.pos.z), 'flags', flags, 'civ_id', ji(u.civ_id), 'hist_fig_id', ji(u.hist_figure_id),
+    'pos', jpos(r8.unit_pos(u, true)), 'flags', flags, 'civ_id', ji(u.civ_id), 'hist_fig_id', ji(u.hist_figure_id),
     'sex', ji(u.sex), 'age', jf(try(U.getAge, u, true) or 0),
     'hunger_timer', ji(u.counters2.hunger_timer), 'thirst_timer', ji(u.counters2.thirst_timer),
     'sleepiness_timer', ji(u.counters2.sleepiness_timer), 'stress', ji(stress),
@@ -1751,6 +1803,117 @@ do
     end
   end
 
+  -- round 9: stockpile_options.json - every leaf DF's stockpile editor offers, per category and group, in the
+  -- same category/group/token scheme as the filters above. Which raw entries a group lists follows DFHack's
+  -- stockpiles plugin (metal/stone/gem material rules, tree woods, finished-goods and refuse item types);
+  -- organic groups list their whole organic material table, creature groups every creature.
+  local FINISHED_TYPES = {}
+  for _, t in ipairs({ 'CHAIN', 'FLASK', 'GOBLET', 'INSTRUMENT', 'TOY', 'ARMOR', 'SHOES', 'HELM', 'GLOVES', 'FIGURINE', 'AMULET',
+                       'SCEPTER', 'CROWN', 'RING', 'EARRING', 'BRACELET', 'GEM', 'LARGE_GEM', 'TOTEM', 'PANTS', 'BACKPACK',
+                       'QUIVER', 'SPLINT', 'CRUTCH', 'TOOL', 'BOOK' }) do FINISHED_TYPES[t] = true end
+  local REFUSE_NOT = {}
+  for _, t in ipairs({ 'NONE', 'BAR', 'SMALLGEM', 'BLOCKS', 'ROUGH', 'BOULDER', 'CORPSE', 'CORPSEPIECE', 'ROCK', 'ORTHOPEDIC_CAST' }) do
+    REFUSE_NOT[t] = true
+  end
+  local MAT_RULE = { ['stone/mats'] = 'stone', ['stone/ore'] = 'ore', ['ammo/mats'] = 'metal', ['coins/mats'] = 'metal',
+                     ['bars_blocks/bars_mats'] = 'metal', ['bars_blocks/blocks_mats'] = 'metal_stone', ['gems/rough_mats'] = 'gem',
+                     ['gems/cut_mats'] = 'gem_stone', ['finished_goods/mats'] = 'any_hard', ['furniture/mats'] = 'metal_stone',
+                     ['weapons/mats'] = 'metal', ['armor/mats'] = 'metal' }
+  local function pretty_tok(s) return (tostring(s):lower():gsub('_', ' ')) end
+  -- (count, allowed(i), label(i)) of one group
+  local function group_source(cat, gr)
+    local kind, arg = gr[3], gr[4]
+    if kind == 'creature' then
+      return #raws.creatures.all, function(i)
+        local c = raws.creatures.all[i]
+        return not c.flags.DOES_NOT_EXIST and c.creature_id ~= 'EQUIPMENT_WAGON'
+      end, function(i) return raws.creatures.all[i].name[0] end
+    elseif kind == 'organic' then
+      return #MT.organic_types[arg], function() return true end, function(i)
+        local info = dfhack.matinfo.decode(MT.organic_types[arg][i], MT.organic_indexes[arg][i])
+        return info and info:toString() or ''
+      end
+    elseif kind == 'inorganic' then
+      local rule = MAT_RULE[cat .. '/' .. gr[2]] or 'any'
+      return #raws.inorganics.all, function(i)
+        local f = raws.inorganics.all[i].material.flags
+        local metal, gem = f.IS_METAL, f.IS_GEM
+        local stone = f.IS_STONE and not f.NO_STONE_STOCKPILE
+        if rule == 'metal' then return metal
+        elseif rule == 'stone' then return stone
+        elseif rule == 'ore' then return stone and #raws.inorganics.all[i].metal_ore.mat_index > 0
+        elseif rule == 'gem' then return gem
+        elseif rule == 'gem_stone' then return gem or stone
+        elseif rule == 'metal_stone' then return metal or stone
+        elseif rule == 'any_hard' then return metal or stone or gem
+        end
+        return true
+      end, function(i) return raws.inorganics.all[i].material.state_name.Solid end
+    elseif kind == 'plant' then
+      return #raws.plants.all, function(i) return raws.plants.all[i].flags.TREE end,
+             function(i) return raws.plants.all[i].name end
+    elseif kind == 'item_type' then
+      return df.item_type._last_item + 1, function(i)
+        local t = df.item_type[i]
+        if not t then return false end
+        if cat == 'finished_goods' then return FINISHED_TYPES[t] == true end
+        return not REFUSE_NOT[t]
+      end, function(i) return pretty_tok(df.item_type[i]) end
+    elseif kind == 'furniture_type' then
+      return df.furniture_type._last_item + 1, function(i) return df.furniture_type[i] ~= nil end,
+             function(i) return pretty_tok(df.furniture_type[i]) end
+    elseif kind == 'itemdef' then
+      return #raws.itemdefs[arg], function() return true end, function(i) return raws.itemdefs[arg][i].name end
+    elseif kind == 'builtin' then
+      return #MT.builtin, function(i)
+        local m = MT.builtin[i]
+        return m ~= nil and tostring(m.id or ''):match('GLASS') ~= nil
+      end, function(i) return MT.builtin[i].state_name.Solid end
+    elseif kind == 'color' then
+      return #raws.descriptors.colors, function() return true end, function(i) return raws.descriptors.colors[i].name end
+    elseif kind == 'quality' then
+      return 7, function() return true end, function(i) return df.item_quality[i] end
+    elseif kind == 'list' then
+      return #arg, function() return true end, function(i) return pretty_tok(arg[i + 1]) end
+    end
+    return 0, function() return false end, function() return '' end
+  end
+  function r8.export_pile_options()
+    phase = 'pile_options'
+    local cats, total = {}, 0
+    for _, c in ipairs(CAT_ORDER) do
+      local groups = {}
+      for _, gr in ipairs(G[c]) do
+        local leaves = {}
+        local ok, err = pcall(function()
+          local n, allowed, label = group_source(c, gr)
+          local arg = gr[4]
+          for i = 0, n - 1 do
+            if try(allowed, i) then
+              local tok = leaf_token(gr[3], arg, i)
+              local lb = try(label, i) or ''
+              if lb == '' then lb = tok end
+              leaves[#leaves + 1] = '[' .. js(tok) .. ',' .. js(lb) .. ']'
+            end
+            if i % 64 == 63 then phase_detail = c .. '/' .. gr[2] .. ' ' .. i .. '/' .. n; checkpoint() end
+          end
+        end)
+        if not ok then warn('pile_options', err) end
+        total = total + #leaves
+        groups[#groups + 1] = jobj({ 'group', ja(gr[2]), 'leaves', '[' .. table.concat(leaves, ',') .. ']' })
+        checkpoint()
+      end
+      local opts = {}
+      for _, o in ipairs(G[c].opts or {}) do opts[#opts + 1] = ja(o) end
+      cats[#cats + 1] = jobj({ 'category', ja(c), 'options', jarr(opts), 'groups', jarr(groups) })
+    end
+    write_file(OUT .. '/stockpile_options.json', jobj({
+      'scheme', ja('category/group/token'), 'misc', jarr({ ja('allow_organic'), ja('allow_inorganic') }),
+      'categories', '[\n' .. table.concat(cats, ',\n') .. '\n]',
+      'source', ja('raws (creatures, inorganics, plants, itemdefs, colors), world.raws.mat_table.organic_types, df.item_type/furniture_type; inclusion rules as DFHack stockpiles plugin (estimate)') }) .. '\n')
+    counts.stockpile_options = total
+  end
+
   -- locations (abstract buildings of the fort's site) and which civzones belong to them
   local LOC_KIND = { TEMPLE = 'Temple', INN_TAVERN = 'Tavern', LIBRARY = 'Library', GUILDHALL = 'Guildhall', HOSPITAL = 'Hospital' }
   local function loc_tier_name(kind, value)
@@ -2369,6 +2532,73 @@ local function uniform_spec(sp)
   elseif sp.material_class >= 0 then s = s .. '@' .. (df.entity_material_category[sp.material_class] or sp.material_class) end
   return s
 end
+-- round 9: squad ammunition (DF squad ammo screen), per-position uniforms, patrol route waypoints, supplies.
+-- ammo item: SUBTYPE[@material token | @WOOD/BONE/METAL/<class>] (rf_core::SquadAmmo)
+function r8.squad_r9(s, _, _)
+  local out = { ammo = '[]', position_uniforms = '[]', patrol = '[]', route_id = -1, route_name = '', carry_food = -1,
+                carry_water = -1, ammo_items = {} }
+  local am = {}
+  pcall(function()
+    for _, a in ipairs(s.ammo.ammunition) do
+      local item = subtype_token(a.item_type, a.item_subtype)
+      if item == '' then item = item_type_name(a.item_type) end
+      if a.mattype >= 0 then item = item .. '@' .. mat_token(a.mattype, a.matindex)
+      elseif a.material_class >= 0 then
+        local cl = tostring(df.entity_material_category[a.material_class] or a.material_class):upper()
+        item = item .. '@' .. cl
+      end
+      am[#am + 1] = jobj({ 'item', js(item), 'amount', ji(a.amount), 'combat', jb(a.flags.use_combat),
+                           'training', jb(a.flags.use_training) })
+    end
+    for _, iid in ipairs(s.ammo.ammo_items) do out.ammo_items[#out.ammo_items + 1] = ji(iid) end
+  end)
+  out.ammo = jarr(am)
+  local pu = {}
+  for _, pos in ipairs(s.positions) do
+    local l = {}
+    pcall(function()
+      local uf = pos.equipment.uniform
+      for cat = 0, df.uniform_category._last_item do
+        for _, sp in ipairs(uf[cat]) do l[#l + 1] = js(uniform_spec(sp)) end
+      end
+    end)
+    pu[#pu + 1] = jarr(l)
+  end
+  out.position_uniforms = jarr(pu)
+  -- the patrol route of a PATROL_ROUTE order (explicit squad orders, else this month's schedule)
+  pcall(function()
+    local function find_route(orders, get)
+      for _, o in ipairs(orders) do
+        local oo = get(o)
+        if df.squad_order_type[oo:getType()] == 'PATROL_ROUTE' then return oo.route_id end
+      end
+    end
+    local rid = find_route(s.orders, function(o) return o end)
+    if not rid then
+      local month = df.global.cur_year_tick // 33600
+      rid = find_route(s.schedule.routine[s.cur_routine_idx].month[month].orders, function(o) return o.order end)
+    end
+    if rid then
+      out.route_id = rid
+      local W = df.global.plotinfo.waypoints
+      local pts = {}
+      for _, p in ipairs(W.points) do pts[p.id] = p end
+      for _, r in ipairs(W.routes) do
+        if r.id == rid then
+          out.route_name = r.name
+          local wp = {}
+          for _, pid in ipairs(r.points) do
+            local p = pts[pid]
+            if p then wp[#wp + 1] = jpos(p.pos.x, p.pos.y, p.pos.z) end
+          end
+          out.patrol = jarr(wp)
+        end
+      end
+    end
+  end)
+  pcall(function() out.carry_food, out.carry_water = s.supplies.carry_food, s.supplies.carry_water end)
+  return out
+end
 local function squad_json(s)
   local month = df.global.cur_year_tick // 33600
   local mem, hfs, uni_by_pos, pos_orders, seen_uni, uni = {}, {}, {}, {}, {}, {}
@@ -2422,6 +2652,7 @@ local function squad_json(s)
   local current = #explicit > 0 and explicit or sched
   local rooms = {}
   pcall(function() for _, r in ipairs(s.rooms) do rooms[#rooms + 1] = ji(r.building_id) end end)
+  local r9 = r8.squad_r9(s, uni_by_pos, current)   -- round 9: ammo, per-position uniforms, patrol waypoints
   local tname = try(dfhack.translation.translateName, s.name, true) or ''
   return jobj({ 'id', ji(s.id), 'name', js(tname), 'alias', js(s.alias), 'members', jarr(mem), 'orders', jarr(current),
                 'uniform', jarr(uni), 'schedule', js(routine_name),
@@ -2431,7 +2662,12 @@ local function squad_json(s)
                 'member_hfs', jarr(hfs), 'positions', ji(#s.positions), 'explicit_orders', jarr(explicit),
                 'schedule_orders', jarr(sched), 'schedule_month', sched_entry, 'position_orders', jarr(pos_orders),
                 'uniform_by_position', jarr(uni_by_pos), 'routine_id', ji(s.cur_routine_idx),
-                'leader_position', ji(s.leader_position), 'barracks', jarr(rooms) })
+                'leader_position', ji(s.leader_position), 'barracks', jarr(rooms),
+                -- round 9: rf_core::Squad ammo / position_uniforms / patrol (+ extras)
+                'ammo', r9.ammo, 'position_uniforms', r9.position_uniforms, 'patrol', r9.patrol,
+                'patrol_route', ji(r9.route_id), 'patrol_route_name', js(r9.route_name),
+                'carry_food', ji(r9.carry_food), 'carry_water', ji(r9.carry_water),
+                'ammo_items', jarr(r9.ammo_items) })
 end
 local function export_squads()
   phase = 'squads'
@@ -2962,13 +3198,15 @@ do
       local m = df.global.plotinfo.main
       for _, k in ipairs({ 'traffic_cost_high', 'traffic_cost_normal', 'traffic_cost_low', 'traffic_cost_restricted' }) do kv(k:upper(), m[k]) end
     end)
+    local wealth9 = r8.settings_r9(kv)   -- round 9: DF's wealth statistics, invasion tiers, fort statistics
     local s = jobj({ 'population_cap', ji(dw.population_cap), 'strict_population_cap', ji(dw.strict_population_cap),
                      'baby_cap', ji(dw.baby_cap_absolute), 'invasions', jb(invasions), 'temperature', jb(feat('TEMPERATURE')),
                      'weather', jb(feat('WEATHER')), 'cave_ins', jb(feat('CAVEINS')), 'other', jarr(other),
                      -- extras
                      'baby_cap_percent', ji(dw.baby_cap_percent), 'visitor_cap', ji(dw.visitor_cap),
                      'artifacts', jb(feat('ARTIFACTS')), 'difficulty_enemies', ja(enemies),
-                     'source', ja('d_init.dwarf, d_init.feature.flags, plotinfo.main.custom_difficulty') })
+                     'wealth', wealth9,
+                     'source', ja('d_init.dwarf, d_init.feature.flags, plotinfo.main.custom_difficulty, plotinfo.tasks.wealth, plotinfo.progress_*, plotinfo.invasions') })
     write_file(OUT .. '/settings.json', s .. '\n')
     checkpoint()
   end
@@ -3097,6 +3335,57 @@ do
   end
 end
 
+-- ------------------------------------------------------------------------------------------- round 9
+-- DF's wealth statistics (plotinfo.tasks.wealth: created = total, imported/exported are trade totals), the
+-- invasion tiers DF reached (plotinfo.progress_population/trade/production, compared with the ENEMY_*_TRIGGER
+-- difficulty lists), fort statistics, and the invasion history (plotinfo.invasions.list -> invasions.json).
+-- Called from the settings phase; kv(key, value) adds a settings.other entry. Returns the 'wealth' extras object.
+function r8.settings_r9(kv)
+  local P = df.global.plotinfo
+  local obj = {}
+  local function put(key, field, v)
+    if v == nil then return end
+    if type(v) == 'boolean' then v = v and 'true' or 'false' end
+    kv(key, v)
+    obj[#obj + 1] = field
+    obj[#obj + 1] = (v == 'true' or v == 'false') and v or ji(tonumber(v) or 0)
+  end
+  local W = try(function() return P.tasks.wealth end)
+  if W then
+    for _, p in ipairs({ { 'WEALTH_CREATED', 'total' }, { 'WEALTH_EXPORTED', 'exported' }, { 'WEALTH_IMPORTED', 'imported' },
+                         { 'WEALTH_OFFERED', 'offered' }, { 'WEALTH_WEAPONS', 'weapons' }, { 'WEALTH_ARMOR', 'armor' },
+                         { 'WEALTH_FURNITURE', 'furniture' }, { 'WEALTH_OTHER', 'other' }, { 'WEALTH_ARCHITECTURE', 'architecture' },
+                         { 'WEALTH_DISPLAYED', 'displayed' }, { 'WEALTH_HELD', 'held' } }) do
+      put(p[1], p[2] == 'total' and 'created' or p[2], try(function() return W[p[2]] end))
+    end
+  end
+  for _, p in ipairs({ 'progress_population', 'progress_trade', 'progress_production', 'fortress_rank', 'fortress_age',
+                       'trees_removed', 'game_over', 'lost_to_siege_civ' }) do
+    put(p:upper(), p, try(function() return P[p] end))
+  end
+  for _, p in ipairs({ 'total_deaths', 'total_insanities', 'total_executions', 'num_artifacts', 'invaders_repelled',
+                       'excavated_tiles' }) do
+    put('FORT_' .. p:upper(), p, try(function() return P.tasks[p] end))
+  end
+  -- invasion history
+  local inv, hist = {}, {}
+  pcall(function()
+    for _, iv in ipairs(P.invasions.list) do
+      local fl = iv.flags
+      inv[#inv + 1] = jobj({ 'id', ji(iv.id), 'civ_id', ji(iv.civ_id), 'size', ji(iv.size), 'year', ji(iv.created_year),
+                             'year_tick', ji(iv.created_season_count), 'siege', jb(fl.siege), 'active', jb(fl.active),
+                             'mission', ji(iv.mission), 'active_size1', ji(iv.active_size1), 'active_size2', ji(iv.active_size2),
+                             'duration_counter', ji(iv.duration_counter), 'total_death_cage_number', ji(iv.total_death_cage_number),
+                             'layer_source', jb(fl.layer_source), 'undead_source', jb(fl.undead_source) })
+      hist[#hist + 1] = ('%d:%d:%d:%s'):format(iv.created_year, iv.created_season_count, iv.size, fl.siege and 'siege' or 'raid')
+    end
+  end)
+  kv('INVASION_HISTORY', table.concat(hist, ','))
+  write_file(OUT .. '/invasions.json', '[\n' .. table.concat(inv, ',\n') .. '\n]\n')
+  counts.invasions = #inv
+  return jobj(obj)
+end
+
 -- ------------------------------------------------------------------------------------------- mods
 -- active mods of the loaded save in load order (the raws object loader DF used for this save;
 -- the same source DFHack's script-manager reads): "id:numeric_version"
@@ -3137,6 +3426,7 @@ local function main()
   export_creature_raws()   -- after units/items (races seen), before the materials: adds the tissue materials
   export_item_raws()
   r8.export_files()        -- round 8: work details, kitchen, locations, crimes, haul routes (before hist figs: deity refs)
+  r8.export_pile_options() -- round 9: every stockpile leaf DF offers (stockpile_options.json)
   export_society()         -- round 4: entities, nobles, settings, caravans, diplomats, hist figs (last: collects refs)
   phase = 'materials'
   local mats = {}
@@ -3170,6 +3460,10 @@ local function main()
   note(('round 8: %d stockpiles with %d filter strings, %d work detail memberships, %d pets with owner, %d pastured, %d marked for slaughter, %d pregnant, %d trained animals')
        :format(r8.piles, r8.pile_leaves, r8.wd_members, r8.pets, r8.pastured, r8.slaughter, r8.pregnant, r8.trained))
   for k, v in pairs(r8.list_mismatch) do note(('stockpile filters: %s has %d entries in DF, not the expected list length; tokens are #<index>'):format(k, v)) end
+  note(('round 9 units: %d not simulated by DF and off the map (caravan animals that left etc., flags.inactive), %d caged units, %d placed at their cage item, %d chained')
+       :format(r8.r9.offsite, r8.r9.caged, r8.r9.cage_pos, r8.r9.chained))
+  note(('round 9: %d stockpile option leaves (inclusion rules as the DFHack stockpiles plugin, estimate); %d invasions in plotinfo.invasions; wealth from plotinfo.tasks.wealth (created = total)')
+       :format(counts.stockpile_options or 0, counts.invasions or 0))
   note('room evaluation: DF 53.16 keeps no value for personal rooms (getRoomDescription is empty for v50 zones); room_value = location_value for location zones, else -1; room_thought = owner latest quality thought')
   note('caravans: leaves_in = time_remaining x 10 ticks (DFHack caravan.lua: 120 per day); trades = sent a caravan here (history MERCHANT events) or has one now')
 end
@@ -3187,13 +3481,15 @@ local function finish()
   counts.levers, counts.locked_doors, counts.traps = r4.levers, r4.locked_doors, r4.traps
   counts.stockpile_filters, counts.pets, counts.pastured = r8.pile_leaves, r8.pets, r8.pastured
   counts.slaughter, counts.pregnant = r8.slaughter, r8.pregnant
+  if r8.r9 then counts.offsite_units, counts.caged_units, counts.chained_units = r8.r9.offsite, r8.r9.caged, r8.r9.chained end
   for _, k in ipairs({ 'units', 'citizens', 'items', 'buildings', 'plants', 'materials', 'tiletypes', 'tiles', 'z_exported',
                        'work_orders', 'plant_raws', 'building_jobs', 'farm_plots', 'burrows', 'squads',
                        'burrow_tiles', 'creature_raws', 'weapon_raws', 'armor_raws', 'unit_needs', 'unit_emotions',
                        'unit_values', 'unit_relationships', 'unit_wounds', 'entities', 'nobles', 'mandates', 'hist_figs',
                        'caravans', 'diplomats', 'building_links', 'levers', 'locked_doors', 'traps', 'trade_depots',
                        'engravings', 'work_details', 'kitchen', 'locations', 'occupations', 'crimes', 'punishments',
-                       'haul_routes', 'stockpile_filters', 'pets', 'pastured', 'slaughter', 'pregnant' }) do
+                       'haul_routes', 'stockpile_filters', 'pets', 'pastured', 'slaughter', 'pregnant',
+                       'stockpile_options', 'invasions', 'offsite_units', 'caged_units', 'chained_units' }) do
     cnt[#cnt + 1] = k
     cnt[#cnt + 1] = ji(counts[k] or 0)
   end

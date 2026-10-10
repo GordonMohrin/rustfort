@@ -139,6 +139,10 @@ pub struct World {
     /// [r8] Hauling routes.
     #[serde(default)]
     pub haul_routes: Vec<HaulRoute>,
+    /// [export9] Every leaf DF's stockpile editor offers, per category and group (exporter
+    /// round 9, `stockpile_options.json`); empty for older exports.
+    #[serde(default)]
+    pub stockpile_options: Vec<crate::StockpileOption>,
 }
 
 impl World {

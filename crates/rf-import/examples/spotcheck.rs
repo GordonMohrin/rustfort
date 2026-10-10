@@ -596,6 +596,76 @@ fn compare(dir: &str, result: &str) {
                     None => e.2 += 1,
                 }
             }
+            // round 9: DF's active list, caged units at their cage, squad ammo, wealth, invasions, option groups
+            Some("act") if f.len() >= 6 => {
+                let e = r2.entry("units simulated by DF (inactive flag) and position").or_default();
+                let id: i32 = f[1].parse().unwrap_or(-1);
+                match w.units.iter().find(|u| u.id == id) {
+                    Some(u) => {
+                        let df_active = f[2] == "1";
+                        let pos_ok = format!("{} {} {}", u.pos.x, u.pos.y, u.pos.z) == f[3..6].join(" ") || df_active;
+                        if u.flags.inactive != df_active && pos_ok {
+                            e.0 += 1;
+                        } else {
+                            e.1 += 1;
+                            println!("unit {id}: import inactive {} pos {},{},{} | DF active {} pos {}", u.flags.inactive, u.pos.x, u.pos.y, u.pos.z, f[2], f[3..6].join(","));
+                        }
+                    }
+                    None => e.2 += 1,
+                }
+            }
+            Some("ammo") if f.len() >= 4 => {
+                let e = r2.entry("squad ammo (specs, rounds)").or_default();
+                let id: i32 = f[1].parse().unwrap_or(-1);
+                match w.squads.iter().find(|q| q.id == id) {
+                    Some(q) => {
+                        let got = format!("{} {}", q.ammo.len(), q.ammo.iter().map(|a| a.amount).sum::<i32>());
+                        if got == f[2..4].join(" ") {
+                            e.0 += 1;
+                        } else {
+                            e.1 += 1;
+                            println!("squad {id} ammo: import {got} | DF {}", f[2..4].join(" "));
+                        }
+                    }
+                    None => e.2 += 1,
+                }
+            }
+            Some("wealth") if f.len() >= 4 => {
+                let e = r2.entry("wealth (created, exported, imported)").or_default();
+                match rf_import::wealth(&w.settings) {
+                    Some(x) => {
+                        let got = format!("{} {} {}", x.created, x.exported, x.imported);
+                        if got == f[1..4].join(" ") {
+                            e.0 += 1;
+                        } else {
+                            e.1 += 1;
+                            println!("wealth: import {got} | DF {}", f[1..4].join(" "));
+                        }
+                    }
+                    None => e.2 += 1,
+                }
+            }
+            Some("invasions") if f.len() >= 2 => {
+                let e = r2.entry("invasions").or_default();
+                let n = rf_import::load_invasions(std::path::Path::new(dir)).len();
+                if n.to_string() == f[1] {
+                    e.0 += 1;
+                } else {
+                    e.1 += 1;
+                    println!("invasions: import {n} | DF {}", f[1]);
+                }
+            }
+            Some("popt") if f.len() >= 4 => {
+                let e = r2.entry("stockpile option group sizes").or_default();
+                let prefix = format!("{}/{}/", f[1], f[2]);
+                let n = w.stockpile_options.iter().filter(|o| o.path.starts_with(&prefix)).count();
+                if n.to_string() == f[3] {
+                    e.0 += 1;
+                } else {
+                    e.1 += 1;
+                    println!("options {prefix}: import {n} | DF {}", f[3]);
+                }
+            }
             _ => {}
         }
     }

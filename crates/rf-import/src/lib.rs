@@ -16,7 +16,10 @@
 //! (`engravings.json` into `World::engravings`) and round 8 (`work_details.json`, `kitchen.json`,
 //! `locations.json`, `crimes.json`, `haul_routes.json` into `World::work_details` / `kitchen` /
 //! `locations` / `crimes` / `haul_routes`; stockpile filters and links, animal fields and work
-//! detail names come with `buildings.jsonl` / `units.jsonl`; see [`round8`]).
+//! detail names come with `buildings.jsonl` / `units.jsonl`; see [`round8`]) and round 9
+//! (`stockpile_options.json` into `World::stockpile_options`; wealth statistics and invasion tiers in
+//! `settings.other`, `invasions.json` in [`Extras::invasions`]; units DF does not simulate are
+//! inactive; see [`round9`]).
 
 use rf_core::{
     tile_flags, ArmorRaw, Building, Burrow, Calendar, Caravan, CreatureRaw, Dims, Engraving, EntityInfo, GameSettings, HistFigName, Item,
@@ -31,6 +34,8 @@ use std::time::Instant;
 
 pub mod round8;
 pub use round8::{AnimalProducts, MilkInfo, PunishmentInfo, RoomEval, ShearInfo};
+pub mod round9;
+pub use round9::{load_invasions, options_for, wealth, InvasionInfo, WealthInfo};
 
 /// Default export folder of Gordon's fort (gitignored, outside of git).
 pub const DEFAULT_EXPORT: &str = "export/tileshtulon";
@@ -194,6 +199,10 @@ pub struct Extras {
     pub rooms: Vec<RoomEval>,
     pub punishments: Vec<PunishmentInfo>,
     pub animal_products: Vec<AnimalProducts>,
+    /// Round 9: every invasion DF sent (`invasions.json`) and DF's wealth statistics / invasion
+    /// tiers (from `settings.json`).
+    pub invasions: Vec<InvasionInfo>,
+    pub wealth: Option<WealthInfo>,
 }
 
 /// A nobles.json entry: rf_core::NoblePosition plus the mandate details.
@@ -254,6 +263,8 @@ pub fn load_extras(dir: &Path) -> Extras {
         rooms: round8::load_room_evals(dir),
         punishments: round8::load_punishments(dir),
         animal_products: round8::load_animal_products(dir),
+        invasions: round9::load_invasions(dir),
+        wealth: opt::<Option<GameSettings>>(&dir.join("settings.json")).as_ref().and_then(round9::wealth),
     }
 }
 
@@ -747,6 +758,8 @@ pub fn load_export(dir: &Path) -> Result<(World, ImportReport), ImportError> {
     // Round-8 files (optional): work details, kitchen, locations, crimes, hauling routes.
     let r8 = round8::load_files(dir, &mut w);
     let r8_present = r8.present;
+    // Round-9 file (optional): every stockpile leaf DF offers.
+    let stockpile_options = round9::load_stockpile_options(dir, &mut w);
 
     let mut world = World {
         meta: Meta {
@@ -796,12 +809,14 @@ pub fn load_export(dir: &Path) -> Result<(World, ImportReport), ImportError> {
         locations: r8.locations,
         crimes: r8.crimes,
         haul_routes: r8.haul_routes,
+        stockpile_options,
         // keeps this compiling when other rounds add World fields
         ..Default::default()
     };
     round8::check_counts(&world, &manifest, &mut w);
     validate(&mut world, &manifest, &mut w);
     round8::repair(&mut world, r8_present, &mut w);
+    round9::repair_units(&mut world, &manifest, &mut w);
 
     let report = ImportReport {
         units: world.units.len(),
@@ -912,7 +927,7 @@ fn validate(world: &mut World, m: &Manifest, w: &mut Warnings) {
     }
     let offmap = world.units.iter().filter(|u| !world.in_bounds(u.pos)).count();
     if offmap > 0 {
-        w.add("units", format!("{offmap} units are off the map (e.g. citizens away on missions); kept with their position"));
+        w.add("units", format!("{offmap} units are off the map (animals of departed caravans, citizens away); kept with their position"));
     }
     for b in &mut world.buildings {
         let area = (b.x2 - b.x1 + 1).max(0) as usize * (b.y2 - b.y1 + 1).max(0) as usize;
@@ -1130,6 +1145,10 @@ pub fn write_export(world: &World, dir: &Path) -> Result<(), ImportError> {
     write_json("locations.json", to_json(&world.locations))?;
     write_json("crimes.json", to_json(&world.crimes))?;
     write_json("haul_routes.json", to_json(&world.haul_routes))?;
+    // Round-9 file (optional for the importer; written when the world has options).
+    if !world.stockpile_options.is_empty() {
+        write_json("stockpile_options.json", round9::stockpile_options_json(&world.stockpile_options))?;
+    }
     let plane = world.dims.x as usize * world.dims.y as usize;
     for z in 0..world.dims.z as usize {
         let mut buf = Vec::with_capacity(plane * TILE_RECORD_BYTES);
