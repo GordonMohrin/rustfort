@@ -234,7 +234,10 @@ pub(crate) struct Tables {
     pub smooth_floor: Option<Sprite>,
     /// [gfx6] Engraved smooth stone floor (palette page, recolored by the stone) and the
     /// non-palette version for stones without a palette row.
+    /// DF's own engraving picture (unused since the Maeander style; kept for a future option).
+    #[allow(dead_code)]
     pub engraved_floor: Option<Sprite>,
+    #[allow(dead_code)]
     pub engraved_floor_np: Option<Sprite>,
     /// [gfx6] Item designation markers: forbidden, dump, forbidden+dump, melt,
     /// forbidden+melt, hidden (`DESIGNATION_ITEM_*`).
@@ -615,7 +618,7 @@ fn first_on_page(g: &Gfx, token: &str) -> Option<Sprite> {
 }
 
 #[inline]
-fn is_wallish(world: &World, p: Pos) -> bool {
+pub(crate) fn is_wallish(world: &World, p: Pos) -> bool {
     match world.tile(p) {
         // Outside the map counts as solid rock (no border drawn towards the map edge).
         None => true,
@@ -1028,21 +1031,18 @@ fn floor(g: &Gfx, world: &World, p: Pos, mat: u16, tt: &rf_core::TiletypeInfo, h
         }
         _ => {
             if matches!(tt.special, TtSpecial::Smooth | TtSpecial::SmoothDead) {
-                // [gfx6] Engraved floors: DF keeps the smooth tiletype, the engraving lies on top.
-                if g.engraved_at(world, p) == Some(true) {
-                    match t.engraved_floor {
-                        Some(s) if g.mat_row(world, mat) != 0 => Some(g.recolor(s, world, mat)),
-                        _ => t.engraved_floor_np.or(t.engraved_floor).or(t.smooth_floor),
-                    }
-                } else {
-                    t.smooth_floor
-                }
+                // Engraved floors: the smooth floor plus Rustfort's "Maeander" overlay (below);
+                // DF's own engraving picture is not used (Gordon's choice, style C).
+                t.smooth_floor
             } else {
                 t.stone.center(tt.variant, h)
             }
         }
     };
     out.extend(base);
+    if let Some(ov) = g.engraving_overlay(world, p) {
+        out.push(ov);
+    }
     if tt.material == TtMaterial::Driftwood {
         out.extend(t.driftwood);
     }
@@ -1194,8 +1194,7 @@ fn wall(g: &Gfx, world: &World, p: Pos, mat: u16, tt: &rf_core::TiletypeInfo, h:
         }
         TtMaterial::Root => "WALL_ROOT",
         _ => match tt.special {
-            // [gfx6] Engraved walls use the engraved edge set (same autotiling).
-            TtSpecial::Smooth | TtSpecial::SmoothDead if g.engraved_at(world, p) == Some(false) => "WALL_STONE_ENGRAVED",
+            // Engraved walls: smoothed edges plus the "Maeander" frieze overlay (end of wall()).
             TtSpecial::Smooth | TtSpecial::SmoothDead => "WALL_STONE_SMOOTHED",
             TtSpecial::Worn1 => "WALL_WORN1_STONE",
             TtSpecial::Worn2 => "WALL_WORN2_STONE",
@@ -1224,6 +1223,11 @@ fn wall(g: &Gfx, world: &World, p: Pos, mat: u16, tt: &rf_core::TiletypeInfo, h:
             if let Some(sp) = ws.diag[i] {
                 push(sp, out);
             }
+        }
+    }
+    if g.engraved_at(world, p) == Some(false) {
+        if let Some(ov) = g.engraving_overlay(world, p) {
+            out.push(ov);
         }
     }
     // Ore veins and gems get their overlay on top of the host-rock edges.

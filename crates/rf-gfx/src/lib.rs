@@ -16,6 +16,7 @@
 //! - `terrain`/`unit`/`item`/`building` push sprites back to front without allocating.
 
 mod creature;
+mod engrave;
 mod plants;
 mod terrain;
 
@@ -112,6 +113,8 @@ pub(crate) struct PaletteImg {
 struct PageSrc {
     /// Palette swap baked into this page: (palette index, row).
     palette: Option<(u16, u16)>,
+    /// Generated page (procedural engravings): index into `Gfx::engr_pages`.
+    procedural: Option<u32>,
 }
 
 /// Material class used to pick terrain/item families.
@@ -187,6 +190,11 @@ pub struct Gfx {
     pub(crate) corpse_cache: HashMap<i32, Sprite>,
     /// Engraved tiles (tile index -> engraved floor?), rebuilt by `prepare` from `World::engravings`.
     pub(crate) engr_at: HashMap<u32, bool>,
+    /// Procedural engraving overlays (style "Maeander"): generated RGBA pages, the sprite per
+    /// overlay key, and the overlay per engraved tile (all rebuilt/extended by `prepare`).
+    engr_pages: Vec<(u32, u32, Vec<u8>)>,
+    engr_slots: HashMap<engrave::Key, Sprite>,
+    pub(crate) engr_sprite: HashMap<u32, Sprite>,
     /// Non-vanilla mods whose graphics were loaded (`id:numeric_version`, load order).
     pub mods_loaded: Vec<String>,
     /// Mod list entries that could not be matched exactly (see [`Gfx::load_with_mods`]).
@@ -246,7 +254,7 @@ impl Gfx {
                 width_px: p.width_px,
                 height_px: p.height_px,
             });
-            g.srcs.push(PageSrc { palette: None });
+            g.srcs.push(PageSrc { palette: None, procedural: None });
         }
         // Standard palette.
         if let Some(pd) = db.palettes.iter().find(|p| p.id == "DEFAULT").or(db.palettes.first()) {
@@ -421,6 +429,10 @@ impl Gfx {
     /// palette swap applied.
     pub fn page_rgba(&self, page: u16) -> Result<(u32, u32, Vec<u8>), GfxError> {
         let info = self.pages.get(page as usize).ok_or_else(|| GfxError(format!("no page {page}")))?;
+        if let Some(i) = self.srcs.get(page as usize).and_then(|s| s.procedural) {
+            let (w, h, px) = &self.engr_pages[i as usize];
+            return Ok((*w, *h, px.clone()));
+        }
         let img = image::open(&info.path).map_err(|e| GfxError(format!("{}: {e}", info.path.display())))?.to_rgba8();
         let (w, h) = img.dimensions();
         let mut px = img.into_raw();
@@ -464,7 +476,7 @@ impl Gfx {
         info.token = format!("{}#p{}r{}", info.token, pal, row);
         let idx = self.pages.len() as u16;
         self.pages.push(info);
-        self.srcs.push(PageSrc { palette: Some((pal, row)) });
+        self.srcs.push(PageSrc { palette: Some((pal, row)), procedural: None });
         self.variants.insert((base, pal, row), idx);
         idx
     }
@@ -528,6 +540,86 @@ impl Gfx {
 
     /// Create the variant pages `world` needs and cache per-unit looks and per-item sprites.
     /// Returns the number of new pages. Idempotent and cheap when nothing changed.
+    /// Procedural "Maeander" engraving overlays: one overlay per engraved tile, generated for
+    /// each new combination of open sides, inner corners, key phase and quality tier. New
+    /// overlays go onto a fresh page, so pages already uploaded by the renderer never change.
+    fn prepare_engravings(&mut self, world: &World) {
+        self.engr_sprite.clear();
+        if world.engravings.is_empty() {
+            return;
+        }
+        let eng_floor = |q: Pos| world.idx(q).and_then(|i| self.engr_at.get(&(i as u32)).copied()) == Some(true);
+        let mut keys: Vec<(u32, engrave::Key)> = Vec::with_capacity(world.engravings.len());
+        for e in &world.engravings {
+            let Some(i) = world.idx(e.pos) else { continue };
+            let p = e.pos;
+            let (phx, phy) = engrave::Key::phase(p.x as i32, p.y as i32);
+            let tier = engrave::Key::tier_of(e.quality);
+            let key = if e.floor {
+                let n = |dx: i16, dy: i16| eng_floor(p.offset(dx, dy, 0));
+                let open = (!n(0, -1) as u8) | (!n(0, 1) as u8) << 1 | (!n(-1, 0) as u8) << 2 | (!n(1, 0) as u8) << 3;
+                let inner = ((n(-1, 0) && n(0, -1) && !n(-1, -1)) as u8)
+                    | ((n(1, 0) && n(0, -1) && !n(1, -1)) as u8) << 1
+                    | ((n(-1, 0) && n(0, 1) && !n(-1, 1)) as u8) << 2
+                    | ((n(1, 0) && n(0, 1) && !n(1, 1)) as u8) << 3;
+                engrave::Key { floor: true, open, inner, phx, phy, tier }
+            } else {
+                let o = |dx: i16, dy: i16| !terrain::is_wallish(world, p.offset(dx, dy, 0));
+                let open = (o(0, -1) as u8) | (o(0, 1) as u8) << 1 | (o(-1, 0) as u8) << 2 | (o(1, 0) as u8) << 3;
+                if open == 0 {
+                    continue;
+                }
+                engrave::Key { floor: false, open, inner: 0, phx, phy, tier }
+            };
+            keys.push((i as u32, key));
+        }
+        let mut missing: Vec<engrave::Key> = keys.iter().map(|k| k.1).filter(|k| !self.engr_slots.contains_key(k)).collect();
+        missing.sort_by_key(|k| (k.floor, k.open, k.inner, k.phx, k.phy, k.tier));
+        missing.dedup();
+        if !missing.is_empty() {
+            let t = engrave::T as u32;
+            let cols = 16u32;
+            let rows = (missing.len() as u32).div_ceil(cols);
+            let (w, h) = (cols * t, rows * t);
+            let mut px = vec![0u8; (w * h * 4) as usize];
+            let page = self.pages.len() as u16;
+            for (n, k) in missing.iter().enumerate() {
+                let (tx, ty) = (n as u32 % cols, n as u32 / cols);
+                let tile = engrave::render(*k);
+                for y in 0..t {
+                    let src = (y * t * 4) as usize;
+                    let dst = (((ty * t + y) * w + tx * t) * 4) as usize;
+                    px[dst..dst + (t * 4) as usize].copy_from_slice(&tile[src..src + (t * 4) as usize]);
+                }
+                self.engr_slots.insert(*k, Sprite::simple(page, tx as u16, ty as u16));
+            }
+            self.pages.push(PageInfo {
+                token: format!("RUSTFORT_ENGRAVING_{}", self.engr_pages.len()),
+                path: PathBuf::new(),
+                tile_w: t,
+                tile_h: t,
+                width_px: w,
+                height_px: h,
+            });
+            self.srcs.push(PageSrc { palette: None, procedural: Some(self.engr_pages.len() as u32) });
+            self.engr_pages.push((w, h, px));
+        }
+        for (i, k) in keys {
+            if let Some(s) = self.engr_slots.get(&k) {
+                self.engr_sprite.insert(i, *s);
+            }
+        }
+    }
+
+    /// Procedural engraving overlay of the tile at `p` (needs `prepare`).
+    #[inline]
+    pub(crate) fn engraving_overlay(&self, world: &World, p: Pos) -> Option<Sprite> {
+        if self.engr_sprite.is_empty() {
+            return None;
+        }
+        world.idx(p).and_then(|i| self.engr_sprite.get(&(i as u32)).copied())
+    }
+
     pub fn prepare(&mut self, world: &World) -> usize {
         let before = self.pages.len();
         self.mat_rows = world.materials.iter().map(|m| self.std_row_for_rgb(m.rgb)).collect();
@@ -564,6 +656,7 @@ impl Gfx {
                 self.engr_at.insert(i as u32, e.floor);
             }
         }
+        self.prepare_engravings(world);
         // Crops: planted seeds inside farm plots.
         self.crops_at.clear();
         let has_farms = world.buildings.iter().any(|b| b.kind == "FarmPlot");
@@ -979,12 +1072,17 @@ mod tests {
         g.prepare(&w);
         let mut out = Vec::new();
         g.terrain(&w, fl, &mut out);
-        let eng_pages = [g.page_by_token("FLOOR_STONE_ENGRAVED_PALETTE"), g.page_by_token("FLOOR_STONE_ENGRAVED_NON_PALETTE")];
+        // Gordon's style C ("Maeander"): procedural overlays on generated pages.
         let base = |p: u16| g.pages[p as usize].token.split('#').next().unwrap().to_string();
-        assert!(out.iter().any(|s| eng_pages.iter().flatten().any(|&e| base(s.page) == base(e))), "engraved floor sprite expected: {out:?}");
+        let is_eng = |p: u16| base(p).starts_with("RUSTFORT_ENGRAVING_");
+        assert!(out.iter().any(|s| is_eng(s.page)), "procedural engraving overlay on the floor expected: {out:?}");
         out.clear();
         g.terrain(&w, wall, &mut out);
-        assert!(out.iter().any(|s| base(s.page) == "WALL_STONE_ENGRAVED"), "engraved wall pieces expected");
+        assert!(out.iter().any(|s| base(s.page) == "WALL_STONE_SMOOTHED"), "smoothed wall pieces expected");
+        assert!(out.iter().any(|s| is_eng(s.page)), "engraving frieze overlay on the wall expected");
+        let pg = out.iter().find(|s| is_eng(s.page)).unwrap().page;
+        let (w2, h2, px) = g.page_rgba(pg).unwrap();
+        assert_eq!(px.len() as u32, w2 * h2 * 4);
         // Melt marker.
         let mut it = w.items[0].clone();
         assert!(g.item_marker(&it).is_none());
