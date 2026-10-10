@@ -43,7 +43,8 @@
 //!   or dumped, and units already going for them give up; claim unforbids. Items marked for
 //!   dumping are not stockpiled: dwarves with Refuse hauling carry them to the nearest Garbage
 //!   dump zone (civzone `Dump`), where they are forbidden on arrival (as observed in the export:
-//!   dumped items lie in the dump forbidden). Melt only sets the flag (no melt job yet).
+//!   dumped items lie in the dump forbidden). Melt sets the flag; a "Melt a metal object" job
+//!   at a smelter melts it (see `industry`).
 //!
 //! # Estimates (not on the wiki)
 //! - Work times: construct 100 ticks with blocks, 150 with boulders, logs or bars; remove 100;

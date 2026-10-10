@@ -275,6 +275,7 @@ pub const RECIPES: &[Recipe] = &[
     r!("MakeGloves", "", "GLOVES", "ITEM_GLOVES_GLOVES", "cloth", "Make cloth gloves", "Clothiers", labor::CLOTHESMAKER, "CLOTHESMAKING", Input::Ind(crate::industry::F_CLOTH_ITEM), 300, 2, "gloves"),
     r!("MakeShoes", "", "SHOES", "ITEM_SHOES_SOCKS", "cloth", "Make cloth socks", "Clothiers", labor::CLOTHESMAKER, "CLOTHESMAKING", Input::Ind(crate::industry::F_CLOTH_ITEM), 300, 2, "socks"),
     r!("MakeHelm", "", "HELM", "ITEM_HELM_HOOD", "cloth", "Make cloth hood", "Clothiers", labor::CLOTHESMAKER, "CLOTHESMAKING", Input::Ind(crate::industry::F_CLOTH_ITEM), 300, 1, "hood"),
+    r!("MeltMetalObject", "", "BAR", "", "", "Melt a metal object", "Smelter", labor::SMELT, "SMELT", Input::Ind(crate::industry::F_MELT), 400, 1, "bars"), // [audit-eco]
 ];
 
 /// Job kinds counted in the report (`jobs_done`): recipes first, then these.

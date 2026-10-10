@@ -28,6 +28,12 @@
 //!   scepter, crown, ring, earring, bracelet). Rock mugs from 1 boulder.
 //! - **Engrave memorial slab**: an unengraved slab becomes engraved (Mason's workshop, as in
 //!   the real fort's queue).
+//! - **Melt a metal object** (smelter, labor Furnace operating, wiki "Melt item"): the nearest
+//!   item designated for melting (`ItemFlags::melt`, metal, no artifact) + 1 fuel -> metal in
+//!   tenths of a bar ([`melt_tenths`]: 0.3 x MATERIAL_SIZE for weapons/armor/trap parts, 1 bar
+//!   for furniture, 0.5 blocks, 0.2 goblets, 0.3 per 25 bolts, 1.1 per 500 coins). Tenths
+//!   accumulate per smelter and metal; every 10/10 becomes a bar. Decorations are not
+//!   recovered.
 //!
 //! # Estimates (not on the wiki)
 //! - Work times (300-600 ticks before skill) and butchering yields: meat = body size / 10 000
@@ -64,6 +70,8 @@ pub const F_CRAFTS_BONE: u8 = 15;
 pub const F_CRAFTS_METAL: u8 = 16;
 pub const F_ENGRAVE: u8 = 17;
 pub const F_WOOD_ITEM: u8 = 18;
+/// [audit-eco] "Melt a metal object" at a smelter (wiki "Melt item").
+pub const F_MELT: u8 = 19;
 
 const CRAFT_KINDS: [&str; 7] = ["FIGURINE", "AMULET", "SCEPTER", "CROWN", "RING", "EARRING", "BRACELET"];
 
@@ -120,6 +128,7 @@ const MATERIAL_SIZE: &[(&str, i32)] = &[
     ("ITEM_ARMOR_MAIL_SHIRT", 6),
     ("ITEM_GLOVES_GAUNTLETS", 2),
     ("ITEM_HELM_HELM", 2),
+    ("ITEM_HELM_CAP", 1),
     ("ITEM_PANTS_GREAVES", 6),
     ("ITEM_PANTS_LEGGINGS", 5),
     ("ITEM_SHOES_BOOTS", 2),
@@ -179,6 +188,8 @@ pub(crate) struct IndCensus {
     pub webs: i32,
     pub bones: i32,
     pub slabs: i32,
+    /// Free metal items designated for melting.
+    pub melt: i32,
 }
 
 /// What a running industry job will make (filled at claim time).
@@ -206,6 +217,34 @@ pub(crate) struct Ind {
     /// Items made, by DF item kind.
     pub made: Vec<(String, i64)>,
     pub last_census: u64,
+    /// [audit-eco] Melted metal in tenths of a bar per (smelter id, metal palette index); a bar
+    /// is made when 10/10 have accumulated at the same smelter (wiki "Melt item").
+    pub melt_tenths: std::collections::BTreeMap<(i32, u16), i32>,
+    /// Items melted since the start.
+    pub melted: u64,
+}
+
+/// [audit-eco] Metal recovered by melting one item, in tenths of a bar (wiki "Melt item"):
+/// 0.3 bar x MATERIAL_SIZE for weapons, armor and trap components; 1 bar for furniture, buckets,
+/// chains, cages, anvils and instruments; 0.5 for blocks, 0.2 for goblets and flasks; ammo 0.3 per
+/// 25 (at least 0.1), coins 1.1 per 500 (at least 0.1). Crafts and other small items: 0.3
+/// (estimate, the wiki lists no value).
+pub fn melt_tenths(kind: &str, subtype: &str, stack: i32) -> i32 {
+    let stack = stack.max(1);
+    match kind {
+        "WEAPON" | "ARMOR" | "HELM" | "GLOVES" | "SHOES" | "PANTS" | "SHIELD" | "TRAPCOMP" => {
+            let size = MATERIAL_SIZE.iter().find(|(t, _)| *t == subtype).map(|e| e.1).unwrap_or(3);
+            3 * size * stack
+        }
+        "AMMO" => (3 * stack / 25).max(1),
+        "COIN" => (11 * stack / 500).max(1),
+        "BLOCKS" => 5 * stack,
+        "GOBLET" | "FLASK" => 2 * stack,
+        "ANVIL" | "BARREL" | "BIN" | "CABINET" | "CHAIR" | "BOX" | "COFFIN" | "DOOR" | "FLOODGATE" | "GRATE" | "HATCH_COVER" | "PIPE_SECTION"
+        | "STATUE" | "TABLE" | "TRACTION_BENCH" | "WEAPONRACK" | "ARMORSTAND" | "BUCKET" | "CHAIN" | "ANIMALTRAP" | "CAGE" | "INSTRUMENT" | "BED"
+        | "TRAPPARTS" | "TOOL" | "SLAB" => 10 * stack,
+        _ => 3 * stack,
+    }
 }
 
 /// Industry overview for the bench/acceptance report.
@@ -348,6 +387,9 @@ impl Sim {
         let mut c = IndCensus::default();
         for idx in 0..self.world.items.len() {
             let p = self.imeta[idx].pc;
+            if self.world.items[idx].flags.melt && self.is_meltable(idx) && self.item_free(idx, now) {
+                c.melt += 1;
+            }
             if !matches!(p, pc::ORE | pc::BAR | pc::POWDER | pc::CORPSE | pc::BODYPART | pc::LEATHER | pc::CLOTH | pc::THREAD | pc::BAG | pc::PLANT | pc::FURNITURE) {
                 continue;
             }
@@ -416,8 +458,46 @@ impl Sim {
             F_WEBS => c.webs > 0,
             F_CRAFTS_BONE => c.bones > 0,
             F_ENGRAVE => c.slabs > 0,
+            F_MELT => c.melt > 0,
             _ => false,
         }
+    }
+
+    /// [audit-eco] A metal item that may be melted: designated, of a metal, no artifact, not a
+    /// bar (DF never melts bars back).
+    pub(crate) fn is_meltable(&self, idx: usize) -> bool {
+        let it = &self.world.items[idx];
+        it.flags.melt
+            && it.quality < 6
+            && it.kind != "BAR"
+            && self.world.material(it.mat).map(|m| is_metal_token(&m.token)).unwrap_or(false)
+    }
+
+    /// [audit-eco] Nearest free item designated for melting (any item class), into `wj`.
+    fn ind_pick_melt(&mut self, site: u32, c: u32, now: u64, wj: &mut WJob) -> bool {
+        let sp = self.nav.xyz(site as usize);
+        let mut best: Option<(i32, i32)> = None;
+        for idx in 0..self.world.items.len() {
+            if !self.world.items[idx].flags.melt || !self.is_meltable(idx) || !self.item_free(idx, now) {
+                continue;
+            }
+            let it = &self.world.items[idx];
+            let Some(t) = self.world.idx(it.pos) else { continue };
+            if self.nav.comp_near(t) != c {
+                continue;
+            }
+            let d = crate::manhattan(sp, self.nav.xyz(t));
+            if best.map(|b| (d, it.id) < b).unwrap_or(true) {
+                best = Some((d, it.id));
+            }
+        }
+        let Some((_, id)) = best else { return false };
+        let idx = self.item_idx[&id] as usize;
+        let k = wj.n as usize;
+        wj.items[k] = id;
+        wj.need[k] = self.world.items[idx].stack - self.imeta[idx].reserved;
+        wj.n += 1;
+        true
     }
 
     /// Material indices matching a job material token (`INORGANIC:IRON`; `INORGANIC` = any).
@@ -501,6 +581,7 @@ impl Sim {
             F_WEBS => self.ind_pick(site, c, now, 1, wj, |sim, i| sim.imeta[i].pc == pc::THREAD && sim.is_web(i)),
             F_CRAFTS_BONE => self.ind_pick(site, c, now, 1, wj, |sim, i| sim.imeta[i].pc == pc::BODYPART && sim.is_bone(i)),
             F_ENGRAVE => self.ind_pick(site, c, now, 1, wj, |sim, i| sim.imeta[i].pc == pc::FURNITURE && sim.is_slab_blank(i)),
+            F_MELT => self.ind_pick_melt(site, c, now, wj),
             _ => false,
         };
         if !ok {
@@ -673,6 +754,23 @@ impl Sim {
                 let base = fdesc.replace(" web", " thread");
                 self.ind_make("THREAD", "", fmat, site, 1, base);
             }
+            F_MELT => {
+                // Fractions stay at this smelter until a whole bar is reached.
+                let bid = self.prod.shops.iter().find(|sh| sh.site == wj.site).map(|sh| sh.bid).unwrap_or(-1);
+                let (kind, sub, stack) = {
+                    let it = &self.world.items[fi];
+                    (it.kind.clone(), it.subtype.clone(), it.stack)
+                };
+                let e = self.ind.melt_tenths.entry((bid, fmat)).or_insert(0);
+                *e += melt_tenths(&kind, &sub, stack);
+                let bars = *e / 10;
+                *e %= 10;
+                if bars > 0 {
+                    let name = format!("{} bars", self.mat_name(fmat));
+                    self.ind_make("BAR", "", fmat, site, bars, name);
+                }
+                self.ind.melted += 1;
+            }
             F_ENGRAVE => {
                 keep.push(first);
                 self.world.items[fi].name = "memorial".into();
@@ -759,5 +857,30 @@ impl Sim {
         let mut made = self.ind.made.clone();
         made.sort();
         IndustryReport { made, stock }
+    }
+}
+
+#[cfg(test)]
+mod melt_tests {
+    use super::melt_tenths;
+
+    #[test]
+    fn melt_yields_follow_the_wiki_table() {
+        // wiki "Melt item": breastplate 2.7, greaves 1.8, leggings 1.5, helm 0.6, low boot 0.3,
+        // pick 1.2, crossbow 0.9, bolts 0.3 per 25 (single 0.1), coins 1.1 per 500, table 1.0,
+        // blocks 0.5, goblet 0.2.
+        assert_eq!(melt_tenths("ARMOR", "ITEM_ARMOR_BREASTPLATE", 1), 27);
+        assert_eq!(melt_tenths("PANTS", "ITEM_PANTS_GREAVES", 1), 18);
+        assert_eq!(melt_tenths("PANTS", "ITEM_PANTS_LEGGINGS", 1), 15);
+        assert_eq!(melt_tenths("HELM", "ITEM_HELM_HELM", 1), 6);
+        assert_eq!(melt_tenths("SHOES", "ITEM_SHOES_BOOTS_LOW", 1), 3);
+        assert_eq!(melt_tenths("WEAPON", "ITEM_WEAPON_PICK", 1), 12);
+        assert_eq!(melt_tenths("WEAPON", "ITEM_WEAPON_CROSSBOW", 1), 9);
+        assert_eq!(melt_tenths("AMMO", "ITEM_AMMO_BOLTS", 25), 3);
+        assert_eq!(melt_tenths("AMMO", "ITEM_AMMO_BOLTS", 1), 1);
+        assert_eq!(melt_tenths("COIN", "", 500), 11);
+        assert_eq!(melt_tenths("TABLE", "", 1), 10);
+        assert_eq!(melt_tenths("BLOCKS", "", 1), 5);
+        assert_eq!(melt_tenths("GOBLET", "", 1), 2);
     }
 }

@@ -271,3 +271,41 @@ fn industry_is_deterministic_across_thread_counts() {
     assert!(a.2 >= 1, "bars stored into bins: {}", a.2);
     assert_eq!(a, b);
 }
+
+#[test]
+fn melting_returns_tenths_of_bars_per_wiki() {
+    // [audit-eco] wiki "Melt item": 0.3 bar x MATERIAL_SIZE (breastplate 9 -> 2.7, pick 4 ->
+    // 1.2), fractions accumulate at the smelter until 10/10, one fuel per melt.
+    let (cx, cy, hz) = hall();
+    let mut w = metal_world(true);
+    w.items.retain(|i| i.kind != "BOULDER" || i.mat != 2);
+    let iron = w.materials.len() as u16;
+    w.materials.push(MaterialInfo { token: "INORGANIC:IRON".into(), name: "iron".into(), is_metal: true, ..Default::default() });
+    let coke = w.materials.len() as u16;
+    w.materials.push(MaterialInfo { token: "COAL:COKE".into(), name: "coke".into(), ..Default::default() });
+    let mut bp = item(7500, "ARMOR", iron, Pos::new(cx + 1, cy + 4, hz), 1);
+    bp.subtype = "ITEM_ARMOR_BREASTPLATE".into();
+    bp.flags.melt = true;
+    let mut pick = item(7501, "WEAPON", iron, Pos::new(cx + 2, cy + 4, hz), 1);
+    pick.subtype = "ITEM_WEAPON_PICK".into();
+    pick.flags.melt = true;
+    // Not designated: stays.
+    let mut keep = item(7502, "WEAPON", iron, Pos::new(cx + 3, cy + 4, hz), 1);
+    keep.subtype = "ITEM_WEAPON_PICK".into();
+    w.items.push(bp);
+    w.items.push(pick);
+    w.items.push(keep);
+    w.items.push(item(7503, "BAR", coke, Pos::new(cx - 1, cy + 4, hz), 2));
+    let mut sim = Sim::new(w, 5);
+    let melt = template(&sim, "Melt a metal object");
+    sim.add_building_job(801, melt, true);
+    sim.run_ticks(12_000);
+    assert_eq!(done(&sim, "Melt a metal object"), 2);
+    assert!(sim.world.items.iter().all(|i| i.id != 7500 && i.id != 7501), "both designated items melted");
+    assert!(sim.world.items.iter().any(|i| i.id == 7502), "undesignated pick kept");
+    // 2.7 + 1.2 = 3.9 bars -> 3 iron bars, 0.9 waits at the smelter.
+    let bars: i32 = sim.world.items.iter().filter(|i| i.kind == "BAR" && i.mat == iron).map(|i| i.stack).sum();
+    assert_eq!(bars, 3);
+    let fuel: i32 = sim.world.items.iter().filter(|i| i.kind == "BAR" && i.mat == coke).map(|i| i.stack).sum();
+    assert_eq!(fuel, 0, "one fuel per melt");
+}
