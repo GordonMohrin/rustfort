@@ -120,7 +120,17 @@ pub fn draw_topbar(g: &mut Game) {
     let popt = format!("☺ {pop}");
     let zw = g.font.width(&ztxt, s);
     let pw = g.font.width(&popt, s);
-    let rx = sw - ZBAR_W * s - 12.0 * s - zw;
+    // [round 6] '?' opens the controls overview (F1).
+    let hw = bh;
+    let hr = Rect::new(sw - ZBAR_W * s - 10.0 * s - hw, by, hw, bh);
+    if text_button(&mut g.ui, &g.font, hr, "?", if g.help_open { BtnState::Active } else { BtnState::Normal }) {
+        g.help_open = !g.help_open;
+    }
+    if g.ui.hovered(hr) {
+        let k = g.binds.describe("RF_HELP");
+        g.ui.tooltip = Some((format!("Controls and keys ({k})"), vec2(hr.x - 160.0 * s, h + 26.0 * s)));
+    }
+    let rx = hr.x - 12.0 * s - zw;
     g.font.draw(&ztxt, rx, ty, s, col::TEXT_HI);
     let mut px = rx - pw - 22.0 * s;
     g.font.draw(&popt, px, ty, s, col::TEXT);

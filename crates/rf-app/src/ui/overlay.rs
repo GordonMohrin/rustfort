@@ -35,11 +35,13 @@ pub fn draw_ui(g: &mut Game) {
     }
     super::alerts::draw_alert(g);
     super::round4::draw_popup(g); // [round 4]
+    super::help::draw_hints(g); // [round 6]
+    super::help::draw_help(g); // [round 6]
     // Button tooltips win over the map tooltip (multi-line with '\n').
     if let Some((t, p)) = g.ui.tooltip.take() {
         let lines: Vec<(String, Color)> = t.split('\n').map(|l| (l.to_string(), col::TEXT)).collect();
         tooltip_box(g, &lines, p, true);
-    } else if !g.ui.over_ui && !g.menu_open && g.alert.is_none() && g.r4.popup.is_none() && g.screen == Screen::None && !matches!(g.tool, Tool::Build(_) | Tool::Construct(_)) {
+    } else if !g.ui.over_ui && !g.menu_open && !g.help_open && g.alert.is_none() && g.r4.popup.is_none() && g.screen == Screen::None && !matches!(g.tool, Tool::Build(_) | Tool::Construct(_)) {
         map_tooltip(g);
     }
 }
@@ -230,7 +232,7 @@ fn draw_menu(g: &mut Game) {
     } else if g.menu.page == MenuPage::Settings {
         super::round4::draw_settings(g); // [round 4]
     } else {
-        let (w, h) = (380.0 * s, 308.0 * s);
+        let (w, h) = (380.0 * s, 346.0 * s);
         let r = Rect::new((sw - w) / 2.0, (sh - h) / 2.0, w, h);
         panel(&mut g.ui, r);
         let title = "Rustfort";
@@ -258,6 +260,12 @@ fn draw_menu(g: &mut Game) {
         // [round 4] Population cap and invasions.
         if text_button(&mut g.ui, &g.font, Rect::new(bx, by, bw, bh), "Settings", BtnState::Normal) {
             g.menu.page = MenuPage::Settings;
+        }
+        by += bh + 10.0 * s;
+        // [round 6] Back to the title screen, saving first (like DF's "Save and quit").
+        if text_button(&mut g.ui, &g.font, Rect::new(bx, by, bw, bh), "Save and return to title", if saving { BtnState::Disabled } else { BtnState::Normal }) {
+            g.start_save();
+            g.exit = Some(crate::game::Exit::MainMenu);
         }
         by += bh + 10.0 * s;
         if text_button(&mut g.ui, &g.font, Rect::new(bx, by, bw, bh), "Quit to desktop", BtnState::Normal) {

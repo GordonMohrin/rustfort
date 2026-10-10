@@ -7,15 +7,22 @@
 //! rustfort savebench [--export DIR]      # save + load timing and size
 //! ```
 //! `--load FILE.rfsave` starts from a save instead of the export (play and bench).
+//!
+//! [round 6] `rustfort` / `rustfort play` without a world argument opens the title screen
+//! (Continue, Load game, Import from Dwarf Fortress, ...). `--export`, `--load`,
+//! `--synthetic`/`--size` and `--screenshot` start the game directly, unless `--menu` is given.
 
 mod bench;
 mod font;
 mod game;
+mod importer;
 mod keys;
 mod load;
+mod menu;
 mod render;
 mod save;
 mod script;
+mod settings;
 mod simthread;
 mod ui;
 
@@ -57,12 +64,23 @@ pub struct Args {
     pub load: Option<PathBuf>,
     /// [round 4] Run the simulation inside the frame (no worker thread), for comparisons.
     pub sim_inline: bool,
+    /// [round 6] Show the title screen even with `--screenshot` / a world argument.
+    pub menu: bool,
+    /// [round 6] Title screen page to open: `load`, `exports`, `import`, `settings`.
+    pub menu_page: Option<String>,
+    /// [round 6] Autosave interval in game days (overrides the settings; 0 = off).
+    pub autosave_days: Option<u32>,
+    /// [round 6] `--ui-scale` / `--gfps` were given (they win over the settings file).
+    pub ui_scale_cli: bool,
+    pub gfps_cli: bool,
 }
 
 const USAGE: &str = "usage:
+  rustfort                                     title screen (Continue, Load, Import from DF, Settings)
   rustfort play  [--export DIR] [--synthetic] [--seed N] [--speed 1|2|5|max]
                  [--screenshot out.png --frames N] [--view x,y,z,zoom] [--ui citizens,unit,build,orders,labor-screen,..]
                  [--mouse x,y] [--script \"frame:cmd; ...\"] [--ui-scale 2] [--gfps 60] [--size x,y,z] [--sim-inline]
+                 [--menu] [--menu-page load|exports|import|settings] [--autosave-days N]
   rustfort bench [--export DIR] [--synthetic] [--ticks N] [--seed N] [--no-invasions] [--standdown]
   rustfort savebench [--export DIR]
   --load FILE.rfsave   start from a save game (play, bench)";
@@ -117,8 +135,20 @@ fn parse_args() -> Result<Args, String> {
             }
             "--speed" => a.speed = Some(val("--speed")?),
             "--script" => a.script = Some(val("--script")?),
-            "--ui-scale" => a.ui_scale = val("--ui-scale")?.parse::<f32>().map_err(|e| format!("--ui-scale: {e}"))?.clamp(0.5, 4.0),
-            "--gfps" => a.gfps = val("--gfps")?.parse().map_err(|e| format!("--gfps: {e}"))?,
+            "--ui-scale" => {
+                a.ui_scale = val("--ui-scale")?.parse::<f32>().map_err(|e| format!("--ui-scale: {e}"))?.clamp(0.5, 4.0);
+                a.ui_scale_cli = true;
+            }
+            "--gfps" => {
+                a.gfps = val("--gfps")?.parse().map_err(|e| format!("--gfps: {e}"))?;
+                a.gfps_cli = true;
+            }
+            "--menu" => a.menu = true,
+            "--menu-page" => {
+                a.menu_page = Some(val("--menu-page")?);
+                a.menu = true;
+            }
+            "--autosave-days" => a.autosave_days = Some(val("--autosave-days")?.parse().map_err(|e| format!("--autosave-days: {e}"))?),
             "-h" | "--help" => return Err(String::new()),
             other => return Err(format!("unknown argument {other}")),
         }
@@ -144,9 +174,27 @@ fn main() {
             save::bench(loaded.world, args.seed);
         }
         "play" => {
-            let loaded = load::load(&args);
+            // [round 6] Settings file next to the saves (UI scale, frame cap, vsync, DF folder).
+            let settings = settings::Settings::load();
+            if std::env::var_os("RUSTFORT_DF_DIR").is_none() {
+                settings.apply_df_dir();
+            }
+            let mut args = args;
+            if !args.ui_scale_cli {
+                args.ui_scale = settings.ui_scale;
+            }
+            if !args.gfps_cli {
+                args.gfps = settings.gfps;
+            }
+            // A world on the command line (or a screenshot test) skips the title screen.
+            let direct = !args.menu && (args.export.is_some() || args.load.is_some() || args.synthetic || args.screenshot.is_some());
+            let loaded = direct.then(|| load::load(&args));
+            let title = match &loaded {
+                Some(l) => format!("Rustfort - {}", l.label),
+                None => "Rustfort".to_string(),
+            };
             let mut conf = macroquad::window::Conf {
-                window_title: format!("Rustfort - {}", loaded.label),
+                window_title: title,
                 window_width: 1600,
                 window_height: 900,
                 window_resizable: true,
@@ -154,18 +202,17 @@ fn main() {
                 ..Default::default()
             };
             // Vsync on for play (smooth, no tearing), off for screenshots; RUSTFORT_VSYNC=0/1
-            // overrides. Without vsync the game paces itself to --gfps (default 60).
+            // overrides, then the settings. Without vsync the game paces itself to --gfps.
             let vsync = match std::env::var("RUSTFORT_VSYNC").ok().as_deref() {
                 Some("0") => false,
                 Some(_) => true,
-                None => args.screenshot.is_none(),
+                None => args.screenshot.is_none() && settings.vsync,
             };
             if !vsync {
                 conf.platform.swap_interval = Some(0);
             }
-            let mut args = args;
             args.vsync = vsync;
-            macroquad::Window::from_config(conf, game::run(args, loaded));
+            macroquad::Window::from_config(conf, menu::app_main(args, settings, loaded));
         }
         other => {
             eprintln!("unknown command {other}\n{USAGE}");

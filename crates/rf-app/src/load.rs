@@ -11,6 +11,13 @@ pub struct Loaded {
     pub report: Option<rf_import::ImportReport>,
     /// Why we fell back to the synthetic world, if we did.
     pub warning: Option<String>,
+    /// [round 6] A fresh start (export or synthetic, not a save): the settings' population cap
+    /// and invasion defaults apply.
+    pub new_game: bool,
+    /// [round 6] Graphics already loaded (and prepared for this world) by the loading thread.
+    pub gfx: Option<rf_gfx::Gfx>,
+    /// [round 6] Seed from the save header (0 = use `--seed`).
+    pub seed: u64,
 }
 
 /// World for `play`/`bench`: `--load` save, else the export, else synthetic.
@@ -20,7 +27,7 @@ pub fn load(args: &crate::Args) -> Loaded {
             Ok((world, info)) => {
                 let label = format!("{} - {} - save {}", world.meta.fort_name, info.header.date, p.display());
                 eprintln!("loaded save {} ({}) in {:.2}s", p.display(), crate::save::fmt_bytes(info.bytes), info.secs);
-                return Loaded { world, label, report: None, warning: None };
+                return Loaded { world, label, report: None, warning: None, new_game: false, gfx: None, seed: 0 };
             }
             Err(e) => {
                 let mut l = load_world(args.export.as_deref(), args.synthetic, args.size);
@@ -32,10 +39,41 @@ pub fn load(args: &crate::Args) -> Loaded {
     load_world(args.export.as_deref(), args.synthetic, args.size)
 }
 
+/// [round 6] A save game as a `Loaded` (main menu "Continue" / "Load game").
+pub fn load_save_file(p: &Path) -> Result<Loaded, String> {
+    let (world, info) = crate::save::load_world(p)?;
+    let file = p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
+    let label = format!("{} - {} - save {file}", world.meta.fort_name, info.header.date);
+    Ok(Loaded { world, label, report: None, warning: None, new_game: false, gfx: None, seed: info.header.seed })
+}
+
+/// [round 6] Load the graphics for `l.world` (CPU work only, so it can run in the loading
+/// thread while the window shows progress).
+pub fn preload_gfx(l: &mut Loaded) {
+    let df = rf_gfx::df_dir();
+    let mut gfx = match rf_gfx::Gfx::load_for_world(&df, &l.world) {
+        Ok(g) => g,
+        Err(e) => {
+            eprintln!("graphics: {e}; using fallback tiles");
+            rf_gfx::Gfx::default()
+        }
+    };
+    gfx.prepare(&l.world);
+    l.gfx = Some(gfx);
+}
+
 pub fn load_world(export: Option<&Path>, synthetic: bool, size: (u16, u16, u16)) -> Loaded {
     let synth = |warning: Option<String>| {
         let world = World::synthetic(size.0, size.1, size.2);
-        Loaded { label: format!("{} (synthetic {}x{}x{})", world.meta.fort_name, size.0, size.1, size.2), world, report: None, warning }
+        Loaded {
+            label: format!("{} (synthetic {}x{}x{})", world.meta.fort_name, size.0, size.1, size.2),
+            world,
+            report: None,
+            warning,
+            new_game: true,
+            gfx: None,
+            seed: 0,
+        }
     };
     if synthetic {
         return synth(None);
@@ -62,7 +100,7 @@ pub fn load_world(export: Option<&Path>, synthetic: bool, size: (u16, u16, u16))
                 "{}{} - {} - {}x{}x{}",
                 world.meta.fort_name, native, world.meta.world_name, world.dims.x, world.dims.y, world.dims.z
             );
-            Loaded { world, label, report: Some(report), warning: None }
+            Loaded { world, label, report: Some(report), warning: None, new_game: true, gfx: None, seed: 0 }
         }
         Err(e) => synth(Some(format!("import of {} failed: {e}; using a synthetic fort", dir.display()))),
     }

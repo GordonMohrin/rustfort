@@ -107,11 +107,20 @@ pub fn header_for(world: &World, seed: u64) -> SaveHeader {
 
 /// Write `world` to a new file in `dir` (created if needed). Returns where and how big.
 pub fn save_world(world: &World, seed: u64, dir: &Path) -> Result<SaveInfo, String> {
+    save_world_tagged(world, seed, dir, "")
+}
+
+/// [round 6] Name tag of autosave files: `<fort>-auto-<yyyymmdd-hhmmss>.rfsave`.
+pub const AUTO_TAG: &str = "auto";
+
+/// [round 6] Like [`save_world`], with a tag in the file name (`<fort>-<tag>-<stamp>`).
+pub fn save_world_tagged(world: &World, seed: u64, dir: &Path, tag: &str) -> Result<SaveInfo, String> {
     let t0 = Instant::now();
     std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
     let header = header_for(world, seed);
     let (y, m, d, h, mi, s) = utc_parts(header.saved_unix);
-    let base = format!("{}-{y:04}{m:02}{d:02}-{h:02}{mi:02}{s:02}", slug(&header.fort));
+    let tag = if tag.is_empty() { String::new() } else { format!("{tag}-") };
+    let base = format!("{}-{tag}{y:04}{m:02}{d:02}-{h:02}{mi:02}{s:02}", slug(&header.fort));
     let mut path = dir.join(format!("{base}.{EXT}"));
     let mut n = 2;
     while path.exists() {
@@ -197,6 +206,33 @@ pub fn list_saves(dir: &Path) -> Vec<SaveInfo> {
     }
     v.sort_by(|a, b| b.header.saved_unix.cmp(&a.header.saved_unix).then(b.path.cmp(&a.path)));
     v
+}
+
+/// [round 6] The file is an autosave (`<fort>-auto-...`).
+pub fn is_autosave(path: &Path) -> bool {
+    path.file_stem().and_then(|f| f.to_str()).map(|f| f.contains(&format!("-{AUTO_TAG}-"))).unwrap_or(false)
+}
+
+/// [round 6] Keep only the newest `keep` autosaves of `fort` in `dir` (like DF's rolling
+/// autosave backups). Returns the deleted files. Manual saves are never touched.
+pub fn rotate_autosaves(dir: &Path, fort: &str, keep: usize) -> Vec<PathBuf> {
+    let prefix = format!("{}-{AUTO_TAG}-", slug(fort));
+    let Ok(rd) = std::fs::read_dir(dir) else { return Vec::new() };
+    let mut autos: Vec<PathBuf> = rd
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|x| x.to_str()) == Some(EXT))
+        .filter(|p| p.file_stem().and_then(|f| f.to_str()).map(|f| f.starts_with(&prefix)).unwrap_or(false))
+        .collect();
+    // The UTC stamp in the name sorts chronologically; newest first.
+    autos.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+    let mut gone = Vec::new();
+    for p in autos.into_iter().skip(keep.max(1)) {
+        if std::fs::remove_file(&p).is_ok() {
+            gone.push(p);
+        }
+    }
+    gone
 }
 
 /// `12.3 MB`.
@@ -285,6 +321,36 @@ mod tests {
         let list = list_saves(&dir);
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].header.citizens, 7);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn autosave_rotation_keeps_the_newest() {
+        let dir = std::env::temp_dir().join(format!("rustfort-autosave-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for n in [
+            "Synthfort-auto-20261001-100000",
+            "Synthfort-auto-20261002-100000",
+            "Synthfort-auto-20261003-100000",
+            "Synthfort-auto-20261004-100000",
+            "Synthfort-20260901-100000",
+            "Other-auto-20260101-000000",
+        ] {
+            std::fs::write(dir.join(format!("{n}.{EXT}")), b"x").unwrap();
+        }
+        let gone = rotate_autosaves(&dir, "Synthfort", 3);
+        assert_eq!(gone.len(), 1);
+        assert!(gone[0].ends_with("Synthfort-auto-20261001-100000.rfsave"));
+        assert!(dir.join("Synthfort-20260901-100000.rfsave").exists(), "manual saves stay");
+        assert!(dir.join("Other-auto-20260101-000000.rfsave").exists(), "other forts stay");
+        assert!(is_autosave(&dir.join("Synthfort-auto-20261004-100000.rfsave")));
+        assert!(!is_autosave(&dir.join("Synthfort-20260901-100000.rfsave")));
+        // A tagged save carries the tag in its name and takes part in the rotation.
+        let w = World::synthetic(16, 16, 10);
+        let info = save_world_tagged(&w, 1, &dir, AUTO_TAG).unwrap();
+        assert!(is_autosave(&info.path), "{}", info.path.display());
+        assert_eq!(rotate_autosaves(&dir, "Synthfort", 3).len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
