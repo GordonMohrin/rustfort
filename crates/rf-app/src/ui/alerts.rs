@@ -76,10 +76,55 @@ pub fn alert_text(w: &World, units: &[&Unit]) -> (String, String, bool) {
     }
 }
 
+/// [feel-ui] A hostile this close to a citizen counts even when it cannot walk to one
+/// (archers across a chasm, a beast behind a fortification).
+pub const SEEN_RANGE: i32 = 20;
+
+/// [feel-ui] Is a hostile at `p` one the player can see: on a revealed tile, and either able
+/// to walk to a citizen (`reachable`, one representative citizen per walking component) or
+/// within [`SEEN_RANGE`] tiles of one. Sealed-in demons deep below never count.
+pub fn hostile_visible(w: &World, p: rf_core::Pos, citizens: &[rf_core::Pos], reps: &[rf_core::Pos], reachable: impl Fn(rf_core::Pos, rf_core::Pos) -> bool) -> bool {
+    match w.tile(p) {
+        Some(t) if !t.hidden() => {}
+        _ => return false,
+    }
+    citizens.iter().any(|c| c.dist(p) <= SEEN_RANGE) || reps.iter().any(|&r| reachable(r, p))
+}
+
 impl Game {
+    /// [feel-ui] `Sim::hostiles()` (already without unspotted raiders, `Sim::unit_hidden`)
+    /// reduced to the ones the player can see ([`hostile_visible`]), sorted. This is what
+    /// the top bar counts and cycles through, what gets red markers and what raises the
+    /// arrival alert and auto-pause.
+    pub fn visible_hostiles(&self) -> Vec<i32> {
+        let mut all = self.sim.hostiles();
+        all.sort_unstable();
+        if all.is_empty() {
+            return all;
+        }
+        let w = &self.sim.world;
+        let citizens: Vec<rf_core::Pos> = w.citizens().map(|u| u.pos).filter(|&p| w.idx(p).is_some()).collect();
+        // One citizen per walking component is enough for the reachability test.
+        let mut reps: Vec<rf_core::Pos> = Vec::new();
+        for &c in &citizens {
+            if !reps.iter().any(|&r| self.sim.reachable(r, c)) {
+                reps.push(c);
+            }
+        }
+        let mut v: Vec<i32> = w
+            .units
+            .iter()
+            .filter(|u| all.binary_search(&u.id).is_ok())
+            .filter(|u| hostile_visible(w, u.pos, &citizens, &reps, |a, b| self.sim.reachable(a, b)))
+            .map(|u| u.id)
+            .collect();
+        v.sort_unstable();
+        v
+    }
+
     /// Forget the hostiles of the old world (new game / loaded save): no alert for them.
     pub fn reset_hostiles(&mut self) {
-        let mut h = self.sim.hostiles();
+        let mut h = self.visible_hostiles(); // [feel-ui] only the ones the player can see
         h.sort_unstable();
         self.hostiles_seen = h.clone();
         self.hostiles = h;
@@ -98,7 +143,7 @@ impl Game {
 
     /// Called once per frame after the sim ran.
     pub fn update_hostiles(&mut self) {
-        let mut h = self.sim.hostiles();
+        let mut h = self.visible_hostiles(); // [feel-ui] seen hostiles only (revealed, near or reachable)
         h.sort_unstable();
         let new: Vec<i32> = h.iter().copied().filter(|id| self.hostiles_seen.binary_search(id).is_err()).collect();
         if !new.is_empty() {
@@ -263,6 +308,32 @@ pub fn debug_spawn_hostile(g: &mut Game) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// [feel-ui] Only hostiles the player can see count: revealed tile, and near a citizen or
+    /// able to walk to one.
+    #[test]
+    fn only_seen_hostiles_count() {
+        let mut w = World::synthetic(64, 64, 10);
+        let cit = rf_core::Pos::new(5, 5, 5);
+        let near = rf_core::Pos::new(20, 5, 5);
+        let far = rf_core::Pos::new(60, 60, 0);
+        let sealed = |_: rf_core::Pos, _: rf_core::Pos| false;
+        let open = |_: rf_core::Pos, _: rf_core::Pos| true;
+        for p in [near, far] {
+            let i = w.idx(p).unwrap();
+            w.tiles[i].flags &= !rf_core::tile_flags::HIDDEN;
+        }
+        // Near (15 tiles) counts even when sealed off; far counts only when reachable.
+        assert!(hostile_visible(&w, near, &[cit], &[cit], sealed));
+        assert!(!hostile_visible(&w, far, &[cit], &[cit], sealed));
+        assert!(hostile_visible(&w, far, &[cit], &[cit], open));
+        // A hidden (unrevealed) tile never counts, reachable or not.
+        let i = w.idx(far).unwrap();
+        w.tiles[i].flags |= rf_core::tile_flags::HIDDEN;
+        assert!(!hostile_visible(&w, far, &[cit], &[cit], open));
+        // Off-map positions (units outside the map) never count.
+        assert!(!hostile_visible(&w, rf_core::Pos::new(-30000, -30000, -30000), &[cit], &[cit], open));
+    }
 
     #[test]
     fn siege_and_ambush_texts() {

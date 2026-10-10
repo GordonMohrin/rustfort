@@ -124,7 +124,7 @@ the same overview with your actual keys.
 | Pause / one tick | pause button | Space / `.` |
 | Speed 1x / 2x / 5x / max | top bar buttons | `1` `2` `3` `4` (1x = 100 ticks/s, DF's FPS cap) |
 | Select unit / tile | left click (click again to cycle through units on a tile) | |
-| Back out | right click: pending box, then tool, then selection | Esc, which finally opens the menu |
+| Back out | right click closes the topmost window: popup/box, big screen, sheet, drag box, tool, menu (see "Feel round") | Esc, which finally opens the menu |
 | Dig menu | toolbar pickaxe | `m`, then `m` mine, `t` up/down stair, `r` ramp, `u` channel, `x` remove |
 | Chop / gather / erase | toolbar | `l` / `g` / `x` |
 | Smooth / engrave / carve | toolbar (after Gather): Smooth stone, Engrave, Carve track, Carve fortifications, Remove; drag a box (3D like digging) | `v`, then `m` smooth, `g` engrave, `t` track, `f` fortify |
@@ -286,7 +286,8 @@ position to jump there.
   level at the top right (left of an open sheet): terrain colors (walls darker, open space shows
   the level below dimmed, water, magma), buildings, citizens (yellow), animals (blue), hostiles
   (red) and the camera's view; click or drag on it to move there. Remembered in the settings.
-- **Unit sheet** (click a creature): two rows of tabs like the Steam sheet.
+- **Unit sheet** (click a creature): the DF Premium portrait at the top (see "Feel round"),
+  then two rows of tabs like the Steam sheet.
   - *Overview*: hunger/thirst/tiredness bars, the DF stress category with its face and color
     (`Sim::stress_level`: Ecstatic, Happy, Content, Fine, Stressed, Very stressed, Breaking
     down), the latest thought, open wounds and the squad.
@@ -331,7 +332,8 @@ position to jump there.
   participant (citizens and other creatures by name, unnamed ones as "the goblin lasher"), else it
   starts a new one. The list shows "Urist McAxe and 2 more vs Snang", date, lines and deaths;
   the right side the fight's lines and *Go there*.
-- **Hostiles**: hostile creatures (`Sim::hostiles`) get a pulsing red frame with a `!` badge
+- **Hostiles**: hostile creatures the player can see (`Game::visible_hostiles`, see "Feel
+  round") get a pulsing red frame with a `!` badge
   (not when caged); creatures with open wounds get a blood drop. The top bar counts the
   hostiles; click the counter to center on the next one. When new hostiles arrive, Rustfort
   pauses and shows a pop-up like DF ("A vile force of darkness has arrived!" for a goblin
@@ -451,6 +453,55 @@ position to jump there.
   the sim runs (a clone, about 60-270 ms on the real fort).
 - **Title screen > Settings > Announcements...**: the same announcement table as in the game
   (round 9), saved in `saves/settings.json`.
+
+### Feel round: right-click, seen hostiles, portraits (tag `[feel-ui]`)
+
+- **Right-click closes the topmost window**, one per click, anywhere in the window, like DF
+  Steam (`ui/rclick.rs`, run every frame before the interface; a right-click that closed
+  something is consumed):
+  1. modal popups, dialogs and boxes: help, hostile alert, caravan box, announcement boxes,
+     map context menu, Esc menu (sub-page first), pickers and name fields, new work order,
+     move goods, appoint, equipment position, add job, crop season; and the map pick modes
+     that belong to a screen or sheet: lever linking, stockpile links (back to the settings),
+     squad station/kill (back to the squads screen), patrol (removes the last waypoint, then
+     back);
+  2. big screens: orders, labor, squads, reports, trade, nobles, stockpile settings, animals,
+     places, justice, objects, world, petitions, tasks, hauling; then the creatures list;
+  3. the side panel: unit, building, zone or tile sheet;
+  4. on the map: the pending drag box, then the tool (build/construct, zone and burrow tools
+     go back to their menu; the build menu then goes one hotkey-chain level up), then the
+     menu (dig, build, zone, stockpile, smooth, traffic, items, burrows);
+  5. the patrol route display.
+
+  Only when nothing is open does a right-click on the map open the context menu (round 10).
+  Checked with `--script "4:rclick"` on `orders`, `neworder`, `ctx`, `place:Still`,
+  `dig,drag`, `zone`, `zone:0`, `squads,station`, `squads,patrol-tool`, `squads,assign:1`,
+  `pile`, `labor-screen`, `tasks`, `menu`, `help`, `spawn-hostile`, `bld:Workshop,addjob`,
+  `bld:Lever,link`, `citizens,unit:<id>` and `unit:<id>,orders` (two clicks: screen, then sheet).
+- **Seen hostiles only**: the top bar's "N hostiles" counter and its cycle-through click, the
+  red markers (map, minimap), the squads' kill list and the arrival alert/auto-pause use
+  `Game::visible_hostiles`: `Sim::hostiles()` (no unspotted raiders, `Sim::unit_hidden`) on a
+  revealed tile and either reachable to a citizen (`Sim::reachable`, one citizen per walking
+  component) or within 20 tiles of one (`alerts::SEEN_RANGE`). On Trussroads the four sealed
+  demons at z 0 (elevation -100) no longer count; the four goblin pikemen at the gate do. A
+  hostile that becomes visible later (e.g. a chamber is dug open) raises the alert then. The
+  hover box still tags any non-hidden hostile "(hostile)".
+- **Portraits** (`Gfx::portrait(world, unit, out) -> bool`, rf-gfx): DF Premium's
+  `[LAYER_SET:PORTRAIT]` (and `CHILD:PORTRAIT`, `BABY:PORTRAIT`) evaluated with the map
+  sprites' layer rules, now also with `CONDITION_BP` + `BP_APPEARANCE_MODIFIER_RANGE` (head
+  broadness, eye shape, nose, ...; deterministic per unit, the export has no appearance data),
+  `ITEM_QUALITY`, tissue density (eyebrows) and `TISSUE_SWAP:IF_MIN_CURLY`. Skin, hair, beard
+  and eyebrow colors/lengths/shapes are the same stand-ins the map sprite uses; a race whose
+  portraits know other colors (green goblins) gets one of those. Clothing and armor come from
+  the worn items, recolored by their material (`USE_STANDARD_PALETTE_FROM_ITEM`; the default
+  outfit gets a cloth color). The sheet draws DF's portrait background, the layers at a
+  whole-number scale of 96 px, and DF's frame; creatures without a portrait (procedural
+  demons, forgotten beasts) get their map sprite scaled up, and without that the glyph. The
+  stress face and level sit under the job, like the Steam header. Cached per unit until race,
+  caste, profession, age class or inventory change.
+- rf-gfx fixes on the way: `CONDITION_RANDOM_PART_INDEX` is 1-based in DF (one in N units
+  used to get no variant, e.g. no shirt), and beards never use the pony-tail shape (DF has no
+  such beard layer).
 
 ## Saving
 
@@ -574,6 +625,8 @@ screenshots under `target/`, never in git.
 - `save.rs`: save games (bincode + zstd), save list, `savebench`; (round 6) tagged autosaves and
   their rotation.
 - `ui/help.rs` (round 6): controls overview and first-time hints.
+- Feel round: `ui/rclick.rs` (right-click priority), `ui/alerts.rs` (`visible_hostiles`),
+  `ui/panels.rs` (`draw_portrait`), rf-gfx `Gfx::portrait` / `creature::evaluate_portrait`.
 - Round 10: `ui/round10.rs` (Tasks and Hauling screens, build hotkey tree `BUILD_KEYS` and the
   key bar, map context menu, look lines and item groups, crash snapshot and dialog, title-screen
   announcement page) and `crash.rs` (panic hook, `saves/crash.log`).

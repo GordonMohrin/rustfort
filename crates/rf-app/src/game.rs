@@ -1603,29 +1603,9 @@ impl Game {
         let lr = self.input.lreleased;
         let rp = self.ui.rpressed && !self.ui.over_ui;
         if rp {
-            // Right click backs out: pending rectangle, then tool, then selection.
-            if self.drag.is_some() {
-                self.drag = None;
-            } else if matches!(self.tool, Tool::Build(_) | Tool::Zone(_) | Tool::Burrow | Tool::Construct(_)) {
-                // Back to the build/zone/burrow menu, like DF.
-                self.tool = Tool::None;
-            } else if matches!(self.tool, Tool::SquadStation(_) | Tool::SquadKill(_)) {
-                self.tool = Tool::None;
-                self.screen = Screen::Military;
-            } else if matches!(self.tool, Tool::Link(_)) {
-                self.tool = Tool::None;
-            } else if let Tool::PileLink(id, _) = self.tool {
-                crate::ui::round8::open_pile(self, id); // [app8] back to the settings
-            } else if let Tool::Patrol(_) = self.tool {
-                crate::ui::round9::patrol_back(self); // [app9] remove the last waypoint
-            } else if self.tool != Tool::None || self.submenu != Submenu::None {
-                self.tool = Tool::None;
-                self.submenu = Submenu::None;
-            } else if crate::ui::round10::context_click(self) {
-                // [app10] context menu for the tile under the mouse
-            } else {
-                self.selected = Selected::None;
-            }
+            // [feel-ui] Windows, sheets, tools and menus were closed by `rclick::frame` (which
+            // consumes that right-click); one that reaches the map opens the context menu.
+            crate::ui::rclick::map_right_click(self);
             return;
         }
         let Some(h) = self.hover else { return };
@@ -1904,6 +1884,7 @@ pub async fn run(args: Args, loaded: Loaded, settings: crate::settings::Settings
             let shot = args.screenshot.is_some();
             let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 g.global_keys();
+                crate::ui::rclick::frame(&mut g); // [feel-ui] right-click closes the topmost window
                 if shot {
                     // Screenshot runs are reproducible: saves finish within the frame.
                     g.finish_save();
