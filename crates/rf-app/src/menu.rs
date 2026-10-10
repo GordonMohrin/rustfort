@@ -225,8 +225,11 @@ impl Menu {
     }
 
     fn store_settings(&mut self) {
+        let had = !self.settings.df_dir.is_empty();
         self.settings.df_dir = self.dir_text.trim().to_string();
-        if self.settings.df_dir.is_empty() {
+        // Back to the default: drop the folder this page set before (an env var set outside
+        // Rustfort, with no folder in the settings, stays).
+        if self.settings.df_dir.is_empty() && had {
             std::env::remove_var("RUSTFORT_DF_DIR");
         }
         self.settings.apply_df_dir();
@@ -371,7 +374,7 @@ impl Menu {
         let cont = text_button(&mut self.ui, &self.font, Rect::new(bx, by, bw, bh), "Continue", if ct.is_some() { BtnState::Normal } else { BtnState::Disabled }) || enter;
         by += bh + 3.0 * s;
         if let Some(t) = &ct {
-            let d = clip(&describe(t), (bw / (GW * s)) as usize);
+            let d = clip(&describe(t), ((bw + 28.0 * s) / (GW * s)) as usize);
             self.font.draw(&d, bx + (bw - self.font.width(&d, s)) / 2.0, by, s, col::TEXT_DIM);
             by += GH * s + 3.0 * s;
         }
