@@ -887,6 +887,7 @@ impl Sim {
     fn cage_unit(&mut self, s: usize, mi: usize, cage: usize, tile: u32, now: u64) {
         let name = self.uname(s);
         self.combat_sync_units();
+        self.carry_unlink(s, now); // [gaps10] a caged rider/snatcher lets go of its mount/child
         self.displace(s, tile);
         let uidx = self.ai[s].uidx;
         let uid = self.world.units[uidx].id;

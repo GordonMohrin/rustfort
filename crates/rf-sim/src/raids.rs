@@ -417,7 +417,8 @@ impl Sim {
         let sid = self.combat.inv.next_id;
         let mut members = Vec::new();
         let mut regulars = Vec::new();
-        for (uid, gear, wtok, metal, mail, helm, legs, tile, monster, shield, heavy, cal) in kit {
+        let mut mount_slots = Vec::new(); // [gaps10]
+        for (k, (uid, gear, wtok, metal, mail, helm, legs, tile, monster, shield, heavy, cal)) in kit.into_iter().enumerate() {
             if gear {
                 self.give_item(uid, "WEAPON", wtok, metal, 0);
                 let am = if cal { "INORGANIC:IRON" } else { metal }; // [war9]
@@ -445,9 +446,16 @@ impl Sim {
             if !monster {
                 regulars.push(s as u32);
             }
+            if k >= n + monsters {
+                mount_slots.push(s as u32); // [gaps10]
+            }
         }
         if kind == RaidKind::Siege {
             self.ranged_arm_siege(&regulars); // [ranged] bowmen
+        }
+        // [gaps10] Riders mount up: one regular per mount (wiki Siege: mounted invaders).
+        for (&rider, &mount) in regulars.iter().zip(mount_slots.iter()) {
+            self.ride_start(rider as usize, mount as usize, now);
         }
         // Leader: the best weapon skill among the regulars.
         let leader = regulars
@@ -898,6 +906,9 @@ impl Sim {
         if s >= self.combat.f.len() {
             return;
         }
+        if !self.combat.inv.rides.is_empty() && self.ride_unlink(s, now) {
+            return; // [gaps10] a rider or its mount
+        }
         if self.combat.f[s].carry != NONE {
             if let Some(v) = self.carry_drop(s, now) {
                 let (cn, vn) = (self.uname(s), self.uname(v));
@@ -919,6 +930,11 @@ impl Sim {
 
     /// Hook in `leave_map`: loot and kidnapped children leave with the raider.
     pub(crate) fn raid_left_map(&mut self, s: usize, now: u64) {
+        if !self.combat.inv.rides.is_empty() {
+            if let Some(m) = self.ride_take_mount(s) {
+                self.leave_map(m); // [gaps10] the mount leaves with its rider
+            }
+        }
         let (loot, v) = (self.combat.f[s].loot, self.combat.f[s].carry);
         if loot >= 0 {
             self.combat.stats.items_lost += 1;
@@ -945,6 +961,86 @@ impl Sim {
         if let Ok(p) = self.combat.inv.hidden.binary_search(&(s as u32)) {
             self.combat.inv.hidden.remove(p);
         }
+    }
+
+    // ------------------------------------------------------------------ riding ([gaps10])
+
+    /// [gaps10] `rider` mounts `mount` (wiki Siege: invaders arrive riding beak dogs or cave
+    /// creatures). Mount and rider share a tile and move together at the mount's speed; the
+    /// rider fights from the mount; the mount itself is passive while ridden (ESTIMATE). Built on
+    /// the unit-carrying link (`carry`/`carried_by`): the rider "carries" the mount.
+    pub(crate) fn ride_start(&mut self, rider: usize, mount: usize, now: u64) {
+        if rider == mount || self.combat.f[rider].carry != NONE || self.combat.f[mount].carried_by != NONE || self.ai[rider].kind == Kind::Dead || self.ai[mount].kind == Kind::Dead {
+            return;
+        }
+        // The rider mounts where the mount stands.
+        let q = self.ai[mount].pos;
+        self.ai[rider].pos = q;
+        let uidx = self.ai[rider].uidx;
+        self.world.units[uidx].pos = self.world.pos_of(q as usize);
+        self.carry_start(rider, mount, now);
+        if self.combat.f[rider].carry != mount as u32 {
+            return;
+        }
+        let own = self.ai[rider].speed;
+        self.ai[rider].speed = self.ai[mount].speed.max(1);
+        self.combat.inv.rides.push((rider as u32, mount as u32, own));
+        self.combat.inv.rides_started += 1;
+    }
+
+    /// [gaps10] Hook in `carry_unlink`: a rider that dies, passes out or is caged lets its mount
+    /// go (it fights on its own); a mount that dies or passes out throws its rider, who goes on
+    /// foot at its own speed. True when `s` was part of a ride.
+    fn ride_unlink(&mut self, s: usize, now: u64) -> bool {
+        let Some(k) = self.combat.inv.rides.iter().position(|&(r, m, _)| r as usize == s || m as usize == s) else { return false };
+        let (rider, mount, own) = self.combat.inv.rides.remove(k);
+        let (rider, mount) = (rider as usize, mount as usize);
+        if self.combat.f[rider].carry == mount as u32 {
+            self.carry_drop(rider, now);
+        }
+        if self.ai[mount].kind != Kind::Dead {
+            self.ai[mount].wake = self.ai[mount].wake.min(now + 1);
+        }
+        if self.ai[rider].kind != Kind::Dead {
+            self.ai[rider].speed = own.max(1);
+            self.ai[rider].path.clear();
+            self.ai[rider].path_i = 0;
+            self.ai[rider].wake = self.ai[rider].wake.min(now + 1);
+        }
+        self.combat.inv.dismounts += 1;
+        let (rn, mn) = (self.uname(rider), self.uname(mount));
+        if s == mount {
+            self.combat.log_line(format!("{} falls from {mn}.", crate::combat::cap_pub(&rn)));
+        } else {
+            self.combat.log_line(format!("{} has lost its rider.", crate::combat::cap_pub(&mn)));
+        }
+        true
+    }
+
+    /// [gaps10] The rider leaves the map: unlink its mount and return the mount's slot.
+    fn ride_take_mount(&mut self, s: usize) -> Option<usize> {
+        let k = self.combat.inv.rides.iter().position(|&(r, _, _)| r as usize == s)?;
+        let (_, mount, own) = self.combat.inv.rides.remove(k);
+        let mount = mount as usize;
+        if self.combat.f[s].carry == mount as u32 {
+            self.combat.f[s].carry = NONE;
+            self.combat.f[mount].carried_by = NONE;
+            self.combat.carriers = self.combat.carriers.saturating_sub(1);
+        }
+        self.ai[s].speed = own.max(1);
+        (self.ai[mount].kind != Kind::Dead).then_some(mount)
+    }
+
+    /// [gaps10] The mount a unit rides (unit id), if any.
+    pub fn unit_mount(&self, unit_id: i32) -> Option<i32> {
+        let &s = self.unit_slot.get(&unit_id)?;
+        let &(_, m, _) = self.combat.inv.rides.iter().find(|&&(r, _, _)| r as usize == s)?;
+        Some(self.ai[m as usize].id)
+    }
+
+    /// [gaps10] Mounted raiders on the map right now, riders that arrived mounted, dismounts.
+    pub fn ride_stats(&self) -> (usize, u64, u64) {
+        (self.combat.inv.rides.len(), self.combat.inv.rides_started, self.combat.inv.dismounts)
     }
 
     // ------------------------------------------------------------------ schedule
@@ -1280,6 +1376,61 @@ mod tests {
         }
         let kinds: Vec<RaidKind> = sim.combat.inv.pending.iter().map(|p| p.1).collect();
         assert!(kinds.contains(&RaidKind::Thief) && kinds.contains(&RaidKind::Snatcher), "{kinds:?}");
+    }
+
+    #[test]
+    fn mounted_invaders_ride_and_dismount() {
+        // [gaps10] Mount and rider move together at the mount's speed; the mount dies -> the
+        // rider falls off and walks; the rider dies -> the mount fights on its own.
+        let (mut sim, _hz, _sz) = fort(51);
+        let extra = crate::warcal::RaidExtra { mounts: 2, masters_pct: 0, civ: None };
+        let n = sim.spawn_raid_ex(RaidKind::Siege, "GOBLIN", 3, 0, 0, extra);
+        assert_eq!(n, 5);
+        assert_eq!(sim.combat.inv.rides.len(), 2, "two goblins ride");
+        let (r0, m0, own0) = sim.combat.inv.rides[0];
+        let (r1, m1, _) = sim.combat.inv.rides[1];
+        let (r0, m0, r1, m1) = (r0 as usize, m0 as usize, r1 as usize, m1 as usize);
+        assert!(sim.unit_mount(sim.ai[r0].id) == Some(sim.ai[m0].id));
+        // A fast mount carries its rider at its own speed.
+        sim.ai[m0].speed = 300;
+        sim.ai[r0].speed = 300;
+        let start = sim.ai[r0].pos;
+        for _ in 0..60 {
+            sim.run_ticks(20);
+            assert_eq!(sim.ai[r0].pos, sim.ai[m0].pos, "mount and rider share a tile");
+            assert_eq!(sim.ai[r1].pos, sim.ai[m1].pos);
+        }
+        assert_ne!(sim.ai[r0].pos, start, "the rider moved (charging the fort)");
+        // The mount dies: its rider falls and walks at its own speed.
+        let now = sim.ticks;
+        sim.combat_kill(m0, now, "has been struck down");
+        assert!(sim.unit_mount(sim.ai[r0].id).is_none());
+        assert_eq!(sim.ai[r0].speed, own0, "on foot again");
+        assert_eq!(sim.combat.f[r0].carry, NONE);
+        assert_ne!(sim.ai[r0].kind, Kind::Dead, "the rider survives the fall");
+        // The other rider dies: its mount is free and acts again.
+        let now = sim.ticks;
+        sim.combat_kill(r1, now, "has been struck down");
+        assert_eq!(sim.combat.f[m1].carried_by, NONE);
+        assert!(sim.ai[m1].wake <= now + 1, "the riderless mount wakes up");
+        assert_eq!(sim.combat.f[m1].role, Role::Hostile);
+        assert_eq!(sim.ride_stats(), (0, 2, 2));
+        sim.run_ticks(200);
+        assert_ne!(sim.ai[m1].kind, Kind::Dead);
+    }
+
+    #[test]
+    fn a_leaving_rider_takes_its_mount() {
+        let (mut sim, _hz, _sz) = fort(52);
+        let extra = crate::warcal::RaidExtra { mounts: 1, masters_pct: 0, civ: None };
+        sim.spawn_raid_ex(RaidKind::Siege, "GOBLIN", 2, 0, 0, extra);
+        let (r, m, _) = sim.combat.inv.rides[0];
+        let (r, m) = (r as usize, m as usize);
+        sim.leave_map(r);
+        assert!(sim.combat.inv.rides.is_empty());
+        let mu = &sim.world.units[sim.ai[m].uidx];
+        assert!(mu.flags.inactive, "the mount left with its rider");
+        assert_eq!(sim.combat.stats.children_abducted, 0, "a mount is no abducted child");
     }
 
     #[test]
