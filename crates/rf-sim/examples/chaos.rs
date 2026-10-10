@@ -43,6 +43,7 @@ fn main() {
     let save_every: u64 = get("--save-every").and_then(|s| s.parse().ok()).unwrap_or(120);
     let jobs: usize = get("--jobs").and_then(|s| s.parse().ok()).unwrap_or(4).max(1);
     let peaceful = has("--peaceful");
+    let no_invasions = has("--no-invasions");
     let slow_tps: f64 = get("--slow").and_then(|s| s.parse().ok()).unwrap_or(5000.0);
     let synthetic = has("--synthetic");
     let bench = has("--bench");
@@ -86,6 +87,7 @@ fn main() {
             let mut c = Chaos::new(seed);
             c.violent = !peaceful;
             c.slow_tps = slow_tps;
+            c.no_invasions = no_invasions;
             // `c` stays readable after a panic (its action log is the repro).
             let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 pool.install(|| {
@@ -105,6 +107,20 @@ fn main() {
                         out.ticks as f64 / out.sim_secs.max(1e-9)
                     );
                     let _ = secs;
+                    let viol: Vec<String> = ["force_siege", "force_raid", "spawn_siege", "make_hostile", "kill_unit", "spawn_forgotten_beast", "guard_ready"]
+                        .iter()
+                        .filter_map(|k| out.per_action.get(k).map(|n| format!("{k} {n}")))
+                        .collect();
+                    if !viol.is_empty() {
+                        s.push_str(&format!("\n           violent actions: {}", viol.join(", ")));
+                    }
+                    if !out.citizen_deaths.is_empty() {
+                        let mut d: Vec<(&String, &u64)> = out.citizen_deaths.iter().collect();
+                        d.sort_by(|a, b| b.1.cmp(a.1));
+                        let top: Vec<String> = d.iter().take(5).map(|(c, n)| format!("{n} {c}")).collect();
+                        s.push_str(&format!("
+           citizen deaths: {}", top.join(", ")));
+                    }
                     for v in out.slow.iter().take(8) {
                         s.push_str(&format!("
            slow: {v}"));

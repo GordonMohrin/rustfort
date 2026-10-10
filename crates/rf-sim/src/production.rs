@@ -2035,10 +2035,38 @@ impl Sim {
                 self.pile_occ_add(t as u32, -1);
             }
         }
+        let mut spill_at = pos; // [chaos10]
         if holder >= 0 {
             if let Some(&s) = self.unit_slot.get(&holder) {
                 let uidx = self.ai[s].uidx;
                 self.world.units[uidx].inventory.retain(|&x| x != id);
+                spill_at = self.world.units[uidx].pos;
+            }
+        }
+        // [chaos10] What was inside spills where the container was (DF), instead of pointing
+        // at a container that no longer exists (quiver arrows, bin contents).
+        if let Some(inner) = self.contents.remove(&id) {
+            for cid in inner {
+                let Some(&ci) = self.item_idx.get(&cid) else { continue };
+                let ci = ci as usize;
+                if self.imeta[ci].dead || self.world.items[ci].container != id {
+                    continue;
+                }
+                let it = &mut self.world.items[ci];
+                it.container = -1;
+                it.flags.in_container = false;
+                if it.holder >= 0 || it.building >= 0 {
+                    continue;
+                }
+                it.pos = spill_at;
+                it.flags.on_ground = true;
+                it.flags.in_inventory = false;
+                if let Some(t) = self.world.idx(spill_at) {
+                    self.pile_occ_add(t as u32, 1);
+                }
+                if self.haulable(ci) && !self.is_stored(ci) && !self.imeta[ci].hauling {
+                    self.haul_add(cid);
+                }
             }
         }
     }

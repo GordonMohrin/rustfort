@@ -86,6 +86,8 @@ pub struct Outcome {
     pub citizens_start: usize,
     pub citizens_end: usize,
     pub per_action: HashMap<&'static str, u64>,
+    /// Citizen deaths by cause (from the death announcements).
+    pub citizen_deaths: std::collections::BTreeMap<String, u64>,
     pub violations: Vec<String>,
     /// Steps whose ticks ran slower than `slow_tps` (step, ticks/s, stats, recent actions).
     pub slow: Vec<String>,
@@ -103,6 +105,10 @@ pub struct Chaos {
     pub violent: bool,
     /// Steps below this speed are reported in `Outcome::slow`.
     pub slow_tps: f64,
+    /// Player emulation: squads go Ready when hostiles appear.
+    pub guard: bool,
+    /// Keep the sim's own invasions off (and never toggle them back on).
+    pub no_invasions: bool,
 }
 
 fn clamp_pos(w: &World, x: i32, y: i32, z: i32) -> Pos {
@@ -115,7 +121,7 @@ fn clamp_pos(w: &World, x: i32, y: i32, z: i32) -> Pos {
 
 impl Chaos {
     pub fn new(seed: u64) -> Chaos {
-        Chaos { rng: Rng::new(seed), log: Vec::new(), baseline: HashSet::new(), out: Outcome::default(), violent: true, slow_tps: 0.0 }
+        Chaos { rng: Rng::new(seed), log: Vec::new(), baseline: HashSet::new(), out: Outcome::default(), violent: true, slow_tps: 0.0, guard: true, no_invasions: false }
     }
 
     fn note(&mut self, tick: u64, what: &'static str, detail: String) {
@@ -534,7 +540,7 @@ impl Chaos {
                         self.note(t, "toggle", format!("request_broker {on}"));
                     }
                     _ => {
-                        let on = self.rng.chance(80);
+                        let on = self.rng.chance(80) && !self.no_invasions;
                         sim.set_invasions(on);
                         self.note(t, "toggle", format!("invasions {on}"));
                     }
@@ -685,8 +691,9 @@ impl Chaos {
     }
 
     fn events(&mut self, sim: &mut Sim, t: u64) {
-        // Keep the fort survivable: no new violence while many hostiles are around.
-        if sim.hostiles().len() > 60 {
+        // Keep the fort survivable: about one violent event every month or two, and none
+        // while many hostiles are around.
+        if !self.rng.chance(20) || sim.hostiles().len() > 60 {
             return;
         }
         match self.rng.below(10) {
@@ -830,7 +837,6 @@ impl Chaos {
             let i = self.item_id(sim);
             let _ = sim.item_trade_value(i);
         }
-        let _ = sim.drain_announcements();
     }
 }
 
@@ -889,7 +895,7 @@ pub fn violations(sim: &Sim) -> Vec<String> {
     }
     for it in &w.items {
         if it.container >= 0 && !iids.contains(&it.container) {
-            out.push(format!("item {} in missing container {}", it.id, it.container));
+            out.push(format!("item {} ({} {}, holder {}, ground {}) in missing container {}", it.id, it.kind, it.subtype, it.holder, it.flags.on_ground, it.container));
         }
         if it.container == it.id && it.id >= 0 {
             out.push(format!("item {} contains itself", it.id));
@@ -941,6 +947,9 @@ impl Chaos {
     /// Run `steps` chaos steps of `step_ticks` ticks each. Panics propagate (callers wrap it).
     pub fn run(&mut self, mut sim: Sim, steps: u64, step_ticks: u32, save_every: u64) -> Sim {
         self.out.citizens_start = sim.world.citizens().count();
+        if self.no_invasions {
+            sim.set_invasions(false);
+        }
         if self.baseline.is_empty() {
             self.set_baseline(&sim);
         }
@@ -948,6 +957,14 @@ impl Chaos {
             let n = self.rng.range(0, 3);
             for _ in 0..n {
                 self.act(&mut sim);
+            }
+            // Like a player: when hostiles show up, the military gets ready (usually).
+            if self.guard && self.rng.chance(60) && !sim.hostiles().is_empty() && sim.world.squads.iter().all(|q| q.schedule.eq_ignore_ascii_case("Off duty") || q.schedule.is_empty()) {
+                let ids: Vec<i32> = sim.world.squads.iter().map(|q| q.id).collect();
+                for id in ids {
+                    sim.set_squad_schedule(id, "Ready");
+                }
+                self.note(sim.ticks(), "guard_ready", String::new());
             }
             let before = sim.stats();
             let t0 = std::time::Instant::now();
@@ -974,8 +991,16 @@ impl Chaos {
             self.out.steps += 1;
             if s % 8 == 0 {
                 self.ui_queries(&mut sim);
-            } else {
-                let _ = sim.drain_announcements();
+            }
+            let cits: HashSet<String> = sim.world.units.iter().filter(|u| u.flags.citizen).map(|u| u.name.clone()).collect();
+            for a in sim.drain_announcements() {
+                if a.kind == rf_sim::AnnouncementKind::Death {
+                    if let Some((who, cause)) = a.text.split_once(" has ") {
+                        if cits.contains(who) {
+                            *self.out.citizen_deaths.entry(cause.trim_end_matches('.').to_string()).or_default() += 1;
+                        }
+                    }
+                }
             }
             let v = self.check(&sim);
             if !v.is_empty() {
@@ -990,6 +1015,9 @@ impl Chaos {
             if save_every > 0 && s > 0 && s % save_every == 0 {
                 self.log.push(format!("t{} save_load", sim.ticks()));
                 sim = save_load(sim);
+                if self.no_invasions {
+                    sim.set_invasions(false);
+                }
                 self.out.saves += 1;
             }
         }
