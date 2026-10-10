@@ -388,25 +388,39 @@ pub fn draw_tasks(g: &mut Game) {
             cancel_task(g, &t);
         }
         TaskAct::Suspend(i) => {
-            if let TaskRef::Shop { bid, k } = g.r10.tasks[i].what {
+            let t = g.r10.tasks[i].clone();
+            if let Some((bid, k)) = shop_job_index(g, &t) {
                 if let Some(j) = g.sim.world.buildings.iter_mut().find(|b| b.id == bid).and_then(|b| b.jobs.get_mut(k)) {
                     j.suspended = !j.suspended;
                 }
-                g.r10.tasks_dirty = true;
             }
+            g.r10.tasks_dirty = true;
         }
         TaskAct::DoNow(i) => {
-            if let TaskRef::Shop { bid, k } = g.r10.tasks[i].what {
+            let t = g.r10.tasks[i].clone();
+            if let Some((bid, k)) = shop_job_index(g, &t) {
                 if let Some(b) = g.sim.world.buildings.iter_mut().find(|b| b.id == bid) {
-                    if k < b.jobs.len() {
-                        let j = b.jobs.remove(k);
-                        b.jobs.insert(0, j);
-                    }
+                    let j = b.jobs.remove(k);
+                    b.jobs.insert(0, j);
                 }
-                g.r10.tasks_dirty = true;
             }
+            g.r10.tasks_dirty = true;
         }
     }
+}
+
+/// The current queue index of a workshop task row. The list is rebuilt twice a second, so the
+/// queue may have changed since (a job finished): the row's index is used only while it still
+/// holds the same job, else the first job with the same text.
+fn shop_job_index(g: &Game, t: &TaskRow) -> Option<(i32, usize)> {
+    let TaskRef::Shop { bid, k } = t.what else { return None };
+    let b = g.sim.world.building(bid)?;
+    let templates = g.sim.order_templates();
+    let same = |j: &rf_core::BuildingJob| super::building::job_text(&templates, j) == t.label;
+    if b.jobs.get(k).map(same).unwrap_or(false) {
+        return Some((bid, k));
+    }
+    b.jobs.iter().position(same).map(|k| (bid, k))
 }
 
 /// Close the screen and show the task on the map (its worker, building or tile selected).
@@ -445,11 +459,10 @@ pub fn cancel_task(g: &mut Game, t: &TaskRow) {
                 g.sim.set_item_flag(id, "dump", false);
             }
         }
-        TaskRef::Shop { bid, k } => {
-            if let Some(b) = g.sim.world.buildings.iter_mut().find(|b| b.id == *bid) {
-                if *k < b.jobs.len() {
-                    b.jobs.remove(*k);
-                }
+        TaskRef::Shop { .. } => {
+            let Some((bid, k)) = shop_job_index(g, t) else { return };
+            if let Some(b) = g.sim.world.buildings.iter_mut().find(|b| b.id == bid) {
+                b.jobs.remove(k);
             }
         }
         TaskRef::Unit | TaskRef::ConstructionOther => return,
