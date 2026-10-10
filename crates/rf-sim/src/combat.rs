@@ -209,7 +209,8 @@ fn tissue_info(name: &str) -> (i32, i32, i32, bool) {
 
 #[derive(Clone, Debug)]
 pub(crate) struct LayerT {
-    pub tissue: String,
+    /// [perf11] Shared text: `strike` copies the layer per blow and tissue layer.
+    pub tissue: std::sync::Arc<str>,
     pub mech: Mech,
     /// Depth in mm (for penetration).
     pub depth: f32,
@@ -831,7 +832,7 @@ fn layer_from(tissue: &str, mech: Mech) -> LayerT {
     let (vascular, pain, _, arteries) = tissue_info(tissue);
     let up = tissue.to_ascii_uppercase();
     LayerT {
-        tissue: tissue.to_ascii_lowercase(),
+        tissue: tissue.to_ascii_lowercase().into(),
         mech,
         depth: 1.0,
         vascular,
@@ -1291,6 +1292,11 @@ impl Sim {
         }
         if now % 600 == 0 {
             self.rebuild_fort_list();
+            if !self.combat.flows.is_empty() {
+                // [perf11] Free the tables of flows nobody can use any more.
+                let rb = self.nav.rebuilds;
+                self.combat.flows.retain(|f| now <= f.made + FLOW_TTL && f.rebuilds == rb);
+            }
         }
         if now % rf_core::TICKS_PER_DAY as u64 == 0 {
             self.invasion_daily(now);
@@ -1352,12 +1358,17 @@ impl Sim {
             return self.def.trap_weapon; // [defense] weapon traps, falling stones, upright spikes
         }
         let uidx = self.ai[s].uidx;
-        let inv = self.world.units[uidx].inventory.clone();
-        for id in inv {
+        // [perf11] By index (no copy of the inventory per blow); known weapon templates are
+        // looked up without copying the subtype.
+        for k in 0..self.world.units[uidx].inventory.len() {
+            let id = self.world.units[uidx].inventory[k];
             let Some(&i) = self.item_idx.get(&id) else { continue };
             let i = i as usize;
             if self.imeta[i].dead || self.world.items[i].kind != "WEAPON" {
                 continue;
+            }
+            if let Some(&w) = self.combat.weap_of.get(self.world.items[i].subtype.as_str()) {
+                return Some((i, w));
             }
             let sub = self.world.items[i].subtype.clone();
             if let Some(w) = self.weapon_t(&sub) {
@@ -1390,11 +1401,11 @@ impl Sim {
             if self.imeta[i as usize].dead || !is_armor_kind(&it.kind) {
                 continue;
             }
-            let (layer, coverage) = match self.world.armor_raws.iter().find(|a| a.token == it.subtype) {
-                Some(a) => (a.layer.clone(), a.coverage),
+            let (layer, coverage): (&str, i32) = match self.world.armor_raws.iter().find(|a| a.token == it.subtype) {
+                Some(a) => (a.layer.as_str(), a.coverage), // [perf11] no String per armor piece and blow
                 None => match DEFAULT_ARMOR.iter().find(|a| a.0 == it.subtype) {
-                    Some(a) => (a.2.to_string(), a.3),
-                    None => ("OVER".to_string(), 100),
+                    Some(a) => (a.2, a.3),
+                    None => ("OVER", 100),
                 },
             };
             let sub = it.subtype.as_str();
@@ -1413,7 +1424,7 @@ impl Sim {
             if covers & z == 0 {
                 continue;
             }
-            let order = match layer.as_str() {
+            let order = match layer {
                 "COVER" => 0,
                 "OVER" => 1,
                 "ARMOR" => 2,
