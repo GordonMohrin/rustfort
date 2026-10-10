@@ -37,8 +37,16 @@ fn main() {
     }
     let player = flag("--player");
     if player {
-        let cits: Vec<i32> = sim.world.citizens().filter(|u| u.squad_id < 0 && u.profession != "CHILD" && u.profession != "BABY").map(|u| u.id).collect();
-        let mut pick = cits.into_iter().rev();
+        // Adults without an occupation, civilians first (most of Gordon's dwarves are in squads).
+        let busy: Vec<i32> = sim.world.locations.iter().flat_map(|l| l.occupations.iter().map(|o| o.unit)).collect();
+        let mut cits: Vec<(bool, i32)> = sim
+            .world
+            .citizens()
+            .filter(|u| u.profession != "CHILD" && u.profession != "BABY" && !busy.contains(&u.id) && sim.world.nobles.iter().all(|n| n.holder != u.id))
+            .map(|u| (u.squad_id >= 0, u.id))
+            .collect();
+        cits.sort();
+        let mut pick = cits.into_iter().map(|c| c.1);
         for tok in ["SHERIFF", "HAMMERER"] {
             if sim.world.nobles.iter().all(|n| n.token != tok || n.holder < 0) {
                 if let Some(u) = pick.next() {
@@ -66,6 +74,15 @@ fn main() {
             }
         }
         sim.set_auto_convict(true);
+        for n in sim.world.nobles.iter().filter(|n| matches!(n.token.as_str(), "SHERIFF" | "HAMMERER" | "CAPTAIN_OF_THE_GUARD")) {
+            let who = sim.world.unit(n.holder).map(|u| u.name.clone()).unwrap_or_default();
+            println!("  player: {} = {} ({})", n.token, n.holder, who);
+        }
+        for l in &sim.world.locations {
+            if !l.occupations.is_empty() {
+                println!("  player: {} occupations {:?}", l.name, l.occupations.iter().map(|o| (o.kind.as_str(), o.unit)).collect::<Vec<_>>());
+            }
+        }
     }
     let standdown = flag("--standdown");
     let mut calm_since: Option<u64> = None;

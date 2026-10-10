@@ -596,6 +596,11 @@ impl Sim {
             self.locs.last_month = month;
         }
         self.visitor_arrivals(now);
+        // Visitors killed on the map are no longer visitors.
+        if self.locs.visitors.iter().any(|v| self.ai[v.slot as usize].kind == Kind::Dead) {
+            let ai = &self.ai;
+            self.locs.visitors.retain(|v| ai[v.slot as usize].kind != Kind::Dead);
+        }
         self.locations_tick(now, phase == 0);
         self.petitions_tick(now);
         self.justice_tick(now, phase); // [justice]
