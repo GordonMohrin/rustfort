@@ -66,6 +66,8 @@ pub mod round3_api;
 pub mod round4_api;
 pub mod round5_api;
 pub mod round8_api;
+pub mod round12_api;
+pub use round12_api::{RouteStatus, SIEGE_ENGINES};
 pub use round8_api::AnimalInfo;
 pub mod construct; // [construct]
 pub use construct::ConstructReport; // [construct]
