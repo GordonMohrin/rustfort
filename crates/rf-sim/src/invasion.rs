@@ -51,6 +51,8 @@ pub(crate) struct Siege {
     pub leader: u32,
     /// [military2] Spotted (hidden raids start unrevealed).
     pub revealed: bool,
+    /// [war9] Tick the group started to retreat (0 = not yet).
+    pub fled_at: u64,
 }
 
 pub(crate) struct Invasions {
@@ -255,6 +257,7 @@ impl Sim {
             if matches!(kind, RaidKind::Thief | RaidKind::Snatcher) {
                 if !fleeing && now >= start + TICKS_PER_MONTH as u64 {
                     self.combat.inv.sieges[k].fleeing = true;
+                    self.combat.inv.sieges[k].fled_at = now; // [war9]
                     let members = self.combat.inv.sieges[k].members.clone();
                     for s in members {
                         let s = s as usize;
@@ -270,8 +273,23 @@ impl Sim {
             }
             // [military2] A siege also breaks when its leader dies (estimate, see raids.rs).
             let leader_dead = kind == RaidKind::Siege && leader != NONE && self.ai[leader as usize].kind == Kind::Dead && !self.world.units[self.ai[leader as usize].uidx].flags.inactive;
+            // [war9] Members still on the map long after the retreat (paralyzed, knocked out,
+            // crippled or stuck in a trap corridor) leave the group, so the invasion can end.
+            let fled_at = self.combat.inv.sieges[k].fled_at;
+            if fleeing && fled_at > 0 && now >= fled_at + LEAVE_GIVE_UP + rf_core::TICKS_PER_DAY as u64 {
+                let members = self.combat.inv.sieges[k].members.clone();
+                for s in members {
+                    let s = s as usize;
+                    if self.ai[s].kind != Kind::Dead {
+                        self.combat.f[s].leave_since = 1;
+                        self.war_leave_stuck(s, now);
+                    }
+                }
+                self.combat.inv.sieges[k].members.retain(|&m| self.ai[m as usize].kind == Kind::Dead);
+            }
             if !fleeing && (alive * 2 <= total || now >= start + 2 * TICKS_PER_MONTH as u64 || leader_dead) {
                 self.combat.inv.sieges[k].fleeing = true;
+                self.combat.inv.sieges[k].fled_at = now; // [war9]
                 if leader_dead {
                     self.combat.stats.leaders_killed += 1;
                     self.combat.log_line("The invaders' leader has been slain!".into());
@@ -332,7 +350,7 @@ impl Sim {
             f.leave_since = now.max(1);
             return false;
         }
-        if now < f.leave_since + LEAVE_GIVE_UP || f.raid >= 3 {
+        if now < f.leave_since + LEAVE_GIVE_UP || (f.raid >= 3 && f.leave_since > 1) {
             return false; // thieves and snatchers keep running
         }
         self.combat.stats.leave_gave_up += 1;

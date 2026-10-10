@@ -257,6 +257,140 @@ impl Sim {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::combat::Role;
+    use crate::raids::RaidKind;
+    use crate::{Kind, NONE};
+    use rf_core::{Building, ItemFlags, Pos, World};
+
+    /// Synthetic fort (hall underground, surface above) with invasions off.
+    fn fort(seed: u64) -> (Sim, i16) {
+        let mut w = World::synthetic(48, 48, 20);
+        for u in &mut w.units {
+            u.thirst_timer = 0;
+            u.hunger_timer = 0;
+            u.sleepiness_timer = 0;
+        }
+        let surface = (20i16 * 2 / 3).max(2);
+        let mut sim = Sim::new(w, seed);
+        sim.set_invasions(false);
+        sim.set_moods_enabled(false);
+        (sim, surface)
+    }
+
+    #[test]
+    fn made_items_add_created_wealth() {
+        let (mut sim, sz) = fort(61);
+        sim.run_ticks(1_300); // seeds the history on the first day
+        assert!(sim.world.fort_history.seeded);
+        let before = sim.created_wealth();
+        let mk = |sim: &mut Sim, kind: &str, holder: i32| {
+            let id = sim.next_item_id;
+            sim.next_item_id += 1;
+            let it = Item { id, kind: kind.into(), mat: 0, pos: Pos::new(5, 5, sz), stack: 1, quality: 2, container: -1, holder, building: -1, flags: ItemFlags { on_ground: holder < 0, ..Default::default() }, ..Default::default() };
+            let i = sim.push_item(it);
+            sim.world.items[i].value
+        };
+        let v = mk(&mut sim, "FIGURINE", -1);
+        // base 10 x granite value x quality 2 (x3).
+        let mv = sim.world.materials[0].value.max(1) as i64;
+        assert_eq!(v as i64, 10 * mv * 3, "durable goods store their value");
+        assert_eq!(sim.created_wealth(), before + v as i64);
+        // Corpses and invader gear are not production.
+        mk(&mut sim, "CORPSE", -1);
+        assert_eq!(sim.created_wealth(), before + v as i64);
+    }
+
+    #[test]
+    fn natural_siege_follows_the_civs_siege_count() {
+        let (mut sim, _sz) = fort(62);
+        sim.run_ticks(1_300);
+        // Gordon's fort at r5: Metropolis tier by created wealth, 4 sieges so far.
+        sim.world.fort_history.created_wealth = 3_200_000;
+        sim.world.fort_history.sieges = vec![(9_999, 4)];
+        let p = sim.siege_plan().expect("siege tier");
+        assert_eq!((p.tier, p.number, p.strength), (5, 5, 2_000));
+        assert_eq!(p.regulars + p.monsters, 133);
+        let mut r = crate::rng::Rng::for_unit(1, 2, 3, 4);
+        let now = sim.ticks;
+        let n = sim.war_spawn_siege(&p, now, &mut r, true);
+        assert_eq!(n, p.regulars + p.monsters + p.mounts, "every creature arrived");
+        assert_eq!(Sim::war_count(&sim.world.fort_history.sieges, 9_999), 5);
+        let st = sim.combat_stats();
+        assert_eq!(st.sieges, 1);
+        assert!(st.siege_ambush_squads >= 1 && st.ambushes == st.siege_ambush_squads, "ambush squads come along");
+        assert_eq!(st.mounts_spawned as usize, p.mounts);
+        assert_eq!(Sim::war_count(&sim.world.fort_history.raids, 9_999), st.siege_ambush_squads as i32);
+        let masters = sim.world.units.iter().filter(|u| u.profession.starts_with("MASTER_")).count();
+        assert!(masters >= 4 && masters <= 35, "about 12 % masters: {masters}");
+    }
+
+    #[test]
+    fn destroyer_wrecks_a_nearby_workshop() {
+        let (mut sim, sz) = fort(63);
+        let mut b = Building { id: 9_001, kind: "Workshop".into(), subtype: "Carpenters".into(), x1: 11, y1: 9, x2: 13, y2: 11, z: sz, center: Pos::new(12, 10, sz), built: true, ..Default::default() };
+        b.stage = -1;
+        sim.world.buildings.push(b);
+        assert_eq!(sim.spawn_raid(RaidKind::Siege, "TROLL", 1, 0, 0), 1);
+        let t = sim.combat.inv.sieges[0].members[0] as usize;
+        let q = sim.world.idx(Pos::new(6, 10, sz)).unwrap() as u32;
+        let now = sim.ticks;
+        sim.move_to(t, q, now);
+        for _ in 0..100 {
+            sim.run_ticks(20);
+            if sim.combat_stats().buildings_wrecked > 0 {
+                break;
+            }
+        }
+        assert_eq!(sim.combat_stats().buildings_wrecked, 1);
+        assert!(!sim.world.buildings.iter().any(|b| b.id == 9_001), "the workshop is gone");
+    }
+
+    #[test]
+    fn stuck_leavers_leave_their_group() {
+        let (mut sim, _sz) = fort(64);
+        assert_eq!(sim.spawn_siege("GOBLIN", 2), 2);
+        let m = sim.combat.inv.sieges[0].members.clone();
+        let now = sim.ticks;
+        sim.combat.inv.sieges[0].fleeing = true;
+        sim.combat.inv.sieges[0].fled_at = now.max(1);
+        for &s in &m {
+            sim.combat.f[s as usize].role = Role::Leave;
+        }
+        // One is paralyzed in place (a trap victim): the r8 group never ended.
+        sim.combat.f[m[0] as usize].paralyzed = true;
+        sim.run_ticks((crate::invasion::LEAVE_GIVE_UP + 3 * rf_core::TICKS_PER_DAY as u64) as u32);
+        assert!(sim.combat.inv.sieges.is_empty(), "the invasion ended");
+        assert!(sim.combat_stats().leave_gave_up >= 1);
+        let g = m[0] as usize;
+        assert!(sim.ai[g].kind != Kind::Dead && sim.combat.f[g].role == Role::Hostile && sim.combat.f[g].siege == 0, "the helpless one stays as a plain hostile");
+    }
+
+    #[test]
+    fn fleeing_civilian_breaks_off_to_drink() {
+        let (mut sim, sz) = fort(65);
+        assert_eq!(sim.spawn_siege("GOBLIN", 1), 1);
+        let g = sim.combat.inv.sieges[0].members[0] as usize;
+        let d = sim.unit_slot[&sim.world.units[0].id];
+        let dp = sim.upos(d);
+        // The goblin stands still 6 tiles away (on the dwarf's level).
+        let q = (1..10).filter_map(|k| sim.world.idx(Pos::new(dp.x + k, dp.y, dp.z))).find(|&i| sim.nav.walkable(i)).unwrap() as u32;
+        let now = sim.ticks;
+        sim.move_to(g, q, now);
+        sim.ai[g].wake = u64::MAX - 1;
+        let _ = sz;
+        sim.combat.f[d].role = Role::Civilian;
+        sim.combat.f[d].threat = g as u32;
+        sim.ai[d].thirst = crate::needs::THIRST_SEEK + 10;
+        let cheb = sim.upos(d).dist(sim.upos(g));
+        if cheb > 2 {
+            sim.engage_now(d, now);
+            sim.run_ticks(3);
+            assert_eq!(sim.combat_stats().flee_breaks, 1, "thirsty civilian goes to drink");
+            assert_ne!(sim.combat.f[d].role, Role::Civilian);
+            sim.run_ticks(40);
+            assert!(sim.combat.f[d].role != Role::Civilian || sim.combat.f[d].threat == NONE, "not grabbed again while the goblin is not adjacent");
+        }
+    }
 
     #[test]
     fn siege_strength_follows_the_difficulty_sequence() {

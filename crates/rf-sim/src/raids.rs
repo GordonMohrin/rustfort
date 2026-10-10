@@ -457,6 +457,7 @@ impl Sim {
             leader,
             revealed: !hidden,
             charged: camp == 0,
+            fled_at: 0, // [war9]
         });
         if hidden {
             for &s in &members {
