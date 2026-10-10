@@ -60,6 +60,8 @@ pub use ranged::RangedStats; // [ranged]
 pub mod round3_api;
 pub mod round4_api;
 pub mod round5_api;
+pub mod round8_api;
+pub use round8_api::AnimalInfo;
 pub mod construct; // [construct]
 pub use construct::ConstructReport; // [construct]
 pub use round5_api::{ConstructionKind, DetailKind, MoodInfo, Traffic};

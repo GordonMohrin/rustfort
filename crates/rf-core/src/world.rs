@@ -1,6 +1,7 @@
 //! The world: map tiles + entities + metadata.
 
 use crate::entities::*;
+use crate::fortress::*;
 use crate::military::*;
 use crate::society::*;
 use crate::tiles::*;
@@ -123,6 +124,21 @@ pub struct World {
     /// [audit-eco] Pending carve-fortification / carve-track designations.
     #[serde(default)]
     pub carve_designations: Vec<CarveDesignation>,
+    /// [r8] v50 work details.
+    #[serde(default)]
+    pub work_details: Vec<WorkDetail>,
+    /// [r8] Kitchen cook/brew exclusions.
+    #[serde(default)]
+    pub kitchen: Vec<KitchenSetting>,
+    /// [r8] Locations (temples, taverns, libraries, guildhalls, hospitals).
+    #[serde(default)]
+    pub locations: Vec<Location>,
+    /// [r8] Justice cases.
+    #[serde(default)]
+    pub crimes: Vec<Crime>,
+    /// [r8] Hauling routes.
+    #[serde(default)]
+    pub haul_routes: Vec<HaulRoute>,
 }
 
 impl World {

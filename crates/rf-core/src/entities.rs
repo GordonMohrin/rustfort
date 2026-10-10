@@ -135,6 +135,18 @@ pub struct Unit {
     pub squad_position: i32,
     /// Hostile-side info: entity/civ id the unit belongs to (invaders), -1 if none.
     pub invader_civ: i32,
+    /// [r8] Animals: owner unit of a pet, -1 if none.
+    pub pet_owner: i32,
+    /// [r8] Animals: DF training level name (`WildUntamed`, `Domesticated`, `Trained`, `WarTrained`...).
+    pub training: String,
+    /// [r8] Animals: pasture/pen civzone id, -1 if none.
+    pub pasture: i32,
+    /// [r8] Marked for slaughter (DF "Slaughter" animal flag).
+    pub slaughter: bool,
+    /// [r8] Pregnancy timer in ticks (0 = not pregnant), for animals and citizens.
+    pub pregnancy: i32,
+    /// [r8] Work detail names the unit is assigned to (v50).
+    pub work_details: Vec<String>,
 }
 
 impl Unit {
@@ -210,6 +222,16 @@ pub struct StockpileSettings {
     pub max_barrels: i32,
     pub max_bins: i32,
     pub max_wheelbarrows: i32,
+    /// [r8] Detailed DF filters, one string per enabled leaf: `category/group/token`, e.g.
+    /// `food/meat/CREATURE:COW:MUSCLE`, `stone/economic/INORGANIC:HEMATITE`,
+    /// `finished_goods/quality_min/ordinary`. Empty = everything in the categories.
+    pub filters: Vec<String>,
+    /// [r8] Pile takes items only from links (DF "take from links only").
+    pub use_links_only: bool,
+    /// [r8] Linked stockpiles/workshops this pile gives to.
+    pub give_to: Vec<i32>,
+    /// [r8] Linked stockpiles this pile takes from.
+    pub take_from: Vec<i32>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
