@@ -287,6 +287,18 @@ which fits tier 5 (Metropolis, 120 regulars + 40 monsters on the wiki) reached b
 10. For the tool: a player emulation for Gordon's routine digging and building is out of
     scope; compare those only as "player-driven".
 
+## UI behavior checked against Gordon's DF setup (round 9, rf-app)
+
+The validation runs are headless, so the UI does not change any number above. What the game window now takes from Gordon's real DF setup (read-only):
+
+| What | Gordon's DF | Rustfort round 9 |
+|---|---|---|
+| Boxes that pause (`prefs/announcements.txt`) | `BOX` on citizen deaths, migrants, thieves, snatchers, caravans, tantrums, berserkers, mood workshop claims (also `R`), artifacts begun | the same types open a box and pause; enemy deaths do not (DF has no box for them) |
+| Petitions | answered in DF's petitions window | petitions screen + box with Accept / Deny; unanswered ones are denied after 28 days (sim ESTIMATE) |
+| Squad uniforms (`squads.json`, `uniform_by_position`) | Wache: armor, helm, greaves, gloves, shoes, shield, battle axe | shown per position with the missing pieces (on r5: shields missing for most soldiers); editable per position |
+
+During the r5 -> r6 siege (73 deaths in DF), a box per citizen death would be many boxes: the queue folds the fifth and later boxes of one type, and *Close all* clears them.
+
 ## Limitations
 
 - One real history and a few seeds. Sieges dominate the deaths, so seeds vary a lot.

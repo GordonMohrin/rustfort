@@ -7,8 +7,11 @@ use crate::game::{Game, LogLine, Screen};
 use macroquad::prelude::*;
 use rf_sim::AnnouncementKind;
 
-/// Filter tabs. The last one shows `Sim::combat_log()` instead of announcements.
-pub const FILTERS: &[&str] = &["All", "Combat", "Deaths", "Jobs", "Info", "Combat log"];
+/// Filter tabs. The last two show the combat reports grouped per fight ([app9]) and the raw
+/// `Sim::combat_log()` instead of announcements.
+pub const FILTERS: &[&str] = &["All", "Combat", "Deaths", "Jobs", "Info", "Combat reports", "Combat log"];
+/// [app9] Index of the per-fight combat reports tab.
+pub const FIGHTS_TAB: usize = 5;
 
 const COMBAT_WORDS: &[&str] = &[
     "attack", "strike", "struck", "punch", "kick", "bite", "slash", "stab", "hack", "bash", "kill", "slain",
@@ -73,11 +76,17 @@ pub fn draw_reports(g: &mut Game) {
     g.font.draw("Reports", x, y, 1.5 * s, col::TEXT_HI);
     y += 2.0 * lh;
     // Filter tabs with counts.
-    let combat = g.sim.combat_log();
+    let combat = if g.reports.filter == FILTERS.len() - 1 { g.sim.combat_log() } else { Vec::new() };
     let mut bx = x;
     let bh = 24.0 * s;
     for (i, f) in FILTERS.iter().enumerate() {
-        let n = if i == FILTERS.len() - 1 { combat.len() } else { g.log.iter().filter(|l| matches(i, l)).count() };
+        let n = if i == FILTERS.len() - 1 {
+            g.r9.fights.iter().map(|f| f.lines.len()).sum::<usize>().max(combat.len())
+        } else if i == FIGHTS_TAB {
+            g.r9.fights.len() // [app9]
+        } else {
+            g.log.iter().filter(|l| matches(i, l)).count()
+        };
         let label = format!("{f} ({n})");
         let bw = (label.chars().count() as f32 + 3.0) * 8.0 * s;
         let st = if g.reports.filter == i { BtnState::Active } else { BtnState::Normal };
@@ -91,6 +100,12 @@ pub fn draw_reports(g: &mut Game) {
     let area = Rect::new(x, y, r.w - 2.0 * pad, r.y + r.h - pad - y - lh);
     let rows = ((area.h / lh) as usize).max(1);
     let maxc = (area.w / (8.0 * s)) as usize;
+    if g.reports.filter == FIGHTS_TAB {
+        // [app9] Combat reports grouped per fight, like DF's Reports screen.
+        let fa = Rect::new(area.x, area.y, area.w, area.h + lh);
+        crate::ui::round9::draw_fights(g, fa);
+        return;
+    }
     let step = wheel_over(&g.ui, &mut g.input, area);
     if g.reports.filter == FILTERS.len() - 1 {
         // Combat log: plain lines, newest first.

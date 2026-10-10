@@ -129,14 +129,38 @@ impl Game {
     fn raise_alert(&mut self, ids: Vec<i32>) {
         let w = &self.sim.world;
         let units: Vec<&Unit> = ids.iter().filter_map(|id| w.unit(*id)).collect();
-        let (title, text, pause) = alert_text(w, &units);
+        let (mut title, mut text, _) = alert_text(w, &units);
+        let mut ty = crate::ui::round9::alert_type(w, &units);
         let pos = units.first().map(|u| u.pos);
         let date = date_string(&w.calendar);
-        self.log.push(LogLine::new(text.clone(), pos, AnnouncementKind::Warning, get_time(), date));
+        // [app9] The sim's own raid line of this frame names the raid ("Thief! Protect the
+        // hoard from skulking filth!"); it is already in the log.
+        let now = get_time();
+        if let Some((t, txt, _)) = self.r9.raid_hint.take() {
+            // A monster keeps its own title ("Ngokang has come!").
+            if crate::ui::round9::ANN_TYPES[t].id != "MEGABEAST" || ty != t {
+                title = crate::ui::round9::title_of(t).to_string();
+            }
+            ty = t;
+            text = txt;
+        }
+        let logged = self.log.iter().rev().take(64).any(|l| l.text == text && now - l.born < 1.0);
+        if !logged {
+            self.log.push(LogLine::new(text.clone(), pos, AnnouncementKind::Warning, now, date));
+        }
         self.alert_tick = Some(self.sim.ticks());
-        if pause {
+        // [app9] Box / pause / recenter from the announcement settings (DF announcements.txt).
+        let f = crate::ui::round9::flags(self, ty);
+        if f.popup {
             self.paused = true;
             self.alert = Some(Alert { title, text, units: ids, pos });
+        } else if f.pause {
+            self.paused = true;
+        }
+        if f.recenter {
+            if let Some(p) = pos {
+                self.cam.focus(p);
+            }
         }
     }
 }

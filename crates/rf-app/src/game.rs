@@ -77,6 +77,8 @@ pub enum Tool {
     ItemDes(crate::ui::round5::ItemDes),
     /// [app8] Click a stockpile or workshop to link this stockpile to (give = true) or from.
     PileLink(i32, bool),
+    /// [app9] Click the waypoints of this squad's patrol route (Enter finishes).
+    Patrol(i32),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -129,6 +131,8 @@ pub enum Screen {
     Objects,
     /// [app8] World: civilizations, caravans (DF `Y`).
     World,
+    /// [app9] Visitor petitions (DF v50 petitions window).
+    Petitions,
 }
 
 /// Sort order of the citizens list.
@@ -227,6 +231,8 @@ pub enum MenuPage {
     Load,
     /// [round 4] Population cap, invasions.
     Settings,
+    /// [app9] Announcement settings (DF announcements.txt).
+    Announcements,
 }
 
 /// Esc menu state.
@@ -313,12 +319,14 @@ pub struct LogLine {
     pub date: String,
     /// Reports category (`ui::reports::category`), computed once.
     pub cat: u8,
+    /// [app9] Not shown in the announcement lines (DF `D_D` off); Reports keep it.
+    pub quiet: bool,
 }
 
 impl LogLine {
     pub fn new(text: String, pos: Option<Pos>, kind: AnnouncementKind, born: f64, date: String) -> LogLine {
         let cat = crate::ui::reports::category(kind, &text) as u8;
-        LogLine { text, pos, kind, born, date, cat }
+        LogLine { text, pos, kind, born, date, cat, quiet: false }
     }
 }
 
@@ -444,6 +452,8 @@ pub struct Game {
     /// [app8] Work details, kitchen, stockpile settings, animals, places, justice, objects,
     /// world, minimap.
     pub r8: crate::ui::round8::R8Ui,
+    /// [app9] Announcement settings and boxes, petitions, squad equipment, combat reports.
+    pub r9: crate::ui::round9::R9Ui,
 }
 
 /// [round 6] How the game loop ended.
@@ -630,6 +640,7 @@ impl Game {
             saving_auto: false,
             exit: None,
             r8: Default::default(),
+            r9: Default::default(),
         };
         // [round 6] Defaults from the settings for a fresh start (imports, synthetic forts).
         if loaded.new_game {
@@ -922,6 +933,7 @@ impl Game {
                 }
                 // [app8] work details, kitchen, stockpile settings, animals, places, ...
                 _ if crate::ui::round8::ui_arg(self, k, v) => {}
+                _ if crate::ui::round9::ui_arg(self, k, v) => {} // [app9]
                 _ => eprintln!("unknown --ui state {u}"),
             }
         }
@@ -987,7 +999,7 @@ impl Game {
 
     /// Ticks run this frame (the game is not paused by the player, a menu or a pop-up).
     pub fn sim_running(&self) -> bool {
-        !self.paused && !self.menu_open && self.alert.is_none() && self.r4.popup.is_none()
+        !self.paused && !self.menu_open && self.alert.is_none() && self.r4.popup.is_none() && self.r9.popups.is_empty() // [app9]
     }
 
     /// [round 4] Called right after the sim came back from the worker: book the ticks it ran.
@@ -1078,14 +1090,18 @@ impl Game {
         let date = date_string(&self.sim.world.calendar);
         let fresh = self.sim.drain_announcements();
         crate::ui::round4::on_announcements(self, &fresh); // [round 4]
-        for a in fresh {
-            self.log.push(LogLine::new(a.text, a.pos, a.kind, now, date.clone()));
+        let show = crate::ui::round9::on_announcements(self, &fresh); // [app9] boxes, pause, recenter
+        for (a, sh) in fresh.into_iter().zip(show) {
+            let mut l = LogLine::new(a.text, a.pos, a.kind, now, date.clone());
+            l.quiet = !sh;
+            self.log.push(l);
         }
         // [round 3] The Reports screen keeps a long history.
         if self.log.len() > LOG_KEEP {
             self.log.drain(..self.log.len() - LOG_KEEP);
         }
         self.update_hostiles();
+        crate::ui::round9::update(self); // [app9] raid boxes, petitions, combat reports
         crate::ui::round4::update(self); // [round 4] caravan arrival
     }
 
@@ -1128,6 +1144,10 @@ impl Game {
             self.r4.popup = None;
             return;
         }
+        if crate::ui::round9::enter_key(self) {
+            return; // [app9] boxes, patrol route
+        }
+        let (b, inp) = (&self.binds, &self.input);
         if self.menu_open || self.typing() {
             return;
         }
@@ -1339,6 +1359,7 @@ impl Game {
                 self.r5 = Default::default();
                 let minimap = self.r8.minimap;
                 self.r8 = crate::ui::round8::R8Ui { minimap, ..Default::default() }; // [app8]
+                self.r9 = Default::default(); // [app9]
                 let file = path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
                 self.label = format!("{} - loaded {file}", self.sim.world.meta.fort_name);
                 self.selected = Selected::None;
@@ -1407,6 +1428,8 @@ impl Game {
             self.alert = None;
         } else if self.r4.popup.is_some() {
             self.r4.popup = None;
+        } else if crate::ui::round9::escape(self) {
+            // [app9] boxes, patrol tool, announcement settings
         } else if self.screen == Screen::Trade && self.r4.depot_open {
             self.r4.depot_open = false;
             self.r4.depot_typing = false;
@@ -1566,6 +1589,8 @@ impl Game {
                 self.tool = Tool::None;
             } else if let Tool::PileLink(id, _) = self.tool {
                 crate::ui::round8::open_pile(self, id); // [app8] back to the settings
+            } else if let Tool::Patrol(_) = self.tool {
+                crate::ui::round9::patrol_back(self); // [app9] remove the last waypoint
             } else if self.tool != Tool::None || self.submenu != Submenu::None {
                 self.tool = Tool::None;
                 self.submenu = Submenu::None;
@@ -1629,6 +1654,11 @@ impl Game {
             Tool::PileLink(pile, give) => {
                 if lp {
                     crate::ui::round8::pile_link_click(self, pile, give, h); // [app8]
+                }
+            }
+            Tool::Patrol(sq) => {
+                if lp {
+                    crate::ui::round9::patrol_click(self, sq, h); // [app9]
                 }
             }
             Tool::SquadKill(sq) => {
@@ -1699,7 +1729,7 @@ impl Game {
                 self.burrow_ui.selected = Some(id);
                 self.tool = Tool::None;
             }
-            Tool::SquadStation(_) | Tool::SquadKill(_) | Tool::Link(_) | Tool::PileLink(..) => {}
+            Tool::SquadStation(_) | Tool::SquadKill(_) | Tool::Link(_) | Tool::PileLink(..) | Tool::Patrol(_) => {}
             Tool::Construct(_) | Tool::Detail(_) | Tool::Traffic(_) | Tool::ItemDes(_) => {
                 crate::ui::round5::apply(self, a, b);
             }

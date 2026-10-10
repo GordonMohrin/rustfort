@@ -511,6 +511,23 @@ The screens follow the DF Steam (v50/53) layouts; the rules behind them live in 
 | Objects: artifacts with DF's item name, material, place (named room) and maker | OK | The maker is only known for artifacts made in Rustfort (mood records); the export has no creator. |
 | World: civilizations with their relation, caravans | OK | |
 | Minimap | not in DF | DF Steam has no minimap; this is a Rustfort extra and off by default. |
+## Player screens (round 9, rf-app `[app9]`)
+
+| Item | Class | Notes |
+|---|---|---|
+| Announcement flags per event: `BOX` (box that pauses), `P`, `R`, `D_D` | OK | DF's `announcements.txt` (its header documents the flags). Read-only from `%APPDATA%/Bay 12 Games/Dwarf Fortress/prefs/announcements.txt`, then the install's `prefs/` and `data/init/`. Gordon's prefs differ from DF's defaults: `BOX` on CITIZEN_DEATH, MIGRANT_ARRIVAL, AMBUSH_THIEF, AMBUSH_SNATCHER, CARAVAN_ARRIVAL, CITIZEN_TANTRUM, BERSERK_CITIZEN, MOOD_BUILDING_CLAIMED (`BOX:R`), ARTIFACT_BEGUN; Rustfort follows his file. |
+| Which sim line belongs to which DF token | ESTIMATE | The sim sends text and a kind, no token: lines are matched by DF's wording (e.g. "Thief! Protect the hoard..." -> AMBUSH_THIEF, "has been abducted" -> CITIZEN_SNATCHED). Deaths are split by the dead unit: citizen -> CITIZEN_DEATH, tame -> PET_DEATH, others (invaders, wildlife) no box. |
+| Siege, ambush, hostile-wildlife boxes | ESTIMATE | No DF token was identified for "A vile force of darkness has arrived!" and "An ambush! Curse them!" (AMBUSH_AMBUSHER is not certain): Rustfort keeps the box + pause of earlier rounds; wildlife only gets a line. |
+| Petition box | ESTIMATE (Rustfort) | DF v50 shows petitions as an alert and in the petitions window; Rustfort also opens a box with Accept / Deny (switch it off in the settings). |
+| Box queue | OK / ESTIMATE | One box at a time like DF; folding the fifth and later boxes of one type into "... and N more" is Rustfort's (a siege can kill dozens). |
+| Raid boxes name the raid | OK | The sim's spotted lines are DF's wording (wiki: Ambush, Thief, Snatcher). Hidden raiders stay invisible until spotted (round 8). |
+| Petitions screen | OK | Residency (performers, scholars), citizenship (mercenaries, monster slayers), temple/guildhall petitions; 28-day timeout is the sim's ESTIMATE. |
+| Squad uniform per position: slots, item type, material | OK / partial | DF's uniform screen assigns per position. The material (`@INORGANIC:STEEL`, `@METAL`, `@LEATHER`, ...) is stored in the entry, but the sim matches uniforms by item type only (round 8), so a material choice does not filter yet (MISSING in rf-sim). |
+| Squad ammunition: item, amount, combat/training | OK | DF squad ammo screen (`squad_ammo_spec`). New entries get 100 rounds (ESTIMATE; DF proposes the squad's need). |
+| Patrol routes picked on the map; barracks per squad | OK | DF v50 patrol routes and barracks zones; the sim walks the route in a loop (round 8). |
+| Combat reports per fight | ESTIMATE | DF keeps per-unit combat reports of an encounter. Rustfort groups lines that share a participant (by the names the sim writes) and are at most 600 ticks apart; the sim's log has no ticks or unit ids, so lines are stamped when the UI polls them. |
+| Skill names and levels | OK | DF wiki "Skill": profession-style names (Miner, Wood Cutter, Axe Dwarf, Observer), levels Dabbling ... Legendary +5, next level at 500 + 100 x level experience. |
+
 ## Round 8 combat check (real fort, `raids` example and 2-year bench)
 
 - Forced raids on the r5 export (`cargo run -p rf-sim --release --example raids -- --kind ... --standdown`):

@@ -4,7 +4,7 @@
 
 use super::orders::screen_rect;
 use super::panels::{unit_name, unit_profession};
-use super::{clip, col, list_row, panel, pretty, skill_level_name, text_button, wheel_over, BtnState};
+use super::{clip, col, list_row, panel, pretty, text_button, wheel_over, BtnState};
 use crate::game::{Game, Screen, Tool};
 use macroquad::prelude::*;
 use rf_core::{Pos, Squad, Unit, World};
@@ -30,7 +30,7 @@ pub fn best_combat_skill(u: &Unit) -> Option<(String, i32)> {
     let best = |set: &[&str]| u.skills.iter().filter(|k| set.contains(&k.id.as_str()) && k.rating > 0).max_by_key(|k| (k.rating, k.xp));
     best(WEAPON_SKILLS)
         .or_else(|| best(COMBAT_SKILLS))
-        .map(|k| (format!("{} {}", skill_level_name(k.rating), pretty(&k.id).to_lowercase()), k.rating))
+        .map(|k| (crate::ui::round9::skill_title(k), k.rating)) // [app9] DF skill names
 }
 
 /// Human text of one DF-like order string (`Station x,y,z`, `Kill <id>`, `Train`).
@@ -292,6 +292,9 @@ pub fn draw_military(g: &mut Game) {
         }
     }
     y += bh + 10.0 * s;
+    // [app9] Tabs: members, equipment (per-position uniforms), ammunition, patrol and barracks.
+    let y = crate::ui::round9::squad_tabs(g, rx, y);
+    let mut y = y;
     // Overlay lists (picker / kill targets) replace the member list while open.
     let area = Rect::new(rx, y, rw, r.y + r.h - pad - y);
     if g.mil.kill_list {
@@ -300,6 +303,10 @@ pub fn draw_military(g: &mut Game) {
     }
     if let Some(pos) = g.mil.picker {
         draw_picker(g, sid, pos, area);
+        return;
+    }
+    if g.r9.sq_tab > 0 {
+        crate::ui::round9::draw_squad_tab(g, sid, area); // [app9]
         return;
     }
     // Members.
@@ -373,7 +380,7 @@ pub fn draw_military(g: &mut Game) {
             if y > r.y + r.h - pad - lh {
                 break;
             }
-            g.font.draw(&clip(&uniform_text(&g.sim.world, e), maxc), rx, y, s, col::TEXT);
+            g.font.draw(&clip(&crate::ui::round9::entry_text(&g.sim.world, e), maxc), rx, y, s, col::TEXT);
             y += lh;
         }
     }
