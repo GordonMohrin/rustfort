@@ -169,6 +169,51 @@ fn real_export_matches_manifest() {
         assert!(w.hist_figs.iter().all(|h| !h.name.is_empty()));
     }
 
+    // round-8 data (exporter rev 2026-10-10e and later)
+    if rep.round8 {
+        assert!(!w.work_details.is_empty(), "round-8 export without work details");
+        let ids: std::collections::HashSet<i32> = w.units.iter().map(|u| u.id).collect();
+        let blds: std::collections::HashMap<i32, &str> = w.buildings.iter().map(|b| (b.id, b.kind.as_str())).collect();
+        for d in &w.work_details {
+            assert!(["Default", "EverybodyDoesThis", "NobodyDoesThis", "OnlySelectedDoesThis"].contains(&d.mode.as_str()), "{}: {}", d.name, d.mode);
+            assert!(d.assigned.iter().all(|u| ids.contains(u)));
+            for &u in &d.assigned {
+                assert!(w.units.iter().find(|x| x.id == u).unwrap().work_details.contains(&d.name));
+            }
+        }
+        for b in w.buildings.iter().filter(|b| b.kind == "Stockpile") {
+            let s = b.stockpile.as_ref().expect("stockpile settings");
+            for f in &s.filters {
+                let parts: Vec<&str> = f.splitn(3, '/').collect();
+                assert_eq!(parts.len(), 3, "pile {} filter {f}", b.id);
+                assert!(parts[0] == "misc" || s.categories.iter().any(|c| c == parts[0]), "pile {} filter {f} of a disabled category", b.id);
+            }
+            // every enabled category has at least one filter string (DF always has settings)
+            for c in &s.categories {
+                assert!(s.filters.iter().any(|f| f.starts_with(&format!("{c}/"))), "pile {} category {c} without filters", b.id);
+            }
+            assert!(s.give_to.iter().chain(&s.take_from).all(|l| blds.contains_key(l)));
+        }
+        for l in &w.locations {
+            assert!(["Temple", "Tavern", "Library", "Guildhall", "Hospital"].contains(&l.kind.as_str()) || !l.kind.is_empty(), "location {}", l.id);
+            assert!(l.zones.iter().all(|z| blds.get(z) == Some(&"Civzone")), "location {} zones {:?}", l.id, l.zones);
+            assert!(l.occupations.iter().all(|o| o.unit == -1 || ids.contains(&o.unit)));
+        }
+        assert!(w.crimes.iter().all(|c| !c.kind.is_empty() && c.year > 0));
+        for u in &w.units {
+            assert!(u.pet_owner == -1 || ids.contains(&u.pet_owner));
+            assert!(u.pasture == -1 || blds.get(&u.pasture) == Some(&"Civzone"));
+            assert!(u.pregnancy >= 0);
+            if u.flags.animal {
+                assert!(!u.training.is_empty(), "animal {} without training level", u.id);
+            }
+        }
+        assert_eq!(rep.stockpile_filters as i64, m.count("stockpile_filters").unwrap_or(0));
+        let x = rf_import::load_extras(&dir);
+        assert!(x.rooms.iter().all(|r| r.room_value == -1 || r.location_id >= 0));
+        assert!(x.animal_products.iter().any(|p| p.milkable.is_some()), "no milkable caste in the raws");
+    }
+
     // it is a fort: citizens exist, stand inside the map on walkable tiles (most of them)
     if m.map_complete {
         assert!(rep.citizens > 0);

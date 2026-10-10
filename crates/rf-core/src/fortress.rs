@@ -104,3 +104,59 @@ pub struct HaulStop {
     /// Departure conditions as DF-like text, e.g. `Leave when full`, `Wait 1 day`.
     pub conditions: Vec<String>,
 }
+
+/// [r8-import] Semantics of [`crate::StockpileSettings::filters`] (docs/EXPORT_FORMAT.md, "Stockpile
+/// filters"). Each string is `category/group/token`:
+/// - `category/group/TOKEN` enables one leaf, `category/group/*` the whole group, and
+///   `category/group/!TOKEN` excludes one leaf of a `*` group;
+/// - `category/options/NAME` is a switch such as `food/options/prepared_meals`;
+/// - `category/none/-` marks an enabled category with nothing enabled in it;
+/// - `misc/options/allow_organic` / `allow_inorganic` are pile-wide.
+///
+/// A category without any filter string accepts everything in it (exports before round 8 and
+/// piles made without detailed settings).
+impl crate::StockpileSettings {
+    fn has_category_filters(&self, category: &str) -> bool {
+        self.filters.iter().any(|f| f.len() > category.len() && f.starts_with(category) && f.as_bytes()[category.len()] == b'/')
+    }
+
+    /// Does this pile accept the leaf `token` of `category/group`? False if the category is off.
+    pub fn filter_allows(&self, category: &str, group: &str, token: &str) -> bool {
+        if !self.categories.iter().any(|c| c == category) {
+            return false;
+        }
+        if !self.has_category_filters(category) {
+            return true;
+        }
+        let (mut all, mut one, mut excluded) = (false, false, false);
+        for f in &self.filters {
+            let mut parts = f.splitn(3, '/');
+            let (Some(c), Some(g), Some(t)) = (parts.next(), parts.next(), parts.next()) else { continue };
+            if c != category || g != group {
+                continue;
+            }
+            if t == "*" {
+                all = true;
+            } else if let Some(x) = t.strip_prefix('!') {
+                excluded |= x == token;
+            } else {
+                one |= t == token;
+            }
+        }
+        one || (all && !excluded)
+    }
+
+    /// Is the switch `category/options/option` on? A category without filter strings counts as
+    /// fully enabled (true); so do the pile-wide `misc` options (`allow_organic`,
+    /// `allow_inorganic`) when there is no `misc/` string.
+    pub fn filter_option(&self, category: &str, option: &str) -> bool {
+        if category != "misc" && !self.categories.iter().any(|c| c == category) {
+            return false;
+        }
+        if !self.has_category_filters(category) {
+            return true;
+        }
+        let want = format!("{category}/options/{option}");
+        self.filters.iter().any(|f| *f == want)
+    }
+}

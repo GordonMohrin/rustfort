@@ -1740,6 +1740,7 @@ do
           if #out == before then add(c .. '/none/-') end
         end
         for _, m in ipairs(misc) do add('misc/options/' .. m) end
+        if #misc == 0 then add('misc/none/-') end   -- neither organic nor inorganic allowed
         r8.pile[bid] = { filters = out }
         r8.piles = r8.piles + 1
         r8.pile_leaves = r8.pile_leaves + #out
@@ -2561,7 +2562,7 @@ local function creature_raw_json(ri, source)
                                  'walk_speed', ji(caste_walk_speed(ri, ci, c) or 900), 'attacks', jarr(attacks),
                                  'body_parts', jarr(pj), 'flags', jarr(cflags),
                                  -- round-8 extras: animal products and husbandry numbers from the caste raws
-                                 'milkable', milk, 'grazer', ji(try(function() return c.misc.grazer end) or 0),
+                                 'milkable', milk, 'grazer', ji(flag(c.flags, 'GRAZER') and (try(function() return c.misc.grazer end) or 0) or -1),
                                  'shearable', jarr(shear), 'egg_materials', jarr(eggs),
                                  'clutch_size', jarr({ ji(try(function() return c.misc.clutch_size_min end) or 0),
                                                        ji(try(function() return c.misc.clutch_size_max end) or 0) }),
