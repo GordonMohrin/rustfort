@@ -56,7 +56,7 @@ fn pile(id: i32, x1: i16, y: i16, x2: i16, z: i16, cats: &[&str], bins: i32, bar
         center: Pos::new(x1, y, z),
         built: true,
         owner: -1,
-        stockpile: Some(StockpileSettings { categories: cats.iter().map(|s| s.to_string()).collect(), max_bins: bins, max_barrels: barrels, max_wheelbarrows: 0 }),
+        stockpile: Some(StockpileSettings { categories: cats.iter().map(|s| s.to_string()).collect(), max_bins: bins, max_barrels: barrels, max_wheelbarrows: 0, ..Default::default() }),
         ..Default::default()
     }
 }
