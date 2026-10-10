@@ -58,6 +58,7 @@
 
 use crate::combat::{AtkT, Role, WeapT, SIGHT};
 use crate::path::Goals;
+use crate::rng::Rng; // [audit-combat]
 use crate::{AnnouncementKind, Kind, Sim, Task, NONE};
 use rf_core::{Pos, Skill, Unit, UnitFlags};
 use std::collections::HashMap;
@@ -188,6 +189,9 @@ pub(crate) struct Mech {
     pub plate_until: u64,
     /// Levers and plates: linked target building ids.
     pub targets: Vec<i32>,
+    /// [audit-combat] Weapon traps: jammed by a victim stuck in the mechanism (wiki: 50 % per
+    /// kill) until a mechanic cleans it ("Clean Trap").
+    pub jammed: bool,
     applied: Vec<NavState>,
 }
 
@@ -442,6 +446,7 @@ impl Sim {
                 plate_citizens: has(f, "CITIZENS"),
                 plate_until: 0,
                 targets: if kind.is_trigger() { b.links.clone() } else { Vec::new() },
+                jammed: has(f, "JAMMED"),
                 applied,
             });
         }
@@ -840,15 +845,28 @@ impl Sim {
                     }
                 }
                 MechKind::WeaponTrap if trig => {
+                    if self.def.mechs[mi].jammed {
+                        continue; // [audit-combat] a jammed trap does nothing until cleaned
+                    }
                     self.def.stats.weapon_trap_triggers += 1;
                     let weapons = self.trap_items(mi, &["WEAPON", "TRAPCOMP"]);
+                    let mut struck = false;
                     for wi in weapons {
                         let hits = trapcomp_hits(&self.world.items[wi].subtype);
                         for _ in 0..hits {
                             if self.ai[s].kind == Kind::Dead {
                                 break;
                             }
-                            self.trap_attack(s, wi, None, "the weapon trap", tile, now);
+                            struck |= self.trap_attack(s, wi, None, "the weapon trap", tile, now);
+                        }
+                    }
+                    // [audit-combat] Wiki Weapon trap: "a 50% chance that a kill will result in the
+                    // victim getting stuck in the mechanism and cause the trap to jam" (only
+                    // kills by the trap itself, not later bleeding out).
+                    if struck && self.ai[s].kind == Kind::Dead {
+                        let mut r = Rng::for_unit(self.seed, s, now, 0x7A11);
+                        if r.chance(1, 2) {
+                            self.jam_trap(mi, tile, now);
                         }
                     }
                 }
@@ -1104,6 +1122,21 @@ impl Sim {
         g
     }
 
+    /// [audit-combat] A weapon trap jams; a mechanic gets a "Clean Trap" job (item -1).
+    fn jam_trap(&mut self, mi: usize, tile: u32, now: u64) {
+        let id = self.def.mechs[mi].id;
+        self.def.mechs[mi].jammed = true;
+        if let Some(b) = self.world.buildings.iter_mut().find(|b| b.id == id) {
+            set_flag(&mut b.flags, "JAMMED", true);
+        }
+        self.combat.stats.traps_jammed += 1;
+        if !self.def.reload_jobs.iter().any(|j| j.trap == id) {
+            self.def.reload_jobs.push(ReloadJob { trap: id, claimed: NONE, item: -1, retry_at: 0 });
+        }
+        let p = self.world.pos_of(tile as usize);
+        self.announce(now, "A weapon trap has jammed.".into(), Some(p), AnnouncementKind::Info);
+    }
+
     /// Cage and stone-fall traps without ammunition get a re-arm job.
     fn post_reload_jobs(&mut self) {
         for mi in 0..self.def.mechs.len() {
@@ -1180,6 +1213,15 @@ impl Sim {
                 self.def.reload_jobs[k].retry_at = now + 200;
                 continue;
             }
+            if self.def.mechs[mi].kind == MechKind::WeaponTrap {
+                // [audit-combat] "Clean Trap": walk to the jammed trap, nothing to fetch.
+                self.def.reload_jobs[k].claimed = s as u32;
+                self.def.reload_jobs[k].item = -1;
+                self.ai[s].task = Task::LoadTrap(j.trap, -1);
+                let g = self.building_goals(j.trap);
+                self.request_path(s, g, now);
+                return true;
+            }
             let from = self.nav.xyz(self.ai[s].pos as usize);
             let Some(item) = self.reload_item(self.def.mechs[mi].kind, c, from) else {
                 self.def.reload_jobs[k].retry_at = now + rf_core::TICKS_PER_DAY as u64;
@@ -1203,6 +1245,26 @@ impl Sim {
             self.decide(s, now);
             return;
         };
+        if item < 0 {
+            // [audit-combat] Clean a jammed weapon trap.
+            if !self.building_goals(trap).as_slice().contains(&self.ai[s].pos) {
+                let g = self.building_goals(trap);
+                self.request_path(s, g, now);
+                return;
+            }
+            if let Some(&mi) = self.def.by_id.get(&trap) {
+                self.def.mechs[mi].jammed = false;
+            }
+            if let Some(b) = self.world.buildings.iter_mut().find(|b| b.id == trap) {
+                set_flag(&mut b.flags, "JAMMED", false);
+            }
+            self.def.reload_jobs.remove(k);
+            self.def.stats.traps_reloaded += 1;
+            self.add_xp(s, "MECHANICS", 30);
+            self.ai[s].task = Task::Idle;
+            self.decide(s, now);
+            return;
+        }
         if self.ai[s].carrying != item {
             if !self.item_reachable_here(s, item) {
                 self.cancel_task(s);
@@ -1256,7 +1318,7 @@ impl Sim {
     /// [cancel hook] The mechanic gave up: drop what it carries, the job waits.
     pub(crate) fn defense_cancel_reload(&mut self, s: usize, trap: i32, item: i32) {
         let now = self.ticks;
-        if self.ai[s].carrying == item {
+        if item >= 0 && self.ai[s].carrying == item { // [audit-combat] item -1: Clean Trap
             let here = self.ai[s].pos;
             self.drop_item(s, item, here);
         }
@@ -1274,6 +1336,7 @@ impl Sim {
     pub(crate) fn defense_reload_caption(&self, trap: i32) -> &'static str {
         match self.def.by_id.get(&trap).map(|&m| self.def.mechs[m].kind) {
             Some(MechKind::StoneFallTrap) => "Load Stone Trap",
+            Some(MechKind::WeaponTrap) => "Clean Trap", // [audit-combat]
             _ => "Load Cage Trap",
         }
     }
@@ -1787,6 +1850,54 @@ mod tests {
         sim.move_to(dw, t, now);
         sim.run_ticks(2);
         assert_eq!(sim.defense_stats().weapon_trap_triggers, 1);
+    }
+
+    #[test]
+    fn weapon_trap_jams_on_kills_and_a_mechanic_cleans_it() {
+        // [audit-combat] Wiki Weapon trap: 50 % of kills jam the trap; a mechanic cleans it.
+        let (mut w, gap) = walled_hall();
+        w.buildings.push(building(512, "Trap", "WeaponTrap", gap.x, gap.y, gap.x, gap.y, gap.z));
+        for k in 0..10 {
+            item(&mut w, 9200 + k, "WEAPON", "ITEM_WEAPON_AXE_BATTLE", "INORGANIC:IRON", gap, 512);
+        }
+        w.units[0].labors.push("MECHANIC".into());
+        let mut sim = quiet(w);
+        let mi = sim.def.by_id[&512];
+        let t = sim.world.idx(gap).unwrap() as u32;
+        let mut kills = 0;
+        for _ in 0..16 {
+            let g = goblin_at(&mut sim, gap.offset(-1, 0, 0));
+            let s = sim.unit_slot[&g];
+            let now = sim.ticks();
+            sim.move_to(s, t, now);
+            sim.run_ticks(2);
+            if sim.world.unit(g).unwrap().flags.dead {
+                kills += 1;
+            } else {
+                let now = sim.ticks();
+                sim.combat_kill(s, now, "has been struck down");
+            }
+            if sim.def.mechs[mi].jammed {
+                break;
+            }
+        }
+        assert!(sim.def.mechs[mi].jammed, "{kills} trap kills, none jammed");
+        assert!(sim.combat_stats().traps_jammed == 1);
+        assert!(sim.world.building(512).unwrap().flags.iter().any(|f| f == "JAMMED"));
+        // A jammed trap does nothing.
+        let attacks = sim.defense_stats().trap_attacks;
+        let g = goblin_at(&mut sim, gap.offset(-1, 0, 0));
+        let s = sim.unit_slot[&g];
+        let now = sim.ticks();
+        sim.move_to(s, t, now);
+        sim.run_ticks(2);
+        assert_eq!(sim.defense_stats().trap_attacks, attacks);
+        let now = sim.ticks();
+        sim.combat_kill(s, now, "has been struck down");
+        // The mechanic cleans it ("Clean Trap").
+        sim.run_ticks(3000);
+        assert!(!sim.def.mechs[mi].jammed, "{:?}", sim.unit_status(1));
+        assert!(!sim.world.building(512).unwrap().flags.iter().any(|f| f == "JAMMED"));
     }
 
     #[test]
