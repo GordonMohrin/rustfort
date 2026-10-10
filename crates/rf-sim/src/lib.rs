@@ -72,6 +72,7 @@ pub mod gen;
 pub mod items;
 pub mod nav;
 pub mod path;
+mod perf; // [perf]
 pub mod production;
 pub use production::{Census, PlantInfo, ProductionReport};
 pub mod social; // [social]
@@ -510,7 +511,7 @@ pub struct Sim {
     pile_at: HashMap<u32, (u32, u32)>,
     pile_cats: u32,
     imeta: Vec<ItemMeta>,
-    item_idx: HashMap<i32, u32>,
+    item_idx: perf::IdMap, // [perf] dense id -> index table
     next_item_id: i32,
     drinks: Vec<i32>,
     foods: Vec<i32>,
@@ -518,6 +519,8 @@ pub struct Sim {
     haul: Vec<i32>,
     /// Item index of each `haul` entry (valid until the next compaction, which rebuilds it).
     haul_ix: Vec<u32>,
+    /// [perf] Category and cached walk component of each `haul` entry.
+    haul_cat: Vec<perf::HaulCache>,
     haul_pos: HashMap<i32, u32>,
     haul_cnt: [u32; 17],
     contents: HashMap<i32, Vec<i32>>,
@@ -622,12 +625,13 @@ impl Sim {
             pile_at: HashMap::new(),
             pile_cats: 0,
             imeta: Vec::new(),
-            item_idx: HashMap::new(),
+            item_idx: perf::IdMap::default(), // [perf]
             next_item_id: 1,
             drinks: Vec::new(),
             foods: Vec::new(),
             haul: Vec::new(),
             haul_ix: Vec::new(),
+            haul_cat: Vec::new(), // [perf]
             haul_pos: HashMap::new(),
             haul_cnt: [0; 17],
             chunks: Vec::new(),
@@ -2571,36 +2575,7 @@ impl Sim {
     }
 
     fn compact_items(&mut self) {
-        self.items_dirty = false;
-        let n = self.world.items.len();
-        let mut w = 0;
-        for r in 0..n {
-            if !self.imeta[r].dead {
-                self.world.items.swap(w, r);
-                self.imeta.swap(w, r);
-                w += 1;
-            }
-        }
-        self.world.items.truncate(w);
-        self.imeta.truncate(w);
-        self.item_idx.clear();
-        for (i, it) in self.world.items.iter().enumerate() {
-            self.item_idx.insert(it.id, i as u32);
-        }
-        let idx = &self.item_idx;
-        self.drinks.retain(|id| idx.contains_key(id));
-        self.foods.retain(|id| idx.contains_key(id));
-        self.haul.retain(|id| idx.contains_key(id));
-        self.haul_pos.clear();
-        self.haul_ix.clear();
-        for (p, &id) in self.haul.iter().enumerate() {
-            self.haul_pos.insert(id, p as u32);
-            self.haul_ix.push(idx[&id]);
-        }
-        self.contents.retain(|cid, _| idx.contains_key(cid));
-        for v in self.contents.values_mut() {
-            v.retain(|id| idx.contains_key(id));
-        }
+        self.compact_items_fast(); // [perf] same result, see perf.rs
     }
 
     fn pile_occ_add(&mut self, tile: u32, d: i32) {
@@ -2658,6 +2633,7 @@ impl Sim {
     fn rebuild_haul(&mut self) {
         self.haul.clear();
         self.haul_ix.clear();
+        self.haul_cat.clear(); // [perf]
         self.haul_pos.clear();
         self.haul_cnt = [0; 17];
         for idx in 0..self.world.items.len() {
@@ -2680,6 +2656,7 @@ impl Sim {
         self.haul_pos.insert(id, self.haul.len() as u32);
         self.haul.push(id);
         self.haul_ix.push(idx as u32);
+        self.haul_cat.push(perf::HaulCache::new(cat)); // [perf]
         self.haul_cnt[cat as usize] += 1;
         self.epoch_haul += 1;
     }
@@ -2689,6 +2666,7 @@ impl Sim {
             let p = p as usize;
             self.haul.swap_remove(p);
             self.haul_ix.swap_remove(p);
+            self.haul_cat.swap_remove(p); // [perf]
             if p < self.haul.len() {
                 self.haul_pos.insert(self.haul[p], p as u32);
             }
@@ -2748,29 +2726,10 @@ impl Sim {
             return false;
         }
         let up = self.nav.xyz(pos);
+        let bests = self.haul_best_per_cat(want, up, c, now); // [perf] one scan, same result
         while want != 0 {
-            let mut best = (i32::MAX, i32::MAX, 0usize);
-            for (k, &id) in self.haul.iter().enumerate() {
-                let idx = self.haul_ix[k] as usize;
-                let m = &self.imeta[idx];
-                if want & m.cat.bit() == 0 || m.reserved > 0 || m.blocked_until > now {
-                    continue;
-                }
-                let t = match self.world.idx(self.world.items[idx].pos) {
-                    Some(t) => t,
-                    None => continue,
-                };
-                let d = manhattan(up, self.nav.xyz(t));
-                if (d, id) >= (best.0, best.1) || self.nav.comp_near(t) != c {
-                    continue;
-                }
-                best = (d, id, t);
-            }
-            if best.0 == i32::MAX {
-                return false;
-            }
-            let (id, t) = (best.1, best.2);
-            let cat = self.imeta[self.item_idx[&id] as usize].cat;
+            let Some(cat) = Sim::haul_pick(&bests, want) else { return false }; // [perf]
+            let (id, t) = (bests[cat as usize].1, bests[cat as usize].2); // [perf]
             let dest = match self.store_dest(id, cat, self.nav.xyz(t), c) { // [industry] bins/barrels
                 Some(d) => d,
                 None => {

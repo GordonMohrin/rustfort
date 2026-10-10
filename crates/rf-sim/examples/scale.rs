@@ -13,11 +13,33 @@
 //!
 //! After `--warm` ticks, `--ticks` ticks are measured (default one game month). Printed per N:
 //! ticks/s, phase times (us per tick), and counters per 1000 ticks (path searches, A* nodes,
-//! path cache hits, decisions and job/haul/need/production searches, steps).
+//! path cache hits, decisions and job/haul/need/production searches, steps). `Mcyc/1k` is the
+//! main thread's CPU cycles per 1000 ticks (Windows), which other busy programs disturb much
+//! less than wall-clock ticks/s; at 4.4 GHz, 88 Mcyc/1k ticks are 50 000 ticks/s.
 
 use rf_sim::Sim;
 use std::path::PathBuf;
 use std::time::Instant;
+
+/// CPU cycles of the calling thread (Windows `QueryThreadCycleTime`), robust against other
+/// programs competing for the CPU; 0 elsewhere.
+#[cfg(windows)]
+fn thread_cycles() -> u64 {
+    extern "system" {
+        fn GetCurrentThread() -> isize;
+        fn QueryThreadCycleTime(thread: isize, cycles: *mut u64) -> i32;
+    }
+    let mut c = 0u64;
+    // SAFETY: plain Win32 calls with a valid out pointer; the pseudo handle needs no closing.
+    unsafe {
+        QueryThreadCycleTime(GetCurrentThread(), &mut c);
+    }
+    c
+}
+#[cfg(not(windows))]
+fn thread_cycles() -> u64 {
+    0
+}
 
 fn splitmix(x: &mut u64) -> u64 {
     *x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
@@ -73,6 +95,8 @@ struct Row {
     citizens: usize,
     alive_end: usize,
     tps: f64,
+    /// Main-thread Mcycles per 1000 ticks.
+    mcyc: f64,
     phases: Vec<(&'static str, f64)>,
     per_k: Vec<(&'static str, f64)>,
 }
@@ -121,6 +145,7 @@ fn main() {
         let mut phases: Vec<(&'static str, f64)> = Vec::new();
         let mut done = 0u64;
         let mut secs = 0.0;
+        let c0 = thread_cycles();
         while done < ticks {
             let n = (ticks - done).min(100);
             let t = Instant::now();
@@ -136,6 +161,7 @@ fn main() {
             sim.drain_announcements();
         }
         let s1 = sim.stats();
+        let mcyc = (thread_cycles() - c0) as f64 / 1e6 / (done as f64 / 1000.0);
         let k = done as f64 / 1000.0;
         let per_k = vec![
             ("paths", (s1.paths - s0.paths) as f64 / k),
@@ -156,7 +182,7 @@ fn main() {
         let alive_end = sim.world.citizens().count();
         let tps = done as f64 / secs.max(1e-9);
         println!(
-            "+{extra:<4} citizens {citizens:>4} -> {alive_end:>4}  units {:>4}  items {:>6}  |  {tps:>8.0} ticks/s  (Sim::new {new_s:.2}s, warm-up {warm} ticks {:.0} ticks/s)  hash {:016x}",
+            "+{extra:<4} citizens {citizens:>4} -> {alive_end:>4}  units {:>4}  items {:>6}  |  {tps:>8.0} ticks/s  {mcyc:>6.1} Mcyc/1k ticks  (Sim::new {new_s:.2}s, warm-up {warm} ticks {:.0} ticks/s)  hash {:016x}",
             sim.world.units.len(),
             sim.world.items.len(),
             warm as f64 / warm_s.max(1e-9),
@@ -166,16 +192,16 @@ fn main() {
         println!("      us/tick: {}", line.join("  "));
         let line: Vec<String> = per_k.iter().map(|(n, v)| format!("{n} {v:.1}")).collect();
         println!("      per 1k ticks: {}", line.join("  "));
-        rows.push(Row { extra, citizens, alive_end, tps, phases, per_k });
+        rows.push(Row { extra, citizens, alive_end, tps, mcyc, phases, per_k });
     }
     println!();
-    println!("{:>6} {:>8} {:>8} {:>10}   {}", "extra", "citizens", "alive", "ticks/s", "top phases (us/tick)");
+    println!("{:>6} {:>8} {:>8} {:>10} {:>12}   {}", "extra", "citizens", "alive", "ticks/s", "Mcyc/1k", "top phases (us/tick)");
     for r in &rows {
         let mut ph = r.phases.clone();
         ph.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
         let ticks = ticks as f64;
         let top: Vec<String> = ph.iter().take(4).map(|(n, s)| format!("{n} {:.1}", s / ticks * 1e6)).collect();
         let paths = r.per_k.iter().find(|p| p.0 == "paths").map(|p| p.1).unwrap_or(0.0);
-        println!("{:>6} {:>8} {:>8} {:>10.0}   {}  | paths/1k {paths:.0}", r.extra, r.citizens, r.alive_end, r.tps, top.join(", "));
+        println!("{:>6} {:>8} {:>8} {:>10.0} {:>12.1}   {}  | paths/1k {paths:.0}", r.extra, r.citizens, r.alive_end, r.tps, r.mcyc, top.join(", "));
     }
 }

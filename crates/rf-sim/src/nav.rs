@@ -49,6 +49,8 @@ pub struct Nav {
     blocked: Vec<u64>,
     any_blocked: bool,
     pub rebuilds: u64,
+    /// [perf] Bumped on every change of flags or components (cache key for derived data).
+    pub version: u64,
     // [defense] Building overrides (bit sets, allocated on first use): lowered bridges and
     // hatches give a floor over open space; locked hatches block stairs/ramps through them.
     floor_force: Vec<u64>,
@@ -86,6 +88,7 @@ impl Nav {
             blocked,
             any_blocked: !blocked_tiles.is_empty(),
             rebuilds: 0,
+            version: 0, // [perf]
             floor_force: Vec::new(), // [defense]
             novert: Vec::new(),      // [defense]
             any_override: false,     // [defense]
@@ -336,6 +339,7 @@ impl Nav {
 
     /// Full flood-fill relabelling of all walkable tiles.
     pub fn rebuild_components(&mut self) {
+        self.version += 1; // [perf]
         self.comp.iter_mut().for_each(|c| *c = 0);
         self.parent.clear();
         self.parent.push(0);
@@ -371,6 +375,7 @@ impl Nav {
     /// Recompute flags in the 3x3x3 box around a changed tile and merge components.
     /// Returns true if something walkable was lost (components may now be split).
     pub fn update_around(&mut self, tiles: &[Tile], x: usize, y: usize, z: usize) -> bool {
+        self.version += 1; // [perf]
         let mut lost = false;
         let (x0, x1) = (x.saturating_sub(1), (x + 1).min(self.dx - 1));
         let (y0, y1) = (y.saturating_sub(1), (y + 1).min(self.dy - 1));
