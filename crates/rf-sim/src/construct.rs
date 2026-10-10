@@ -37,6 +37,8 @@
 //! - **Carve fortification**: smoothed natural walls become a fortification of the same stone.
 //! - **Carve track**: natural stone floors and constructed floors get `*FloorTrack*` tiletypes;
 //!   the directions follow the dragged line (ends get one direction, like DF).
+//! - Pending carve designations are kept in `World::carve_designations` (smooth/engrave ones in
+//!   the tile flags), so they survive save/load.
 //! - **Traffic** ([`Sim::set_traffic`]): the tile bits feed the A* costs (high 1, normal 2, low 5,
 //!   restricted 25); changing them recomputes the navigation flags and clears the path cache.
 //! - **Item designations** ([`Sim::set_item_flag`]): forbidden items are not hauled, eaten, used
@@ -318,6 +320,16 @@ impl Sim {
                 self.world.tiles[i].flags &= !mask;
             }
         }
+        // [audit-eco] Carve fortification / track designations saved in the world.
+        let carve = std::mem::take(&mut self.world.carve_designations);
+        for d in carve {
+            let k = if d.track == 0 { CK::CarveFort } else { CK::CarveTrack };
+            if let Some(i) = self.world.idx(d.pos) {
+                if self.cx_detail_ok(k, i) && !self.cx.at.contains_key(&(i as u32)) {
+                    self.cx_add(k, i as u32, -1, -1, d.track);
+                }
+            }
+        }
         // Room values count engravings, which are indexed only now.
         self.social_revalue_rooms();
     }
@@ -347,6 +359,12 @@ impl Sim {
             self.cx.dump_of.insert(item, j);
         } else {
             self.cx.at.insert(tile, j);
+        }
+        if matches!(kind, CK::CarveFort | CK::CarveTrack) {
+            // [audit-eco] Kept in the world so that a save keeps the designation.
+            let pos = self.world.pos_of(tile as usize);
+            let track = if kind == CK::CarveTrack { track.max(1) } else { 0 };
+            self.world.carve_designations.push(rf_core::CarveDesignation { pos, track });
         }
         self.cx.open += 1;
         self.cx.epoch += 1;
@@ -384,6 +402,10 @@ impl Sim {
         match job.kind {
             CK::Smooth => t.flags &= !tile_flags::DESIG_SMOOTH,
             CK::Engrave => t.flags &= !tile_flags::DESIG_ENGRAVE,
+            CK::CarveFort | CK::CarveTrack => {
+                let pos = self.world.pos_of(job.tile as usize);
+                self.world.carve_designations.retain(|d| d.pos != pos);
+            }
             _ => {}
         }
         if job.bid >= 0 {
@@ -1933,6 +1955,26 @@ mod tests {
         assert_eq!(sim.world.tt(Pos::new(20, 26, hz)).direction, "E");
         assert_eq!(sim.world.tt(Pos::new(21, 26, hz)).direction, "EW");
         assert_eq!(sim.world.tt(Pos::new(22, 26, hz)).direction, "W");
+    }
+
+    #[test]
+    fn carve_designations_survive_save_and_load() {
+        // [audit-eco] Before: carve fortification/track designations lived only in the job list
+        // and were lost on save/load.
+        let w = world();
+        let hz = hall_z();
+        let mut sim = Sim::new(w, 7);
+        assert_eq!(sim.designate_detail(Pos::new(20, 26, hz), Pos::new(22, 26, hz), DetailKind::CarveTrack), 3);
+        assert_eq!(sim.world.carve_designations.len(), 3);
+        // "Save" right away and load into a fresh simulation.
+        let saved = sim.world.clone();
+        let mut sim = Sim::new(saved, 7);
+        assert_eq!(sim.construct_report().open_jobs, 3, "designations restored as jobs");
+        assert!(run_until(&mut sim, 40_000, |s| s.construct_report().tracks == 3));
+        assert_eq!(sim.world.tt(Pos::new(20, 26, hz)).direction, "E");
+        assert_eq!(sim.world.tt(Pos::new(21, 26, hz)).direction, "EW");
+        assert_eq!(sim.world.tt(Pos::new(22, 26, hz)).direction, "W");
+        assert!(sim.world.carve_designations.is_empty(), "finished designations are removed");
     }
 
     #[test]

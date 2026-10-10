@@ -120,6 +120,9 @@ pub struct World {
     /// [construct] Finished constructions built in the sim (DF `world.constructions`).
     #[serde(default)]
     pub constructions: Vec<Construction>,
+    /// [audit-eco] Pending carve-fortification / carve-track designations.
+    #[serde(default)]
+    pub carve_designations: Vec<CarveDesignation>,
 }
 
 impl World {
