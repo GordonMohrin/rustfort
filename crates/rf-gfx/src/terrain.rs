@@ -191,6 +191,14 @@ pub(crate) struct BldGfx {
     /// Lowered bridges per family (stone, wood, metal, glass):
     /// [NS_W, NS_CENTER, NS_E, NS_1, WE_N, WE_CENTER, WE_S, WE_1, 1x1].
     pub bridge: [[Option<Sprite>; 9]; 4],
+    /// Raised bridges per family and raise direction (N, S, W, E): the wall pieces along the
+    /// raised edge [first end, middle, last end, one tile] (N/S edges run west-east: W, CENTER,
+    /// E, 1; W/E edges run north-south: N, CENTER, S, 1).
+    pub bridge_raised: [[[Option<Sprite>; 4]; 4]; 4],
+    /// Raised 1x1 bridges per family and direction (N, S, W, E).
+    pub bridge_raised_1x1: [[Option<Sprite>; 4]; 4],
+    /// Occupied cage items per family (wood, metal, glass): the cage a caught creature sits in.
+    pub cage_occupied: [Option<Sprite>; 3],
     pub road_dirt: Option<Sprite>,
     pub road_paved: Option<Sprite>,
 }
@@ -445,6 +453,16 @@ impl Tables {
             for (i, suf) in ["NS_W", "NS_CENTER", "NS_E", "NS_1", "WE_N", "WE_CENTER", "WE_S", "WE_1", "1"].iter().enumerate() {
                 b.bridge[fi][i] = n(&format!("BLD_BRIDGE_{fam}_{suf}"));
             }
+            for (di, d) in ["N", "S", "W", "E"].iter().enumerate() {
+                let ends: [&str; 2] = if di < 2 { ["W", "E"] } else { ["N", "S"] };
+                for (pi, piece) in [ends[0], "CENTER", ends[1], "1"].iter().enumerate() {
+                    b.bridge_raised[fi][di][pi] = n(&format!("BLD_BRIDGE_{fam}_RAISED_{d}_{piece}"));
+                }
+                b.bridge_raised_1x1[fi][di] = n(&format!("BLD_BRIDGE_{fam}_1x1_RAISE_{d}"));
+            }
+        }
+        for (i, fam) in ["WOOD", "METAL", "GLASS"].iter().enumerate() {
+            b.cage_occupied[i] = n(&format!("ITEM_CAGE_{fam}_OCCUPIED")).or(n(&format!("ITEM_CAGE_{fam}")));
         }
         t.bld = b;
         t.remains = n("ITEM_REMAINS");
@@ -1315,32 +1333,19 @@ pub(crate) fn building(g: &Gfx, world: &World, b: &Building, p: Pos, out: &mut V
                 MatClass::Glass => 3,
                 _ => 0,
             };
-            let set = &bl.bridge[fam];
-            let (w, h) = (b.x2 - b.x1 + 1, b.y2 - b.y1 + 1);
-            // Lowered bridge. The span direction is not exported; a bridge longer north-south
-            // than wide (or square) is drawn as a north-south span (estimate).
-            let i = if w == 1 && h == 1 {
-                8
-            } else if h >= w {
-                if w == 1 {
-                    3
-                } else if p.x == b.x1 {
-                    0
-                } else if p.x == b.x2 {
-                    2
-                } else {
-                    1
+            match bridge_piece(b, p) {
+                BridgePiece::Lowered(i) => {
+                    let set = &bl.bridge[fam];
+                    rc(set[i].or(set[1]).or(bl.bridge[0][i]), out);
                 }
-            } else if h == 1 {
-                7
-            } else if p.y == b.y1 {
-                4
-            } else if p.y == b.y2 {
-                6
-            } else {
-                5
-            };
-            rc(set[i].or(set[1]).or(bl.bridge[0][i]), out);
+                BridgePiece::Raised(d, k) => {
+                    let s = bl.bridge_raised[fam][d][k].or(bl.bridge_raised[fam][d][1]).or(bl.bridge_raised[0][d][k]);
+                    rc(s, out);
+                }
+                BridgePiece::Raised1x1(d) => rc(bl.bridge_raised_1x1[fam][d].or(bl.bridge_raised_1x1[0][d]), out),
+                // Raised bridges leave the rest of their area open; retracted ones all of it.
+                BridgePiece::Open => {}
+            }
         }
         k => {
             // Furniture: same sprites as the item lying around. Item cache is keyed by upper-case kind.
@@ -1360,5 +1365,133 @@ pub(crate) fn building(g: &Gfx, world: &World, b: &Building, p: Pos, out: &mut V
                 }
             }
         }
+    }
+}
+
+/// [round 5] Which part of a bridge to draw at a tile.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BridgePiece {
+    /// Lowered span piece: index into `BldGfx::bridge` (NS_W, NS_CENTER, NS_E, NS_1, WE_N,
+    /// WE_CENTER, WE_S, WE_1, 1x1).
+    Lowered(usize),
+    /// Raised wall piece: direction (N, S, W, E) and piece (first end, middle, last end, one).
+    Raised(usize, usize),
+    Raised1x1(usize),
+    /// Nothing of the bridge here (raised away from this tile, or retracted).
+    Open,
+}
+
+fn has_flag(b: &Building, f: &str) -> bool {
+    b.flags.iter().any(|x| x == f)
+}
+
+/// The bridge piece at `p`. DF: a raised drawbridge stands as a wall on the edge in its raise
+/// direction (the whole bridge if it is one tile across that way) and the rest of its area is
+/// whatever lies below; a retracted bridge is gone; a lowered one is a floor whose planks run
+/// along its direction. Same edge rule as the sim (`rf-sim` defense).
+pub(crate) fn bridge_piece(b: &Building, p: Pos) -> BridgePiece {
+    let (w, h) = (b.x2 - b.x1 + 1, b.y2 - b.y1 + 1);
+    let dir = b.direction.to_ascii_uppercase();
+    let retract = dir.starts_with("RETRACT") || b.subtype.to_ascii_uppercase().contains("RETRACT");
+    let up = has_flag(b, "RAISED") || has_flag(b, "CLOSED") || has_flag(b, "RETRACTED");
+    let d = match dir.as_str() {
+        "N" | "UP" | "NORTH" => Some(0usize),
+        "S" | "DOWN" | "SOUTH" => Some(1),
+        "W" | "LEFT" | "WEST" => Some(2),
+        "E" | "RIGHT" | "EAST" => Some(3),
+        _ => None,
+    };
+    if up {
+        if retract {
+            return BridgePiece::Open;
+        }
+        let Some(d) = d else { return BridgePiece::Open };
+        if w == 1 && h == 1 {
+            return BridgePiece::Raised1x1(d);
+        }
+        let on_edge = match d {
+            0 => h == 1 || p.y == b.y1,
+            1 => h == 1 || p.y == b.y2,
+            2 => w == 1 || p.x == b.x1,
+            _ => w == 1 || p.x == b.x2,
+        };
+        if !on_edge {
+            return BridgePiece::Open;
+        }
+        // Position along the edge.
+        let (along, lo, hi) = if d < 2 { (p.x, b.x1, b.x2) } else { (p.y, b.y1, b.y2) };
+        let k = if lo == hi {
+            3
+        } else if along == lo {
+            0
+        } else if along == hi {
+            2
+        } else {
+            1
+        };
+        return BridgePiece::Raised(d, k);
+    }
+    if w == 1 && h == 1 {
+        return BridgePiece::Lowered(8);
+    }
+    // Lowered: the span runs in the raise direction (a bridge raising north spans north-south);
+    // without a direction, along the longer side (estimate).
+    let ns = match d {
+        Some(0) | Some(1) => true,
+        Some(_) => false,
+        None => h >= w,
+    };
+    let i = if ns {
+        if w == 1 {
+            3
+        } else if p.x == b.x1 {
+            0
+        } else if p.x == b.x2 {
+            2
+        } else {
+            1
+        }
+    } else if h == 1 {
+        7
+    } else if p.y == b.y1 {
+        4
+    } else if p.y == b.y2 {
+        6
+    } else {
+        5
+    };
+    BridgePiece::Lowered(i)
+}
+
+#[cfg(test)]
+mod bridge_tests {
+    use super::*;
+
+    fn br(x1: i16, y1: i16, x2: i16, y2: i16, dir: &str, flags: &[&str]) -> Building {
+        Building { kind: "Bridge".into(), x1, y1, x2, y2, direction: dir.into(), flags: flags.iter().map(|s| s.to_string()).collect(), built: true, ..Default::default() }
+    }
+
+    #[test]
+    fn raised_bridge_is_a_wall_on_its_edge() {
+        // Gordon's bridge 10972: 3x3, raises west.
+        let b = br(99, 126, 101, 128, "W", &["HAS_SUPPORT", "RAISED"]);
+        assert_eq!(bridge_piece(&b, Pos::new(99, 126, 0)), BridgePiece::Raised(2, 0));
+        assert_eq!(bridge_piece(&b, Pos::new(99, 127, 0)), BridgePiece::Raised(2, 1));
+        assert_eq!(bridge_piece(&b, Pos::new(99, 128, 0)), BridgePiece::Raised(2, 2));
+        assert_eq!(bridge_piece(&b, Pos::new(100, 127, 0)), BridgePiece::Open);
+        // One tile across in its direction: the whole bridge stands up.
+        let b = br(5, 5, 7, 5, "N", &["RAISED"]);
+        assert_eq!(bridge_piece(&b, Pos::new(5, 5, 0)), BridgePiece::Raised(0, 0));
+        assert_eq!(bridge_piece(&b, Pos::new(6, 5, 0)), BridgePiece::Raised(0, 1));
+        let b = br(5, 5, 5, 5, "S", &["RAISED"]);
+        assert_eq!(bridge_piece(&b, Pos::new(5, 5, 0)), BridgePiece::Raised1x1(1));
+        // Lowered: planks along the direction.
+        let b = br(99, 126, 101, 128, "W", &["LOWERED"]);
+        assert_eq!(bridge_piece(&b, Pos::new(100, 126, 0)), BridgePiece::Lowered(4));
+        let b = br(10, 10, 10, 10, "S", &["LOWERED"]);
+        assert_eq!(bridge_piece(&b, Pos::new(10, 10, 0)), BridgePiece::Lowered(8));
+        // Retracted: gone.
+        let b = br(1, 1, 3, 1, "Retracting", &["RETRACTED"]);
+        assert_eq!(bridge_piece(&b, Pos::new(2, 1, 0)), BridgePiece::Open);
     }
 }

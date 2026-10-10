@@ -18,6 +18,7 @@ pub mod panels;
 pub mod psyche;
 pub mod reports;
 pub mod round4; // [round 4]
+pub mod round5; // [round 5]
 pub mod toolbar;
 pub mod topbar;
 pub mod trade; // [round 4]

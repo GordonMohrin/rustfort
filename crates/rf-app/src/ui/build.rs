@@ -21,6 +21,16 @@ pub fn build_categories(opts: &[BuildOption]) -> Vec<&'static str> {
     v
 }
 
+/// [round 5] The build menu's tabs: the sim's categories plus DF's Constructions (walls,
+/// floors, stairs, ...) after the workshop and furnace groups. Options the sim itself files
+/// under "Constructions" are not shown twice.
+pub fn menu_categories(opts: &[BuildOption]) -> Vec<&'static str> {
+    let mut v: Vec<&'static str> = build_categories(opts).into_iter().filter(|c| *c != super::round5::CONSTR_CAT).collect();
+    let at = v.iter().position(|c| !matches!(*c, "Workshops" | "Furnaces")).unwrap_or(v.len());
+    v.insert(at, super::round5::CONSTR_CAT);
+    v
+}
+
 /// Footprint (top-left, bottom-right) of option `o` placed at the mouse tile `a`, or dragged
 /// from `a` to `b` for dragged options. Fixed footprints are centered on the mouse like DF.
 pub fn footprint(o: &BuildOption, a: Pos, b: Pos) -> (Pos, Pos) {
@@ -158,16 +168,18 @@ fn row_h(s: f32) -> f32 {
 pub fn draw_build_menu(g: &mut Game, toolbar_y: f32) -> f32 {
     let s = g.ui.scale;
     let pad = 6.0 * s;
-    let cats = build_categories(&g.build_opts);
+    let cats = menu_categories(&g.build_opts);
     if cats.is_empty() {
         return toolbar_y;
     }
     g.build_cat = g.build_cat.min(cats.len() - 1);
     let cur_cat = cats[g.build_cat];
-    let opts: Vec<usize> = (0..g.build_opts.len()).filter(|&i| g.build_opts[i].category == cur_cat).collect();
+    let constr = cur_cat == super::round5::CONSTR_CAT;
+    let opts: Vec<usize> = if constr { Vec::new() } else { (0..g.build_opts.len()).filter(|&i| g.build_opts[i].category == cur_cat).collect() };
+    let n_opts = if constr { super::round5::CONSTRUCTIONS.len() } else { opts.len() };
     let cell_w = 214.0 * s;
-    let cols = 4usize.min(opts.len().max(1));
-    let rows = opts.len().div_ceil(cols).max(1);
+    let cols = 4usize.min(n_opts.max(1));
+    let rows = n_opts.div_ceil(cols).max(1);
     let tab_w: Vec<f32> = cats.iter().map(|c| 32.0 * s + 14.0 * s + g.font.width(c, s)).collect();
     let tabs_w: f32 = tab_w.iter().sum::<f32>() + (cats.len() as f32 - 1.0) * 4.0 * s;
     let w = (cols as f32 * (cell_w + 4.0 * s) - 4.0 * s).max(tabs_w).max(62.0 * 8.0 * s) + 2.0 * pad;
@@ -190,6 +202,15 @@ pub fn draw_build_menu(g: &mut Game, toolbar_y: f32) -> f32 {
                 },
             )
         }
+        Tool::Construct(k) => {
+            let c = super::round5::CONSTRUCTIONS.iter().find(|c| c.kind == k);
+            (
+                format!("Build: {} (drag a rectangle), needs {}", super::round5::constr_label(k), c.map(|c| c.needs).unwrap_or("")),
+                col::TEXT_HI,
+                "Drag on the map (green = buildable). Planned tiles show as blueprints. Right-click: back to the list.".to_string(),
+            )
+        }
+        _ if constr => ("Build: Constructions".to_string(), col::TEXT_HI, "Walls, floors, ramps, stairs, fortifications, track. Masons build them from any building material.".to_string()),
         _ => ("Build".to_string(), col::TEXT_HI, "Choose a building. Dwarves bring the materials and construct it.".to_string()),
     };
     let maxc = ((w - 2.0 * pad) / (8.0 * s)) as usize;
@@ -211,6 +232,9 @@ pub fn draw_build_menu(g: &mut Game, toolbar_y: f32) -> f32 {
     // Options of the current category.
     let gy = ty + row_h(s) + 8.0 * s;
     draw_line(r.x + pad, gy - 4.0 * s, r.x + w - pad, gy - 4.0 * s, 1.0, col::BORDER);
+    if constr {
+        super::round5::draw_constructions(g, r, gy, cell_w, cols, row_h(s));
+    }
     for (k, &i) in opts.iter().enumerate() {
         let (cx, cy) = ((k % cols) as f32, (k / cols) as f32);
         let br = Rect::new(r.x + pad + cx * (cell_w + 4.0 * s), gy + cy * (row_h(s) + 4.0 * s), cell_w, row_h(s));

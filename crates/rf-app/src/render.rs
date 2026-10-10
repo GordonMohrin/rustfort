@@ -21,6 +21,8 @@ pub struct MapRenderer {
     pub buf: Vec<Sprite>,
     /// [round 4] DF Premium liquid sprites (looked up once).
     liquids: Option<LiquidSprites>,
+    /// [round 5] Designation markers and blueprint sprites (looked up once).
+    pub r5: Option<crate::ui::round5::R5Sprites>,
 }
 
 /// [round 4] The `LIQUIDS` page of DF Premium (graphics_fluids.txt): one sprite per depth
@@ -289,6 +291,8 @@ pub fn draw_map(g: &mut Game) {
             draw_terrain(g, &mut sprites, Pos::new(x, y, z), r);
         }
     }
+    // ---- [round 5] smooth/engrave/carve markers, traffic colors (traffic menu only)
+    crate::ui::round5::draw_overlays(g, x0, y0, x1, y1);
     // ---- buildings & stockpiles
     let world = &g.sim.world;
     let blds: Vec<usize> = world
@@ -308,6 +312,7 @@ pub fn draw_map(g: &mut Game) {
     sprites = std::mem::take(&mut g.rend.buf);
     // ---- items on the ground
     let tp = g.cam.tile_px();
+    let show_hidden = crate::ui::round5::show_hidden_items(g); // [round 5]
     let world = &g.sim.world;
     let items: Vec<usize> = world
         .items
@@ -316,7 +321,7 @@ pub fn draw_map(g: &mut Game) {
         .filter(|(_, it)| {
             it.pos.z == z
                 && it.flags.on_ground
-                && !it.flags.hidden
+                && (!it.flags.hidden || show_hidden)
                 && it.pos.x >= x0
                 && it.pos.x < x1
                 && it.pos.y >= y0
@@ -339,6 +344,9 @@ pub fn draw_map(g: &mut Game) {
         if !drawn {
             draw_item_fallback(&g.font, &g.sim.world, it, r);
         }
+        // [round 5] forbidden / dump / hidden markers
+        let it = &g.sim.world.items[ii];
+        crate::ui::round5::item_marker(&mut g.rend, &g.gfx, it, r, tp);
     }
     // ---- units
     let units: Vec<usize> = g
@@ -361,6 +369,15 @@ pub fn draw_map(g: &mut Game) {
         let r = tile_rect(g, u.pos.x, u.pos.y);
         sprites.clear();
         g.gfx.unit(&g.sim.world, u, &mut sprites);
+        // [round 5] Caught creatures sit inside their cage.
+        if u.flags.caged {
+            let (uid, sel) = (u.id, g.selected == Selected::Unit(u.id));
+            crate::ui::round5::draw_caged(g, uid, r, &sprites);
+            if sel {
+                corners(r, Color::from_rgba(255, 230, 80, 255), (r.w / 8.0).max(2.0));
+            }
+            continue;
+        }
         let mut drawn = false;
         for s in &sprites {
             // Wide unit sprites (2-tile weapons, big creatures) are centered on their tile.
@@ -383,6 +400,7 @@ pub fn draw_map(g: &mut Game) {
     }
     g.rend.buf = sprites;
     crate::ui::build::draw_ghost(g);
+    crate::ui::round5::draw_construct_preview(g); // [round 5]
     crate::ui::devices::draw_map_overlay(g); // [round 4] lever links, link targets
     draw_selection_and_cursor(g);
 }
@@ -754,6 +772,16 @@ fn unbuilt(b: &Building) -> bool {
 }
 
 fn draw_building(g: &mut Game, sprites: &mut Vec<Sprite>, bi: usize) {
+    // [round 5] Planned constructions: DF's blueprint look.
+    if g.sim.world.buildings[bi].kind == "Construction" {
+        crate::ui::round5::draw_construction(g, bi);
+        let b = &g.sim.world.buildings[bi];
+        if g.selected == Selected::Building(b.id) {
+            let (x1, y1, x2, y2) = (b.x1, b.y1, b.x2, b.y2);
+            outline(g, x1, y1, x2, y2, Color::from_rgba(255, 230, 80, 255));
+        }
+        return;
+    }
     let tp = g.cam.tile_px();
     let b = &g.sim.world.buildings[bi];
     let ghost = unbuilt(b);
@@ -799,6 +827,14 @@ fn draw_building(g: &mut Game, sprites: &mut Vec<Sprite>, bi: usize) {
     // No map sprite (weapon racks, armor stands, traps, ...): DF's building-menu icon is a
     // better stand-in than a glyph.
     let b = &g.sim.world.buildings[bi];
+    if b.kind == "Bridge" && b.built && !g.gfx.pages.is_empty() {
+        // [round 5] A retracted bridge is gone (nothing drawn), like DF.
+        if selected {
+            let (x1, y1, x2, y2) = (b.x1, b.y1, b.x2, b.y2);
+            outline(g, x1, y1, x2, y2, Color::from_rgba(255, 230, 80, 255));
+        }
+        return;
+    }
     if b.kind != "Stockpile" && b.kind != "FarmPlot" && b.kind != "Civzone" {
         let icon = crate::ui::build::option_icon(&b.kind, &b.subtype);
         if g.gfx.ui_icon(&icon).is_some() {
@@ -1044,7 +1080,7 @@ fn draw_selection_and_cursor(g: &mut Game) {
     }
     let tool_on = g.tool != Tool::None;
     // Rectangle being placed.
-    let build_tool = matches!(g.tool, Tool::Build(_));
+    let build_tool = matches!(g.tool, Tool::Build(_) | Tool::Construct(_));
     if let (Some(d), Some(h), false) = (g.drag, g.hover, build_tool) {
         let (lo, hi) = (
             Pos::new(d.a.x.min(h.x), d.a.y.min(h.y), d.a.z.min(h.z)),
@@ -1057,6 +1093,14 @@ fn draw_selection_and_cursor(g: &mut Game) {
             Tool::Zone(_) => Color::new(0.45, 0.95, 0.45, 1.0),
             Tool::Burrow => Color::new(0.90, 0.47, 0.90, 1.0),
             Tool::Designate(rf_sim::DesignationKind::Remove) => Color::new(1.0, 0.45, 0.45, 1.0),
+            // [round 5]
+            Tool::Detail(rf_sim::DetailKind::Remove) => Color::new(1.0, 0.45, 0.45, 1.0),
+            Tool::Detail(_) => Color::new(0.95, 0.90, 0.60, 1.0),
+            Tool::Traffic(rf_sim::Traffic::High) => Color::new(0.35, 0.90, 0.35, 1.0),
+            Tool::Traffic(rf_sim::Traffic::Low) => Color::new(0.95, 0.88, 0.25, 1.0),
+            Tool::Traffic(rf_sim::Traffic::Restricted) => Color::new(0.95, 0.30, 0.25, 1.0),
+            Tool::Traffic(_) => Color::new(0.50, 0.65, 1.0, 1.0),
+            Tool::ItemDes(_) => Color::new(0.95, 0.55, 0.35, 1.0),
             _ => Color::new(1.0, 0.85, 0.25, 1.0),
         };
         if z >= lo.z && z <= hi.z {

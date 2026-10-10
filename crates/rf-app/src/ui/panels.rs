@@ -92,34 +92,59 @@ fn unit_sheet(g: &mut Game, id: i32, r: Rect) {
     g.font.draw(&clip(&act, tmax), tx, y + 2.0 * lh, s, col::TEXT_CYAN);
     y += 3.0 * lh + 6.0 * s;
     // Tabs in two rows like the Steam sheet. Indices: 0 Overview, 1 Skills, 2 Labor, 3 Items,
-    // 4 Thoughts, 5 Needs, 6 Personality, 7 Health, 8 Relations (`--ui` names them).
+    // 4 Thoughts, 5 Needs, 6 Personality, 7 Health, 8 Relations, 9 Mood (`--ui` names them).
     const TAB_ROWS: [&[(usize, &str)]; 2] = [
-        &[(0, "Overview"), (4, "Thoughts"), (5, "Needs"), (6, "Personality")],
+        &[(0, "Overview"), (4, "Thoughts"), (5, "Needs"), (6, "Personality"), (9, "Mood")],
         &[(7, "Health"), (8, "Relations"), (1, "Skills"), (2, "Labor"), (3, "Items")],
     ];
     let th = GH * s + 8.0 * s;
+    let in_mood = !g.sim.mood_info(u.id).mood.is_empty() || !u.mood.is_empty(); // [round 5]
     for row in TAB_ROWS {
+        // [round 5] Widths follow the labels, so "Personality" fits next to "Mood".
         let n = row.len() as f32;
-        let tw = (r.w - 2.0 * pad - (n - 1.0) * 4.0 * s) / n;
-        for (k, (i, t)) in row.iter().enumerate() {
-            let tr = Rect::new(x + k as f32 * (tw + 4.0 * s), y, tw, th);
-            let st = if g.unit_tab == *i { BtnState::Active } else { BtnState::Normal };
+        let room = r.w - 2.0 * pad - (n - 1.0) * 4.0 * s;
+        let chars: f32 = row.iter().map(|(_, t)| t.chars().count() as f32 + 2.0).sum();
+        let mut tx = x;
+        for (i, t) in row.iter() {
+            let tw = (room * (t.chars().count() as f32 + 2.0) / chars).floor();
+            let tr = Rect::new(tx, y, tw, th);
+            let st = if g.unit_tab == *i {
+                BtnState::Active
+            } else if *i == 9 && !in_mood {
+                BtnState::Disabled
+            } else {
+                BtnState::Normal
+            };
             if text_button(&mut g.ui, &g.font, tr, t, st) && g.unit_tab != *i {
                 g.unit_tab = *i;
                 g.unit_scroll = 0;
             }
+            tx += tw + 4.0 * s;
         }
         y += th + 4.0 * s;
     }
     y += 8.0 * s;
     let bw = r.w - 2.0 * pad;
     // [round 3] Mind and body tabs (scrollable rows).
+    if g.unit_tab == 9 {
+        // [round 5] Strange mood (Sim::mood_info).
+        let area = Rect::new(x, y, bw, r.y + r.h - pad - lh - y);
+        super::round5::draw_mood_tab(g, &u, area);
+        return;
+    }
     if (4..=8).contains(&g.unit_tab) {
         let rows = match g.unit_tab {
             4 => super::psyche::thoughts_rows(g, &u),
             5 => super::psyche::needs_rows(g, &u),
             6 => super::psyche::personality_rows(g, &u),
-            7 => super::psyche::health_rows(g, &u),
+            7 => {
+                // [round 5] Treatment right after the status block, like DF's health screen.
+                let mut rows = super::psyche::health_rows(g, &u);
+                let at = rows.iter().position(|r| matches!(r, super::psyche::Row::Gap)).map(|i| i + 1).unwrap_or(rows.len());
+                let tr = super::round5::treatment_rows(g, &u);
+                rows.splice(at..at, tr);
+                rows
+            }
             _ => super::psyche::relations_rows(g, &u),
         };
         let area = Rect::new(x, y, bw, r.y + r.h - pad - lh - y);
@@ -181,10 +206,21 @@ fn unit_sheet(g: &mut Game, id: i32, r: Rect) {
                 1 => "male",
                 _ => "",
             };
+            // [round 5] Strange mood with the claimed workshop and the missing materials.
+            let (mood, mood_c) = super::round5::mood_line(g, &u);
+            if !mood.is_empty() {
+                for l in super::psyche::wrap(&mood, maxc, 2).into_iter().take(2) {
+                    g.font.draw(&l, x, y, s, mood_c);
+                    y += lh;
+                }
+            }
+            if u.flags.caged {
+                g.font.draw("In a cage.", x, y, s, col::TEXT_HI);
+                y += lh;
+            }
             let lines = [
                 format!("{} {sex}, age {:.0}", pretty(&u.race), u.age),
                 format!("Position {}, {}, z {}", u.pos.x, u.pos.y, u.pos.z),
-                if u.mood.is_empty() { String::new() } else { format!("Mood: {}", pretty(&u.mood)) },
                 squad,
                 format!("Unit id {}{}", u.id, if u.hist_fig_id >= 0 { format!(", hist. figure {}", u.hist_fig_id) } else { String::new() }),
             ];
@@ -262,11 +298,15 @@ fn unit_sheet(g: &mut Game, id: i32, r: Rect) {
                 if y > r.y + r.h - lh - pad {
                     break;
                 }
-                let txt = match g.sim.world.item(*iid) {
-                    Some(it) => item_label(g, it),
-                    None => format!("item #{iid} (unknown)"),
+                let (txt, known) = match g.sim.world.item(*iid) {
+                    Some(it) => (format!("{}{}", item_label(g, it), super::round5::item_tags(it)), true),
+                    None => (format!("item #{iid} (unknown)"), false),
                 };
-                g.font.draw(&clip(&txt, maxc), x, y, s, col::TEXT);
+                // [round 5] forbid / dump toggles per item, like DF's item sheet.
+                g.font.draw(&clip(&txt, maxc.saturating_sub(5)), x, y, s, col::TEXT);
+                if known {
+                    super::round5::item_row_toggles(g, *iid, x + bw, y);
+                }
                 y += lh;
             }
         }
@@ -398,15 +438,32 @@ fn tile_sheet(g: &mut Game, p: Pos, r: Rect) {
         }
         y += 6.0 * s;
     }
-    let items: Vec<String> = g.sim.world.items.iter().filter(|it| it.pos == p && it.flags.on_ground).map(|it| item_label(g, it)).collect();
+    let items: Vec<(i32, String, bool)> = g
+        .sim
+        .world
+        .items
+        .iter()
+        .filter(|it| it.pos == p && it.flags.on_ground)
+        .map(|it| (it.id, format!("{}{}", item_label(g, it), super::round5::item_tags(it)), it.flags.forbid))
+        .collect();
     if !items.is_empty() {
         g.font.draw(&format!("Items ({})", items.len()), x, y, s, col::BORDER_HI);
-        y += lh;
-        for it in items {
-            if y > r.y + r.h - lh - pad {
+        // [round 5] Forbid / claim everything here at once.
+        let all_forbidden = items.iter().all(|(_, _, f)| *f);
+        let label = if all_forbidden { "Claim all" } else { "Forbid all" };
+        let bw2 = (label.len() as f32 + 2.0) * 8.0 * s;
+        if text_button(&mut g.ui, &g.font, Rect::new(r.x + r.w - pad - bw2, y - 2.0 * s, bw2, GH * s + 4.0 * s), label, BtnState::Normal) {
+            g.sim.set_items_flag_in(p, p, "forbid", !all_forbidden);
+        }
+        y += lh + 2.0 * s;
+        let n = items.len();
+        for (k, (id, it, forbid)) in items.into_iter().enumerate() {
+            if y > r.y + r.h - 2.0 * lh - pad {
+                g.font.draw(&format!("... and {} more", n - k), x, y, s, col::TEXT_DIM);
                 break;
             }
-            g.font.draw(&clip(&it, maxc), x, y, s, col::TEXT);
+            g.font.draw(&clip(&it, maxc.saturating_sub(5)), x, y, s, if forbid { Color::from_rgba(230, 120, 110, 255) } else { col::TEXT });
+            super::round5::item_row_toggles(g, id, r.x + r.w - pad, y);
             y += lh;
         }
     }
