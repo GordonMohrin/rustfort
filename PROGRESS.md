@@ -1,5 +1,16 @@
 # Rustfort: progress
 
+## v0.7.0 (2026-10-10): DF engravings, civilian alert with work, cave-ins, wealth-based sieges
+
+**New since 0.6:**
+- **Exporter round 5:** all **16,246 engravings** of your fort are exported (position, quality, floor/wall, stone, engraver) and spot-checked against the live DF. The default export is now `export/tileshtulon` = round 5 (year 279, 87 citizens); older exports are kept as `-r1..-r4`.
+  - With engravings counted, room values are 269-1,586 for bedrooms and 2,826 for the dining hall.
+  - Open question: how DF's room-thought severity maps to tiers (see FIDELITY.md). The min_tier floor stays until then.
+- **Civilian alert** as in v50: civilians in the alert burrow keep working on jobs inside it, and nothing outside.
+- **Cave-ins:** unsupported chunks fall after a dig, channel or deconstruction; debris lands below; creatures underneath die and nearby ones are knocked out.
+- **Siege size** by wealth tier (wiki), instead of 10 + population/8.
+- **Result:** 2 years headless with `--standdown` on the new export: 87 -> 93 citizens, about 61k ticks/s.
+
 ## v0.6.0 (2026-10-10): fidelity audit, title screen with live DF import, visual polish
 
 **New since 0.5:**
