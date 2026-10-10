@@ -352,6 +352,8 @@ enum Task {
     Wander,
     /// [defense] Walk to lever (building id) and pull it.
     PullLever(i32),
+    /// [defense] Re-arm trap `.0` with cage/stone item `.1` (fetch, carry, load).
+    LoadTrap(i32, i32),
     GoJob(u32),
     Job(u32),
     GoDrink(i32),
@@ -978,6 +980,7 @@ impl Sim {
         let (activity, job_pos): (&str, Option<Pos>) = match (ai.kind, ai.task) {
             (Kind::Dead, _) => ("Dead", None),
             (_, Task::PullLever(b)) => ("Pull the Lever", self.world.building(b).map(|b| b.center)), // [defense]
+            (_, Task::LoadTrap(b, _)) => (self.defense_reload_caption(b), self.world.building(b).map(|b| b.center)), // [defense]
             (_, Task::Idle) | (_, Task::Wander) => ("No Job", None),
             (_, Task::GoJob(j)) | (_, Task::Job(j)) => {
                 let job = &self.jobs[j as usize];
@@ -1608,6 +1611,7 @@ impl Sim {
         let task = self.ai[s].task;
         match task {
             Task::PullLever(b) => self.defense_arrive_lever(s, b, now), // [defense]
+            Task::LoadTrap(b, it) => self.defense_arrive_reload(s, b, it, now), // [defense]
             Task::Wander | Task::Idle => {
                 self.ai[s].task = Task::Idle;
                 let mut r = Rng::for_unit(self.seed, s, now, 5);
@@ -1754,6 +1758,7 @@ impl Sim {
         let task = self.ai[s].task;
         match task {
             Task::PullLever(b) => self.defense_cancel_lever(s, b), // [defense]
+            Task::LoadTrap(b, it) => self.defense_cancel_reload(s, b, it), // [defense]
             Task::GoJob(j) | Task::Job(j) => {
                 if self.jobs[j as usize].claimed == s as u32 {
                     self.jobs[j as usize].claimed = NONE;

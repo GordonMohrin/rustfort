@@ -43,6 +43,23 @@ fn main() {
             println!("  {k:?} {id} at ({},{},{})-({},{}) flags {:?} links {:?} dir {:?}", b.x1, b.y1, b.z, b.x2, b.y2, b.flags, b.links, b.direction);
         }
     }
+    // `--probe x,y,z`: tile type and walkability around a tile (checking bridges and doors).
+    if let Some(p) = get("--probe") {
+        let v: Vec<i16> = p.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+        if v.len() == 3 {
+            for dz in [-1i16, 0] {
+                for dy in -1..=1i16 {
+                    let row: Vec<String> = (-2..=2i16)
+                        .map(|dx| {
+                            let q = rf_core::Pos::new(v[0] + dx, v[1] + dy, v[2] + dz);
+                            format!("{:<18}{}", sim.world.tt(q).name, if sim.is_walkable(q) { "+" } else { "." })
+                        })
+                        .collect();
+                    println!("  z{:+} y{:+}: {}", dz, dy, row.join(" "));
+                }
+            }
+        }
+    }
     let standdown = !has("--no-standdown");
     // `--force`: a goblin siege arrives right away (size from the population, like DF).
     if has("--force") {

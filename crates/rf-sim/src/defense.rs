@@ -25,7 +25,8 @@
 //! - **Traps** are triggered by hostile creatures and wild animals, never by citizens, tame
 //!   animals, merchants or visitors, and never by `TRAPAVOID` creatures (kobolds, ...).
 //!   - Cage trap (needs an empty cage loaded): the creature is caught in the cage and out of
-//!     the fight; the trap must be re-armed with a new cage.
+//!     the fight; the trap must be re-armed with a new cage. Re-arming cage and stone-fall
+//!     traps is a Mechanic job: an idle mechanic fetches a free cage (stone) and loads it.
 //!   - Stone-fall trap (needs a stone loaded): the stone falls on the creature and stays on the
 //!     ground; single use.
 //!   - Weapon trap: every weapon/trap component inside attacks (trap components `HITS` times,
@@ -48,8 +49,9 @@
 //!   10+ levels kill.
 //!
 //! # Gaps
-//! - Traps are not re-armed or reloaded by mechanics yet; caught creatures stay in the cage on
-//!   the trap tile. Linking needs no mechanisms or mechanic job (instant).
+//! - Caught creatures stay in their cage on the trap tile (the occupied cage is not hauled to
+//!   an animal stockpile). Weapon traps are never reloaded (they need no ammunition). Linking
+//!   needs no mechanisms or mechanic job (instant).
 //! - Pets do not path through pet-passable locked doors (they only wander through them).
 //! - Lever-linked cage traps, gear assemblies, grates and bars are not operated.
 
@@ -197,6 +199,15 @@ pub(crate) struct LeverJob {
     pub working_until: u64,
 }
 
+/// A trap waiting to be re-armed by a mechanic (DF jobs "Load Cage Trap", "Load Stone Trap").
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ReloadJob {
+    pub trap: i32,
+    pub claimed: u32,
+    pub item: i32,
+    pub retry_at: u64,
+}
+
 /// Counters for reports and tests.
 #[derive(Clone, Debug, Default)]
 pub struct DefenseStats {
@@ -216,6 +227,8 @@ pub struct DefenseStats {
     pub plates_triggered: u64,
     pub levers_pulled: u64,
     pub signals: u64,
+    /// Cage and stone-fall traps re-armed by mechanics.
+    pub traps_reloaded: u64,
     pub crushed: u64,
     pub items_crushed: u64,
     pub flung: u64,
@@ -236,6 +249,7 @@ pub(crate) struct Defense {
     /// Delayed signals: (due tick, target building id, on).
     signals: Vec<(u64, i32, bool)>,
     pub lever_jobs: Vec<LeverJob>,
+    pub reload_jobs: Vec<ReloadJob>,
     /// Hidden unit slot that wields trap weapons, `usize::MAX` until needed.
     pub trap_unit: usize,
     /// Weapon the trap unit attacks with right now (item index, combat weapon template).
@@ -268,6 +282,7 @@ impl Default for Defense {
             pending: Vec::new(),
             signals: Vec::new(),
             lever_jobs: Vec::new(),
+            reload_jobs: Vec::new(),
             trap_unit: usize::MAX,
             trap_weapon: None,
             races: HashMap::new(),
@@ -561,6 +576,9 @@ impl Sim {
             for (_, target, on) in due {
                 self.apply_signal(target, on, now);
             }
+        }
+        if now % 600 == 300 {
+            self.post_reload_jobs();
         }
         if now % 10 == 0 {
             for mi in 0..self.def.mechs.len() {
@@ -1064,7 +1082,7 @@ impl Sim {
         self.send_signals(mi, on, now);
     }
 
-    fn lever_goals(&self, lever: i32) -> Goals {
+    fn building_goals(&self, lever: i32) -> Goals {
         let mut g = Goals::default();
         let Some(&mi) = self.def.by_id.get(&lever) else { return g };
         let t = self.def.mechs[mi].tiles[0] as usize;
@@ -1085,21 +1103,180 @@ impl Sim {
         g
     }
 
-    /// [decide hook] An idle citizen takes a waiting "Pull the Lever" job it can reach.
+    /// Cage and stone-fall traps without ammunition get a re-arm job.
+    fn post_reload_jobs(&mut self) {
+        for mi in 0..self.def.mechs.len() {
+            let kind = self.def.mechs[mi].kind;
+            let id = self.def.mechs[mi].id;
+            if !matches!(kind, MechKind::CageTrap | MechKind::StoneFallTrap) || self.def.reload_jobs.iter().any(|j| j.trap == id) {
+                continue;
+            }
+            if self.trap_loaded(id) == Some(false) {
+                self.def.reload_jobs.push(ReloadJob { trap: id, claimed: NONE, item: -1, retry_at: 0 });
+            }
+        }
+    }
+
+    /// Nearest free cage (or stone) in walk component `c`.
+    fn reload_item(&self, kind: MechKind, c: u32, from: (usize, usize, usize)) -> Option<i32> {
+        let want: &[&str] = if kind == MechKind::CageTrap { &["CAGE"] } else { &["BOULDER"] };
+        let mut best = (i32::MAX, -1);
+        for (i, it) in self.world.items.iter().enumerate() {
+            if !want.contains(&it.kind.as_str()) {
+                continue;
+            }
+            let m = &self.imeta[i];
+            let f = &it.flags;
+            if m.dead || m.reserved > 0 || m.hauling || it.holder >= 0 || it.building >= 0 || it.container >= 0 || !f.on_ground || f.forbid || f.in_job || f.construction {
+                continue;
+            }
+            if self.def.occupied.contains_key(&it.id) {
+                continue;
+            }
+            let Some(t) = self.world.idx(it.pos) else { continue };
+            if self.nav.comp_near(t) != c {
+                continue;
+            }
+            let d = crate::manhattan(from, self.nav.xyz(t));
+            if (d, it.id) < best {
+                best = (d, it.id);
+            }
+        }
+        (best.1 >= 0).then_some(best.1)
+    }
+
+    /// A mechanic takes a waiting re-arm job.
+    fn try_reload_job(&mut self, s: usize, c: u32, now: u64) -> bool {
+        if self.ai[s].labors & crate::labor::MECHANIC == 0 {
+            return false;
+        }
+        for k in 0..self.def.reload_jobs.len() {
+            let j = self.def.reload_jobs[k];
+            if j.claimed != NONE || j.retry_at > now {
+                continue;
+            }
+            let Some(&mi) = self.def.by_id.get(&j.trap) else { continue };
+            let goals = self.building_goals(j.trap);
+            if !goals.as_slice().iter().any(|&t| self.nav.comp_root(t as usize) == c) {
+                continue;
+            }
+            let from = self.nav.xyz(self.ai[s].pos as usize);
+            let Some(item) = self.reload_item(self.def.mechs[mi].kind, c, from) else {
+                self.def.reload_jobs[k].retry_at = now + rf_core::TICKS_PER_DAY as u64;
+                continue;
+            };
+            self.reserve(item);
+            self.def.reload_jobs[k].claimed = s as u32;
+            self.def.reload_jobs[k].item = item;
+            self.ai[s].task = Task::LoadTrap(j.trap, item);
+            let g = self.item_goals(item);
+            self.request_path(s, g, now);
+            return true;
+        }
+        false
+    }
+
+    /// [arrive hook] Re-arming: pick up the cage/stone, carry it to the trap, load it.
+    pub(crate) fn defense_arrive_reload(&mut self, s: usize, trap: i32, item: i32, now: u64) {
+        let Some(k) = self.def.reload_jobs.iter().position(|j| j.trap == trap && j.claimed == s as u32) else {
+            self.cancel_task(s);
+            self.decide(s, now);
+            return;
+        };
+        if self.ai[s].carrying != item {
+            if !self.item_reachable_here(s, item) {
+                self.cancel_task(s);
+                self.decide(s, now);
+                return;
+            }
+            self.pickup(s, item);
+            let g = self.building_goals(trap);
+            self.request_path(s, g, now);
+            return;
+        }
+        let Some(&mi) = self.def.by_id.get(&trap) else {
+            self.cancel_task(s);
+            self.decide(s, now);
+            return;
+        };
+        let tile = self.def.mechs[mi].tiles[0];
+        if !self.building_goals(trap).as_slice().contains(&self.ai[s].pos) {
+            let g = self.building_goals(trap);
+            self.request_path(s, g, now);
+            return;
+        }
+        // Load it.
+        let uidx = self.ai[s].uidx;
+        self.world.units[uidx].inventory.retain(|&x| x != item);
+        self.ai[s].carrying = -1;
+        self.unreserve(item);
+        self.haul_remove(item);
+        let p = self.world.pos_of(tile as usize);
+        if let Some(&ii) = self.item_idx.get(&item) {
+            let it = &mut self.world.items[ii as usize];
+            it.holder = -1;
+            it.pos = p;
+            it.building = trap;
+            it.flags.in_inventory = false;
+            it.flags.on_ground = false;
+            it.flags.in_building = true;
+            self.imeta[ii as usize].hauling = false;
+        }
+        if let Some(b) = self.world.buildings.iter_mut().find(|b| b.id == trap) {
+            b.items.push(item);
+            set_flag(&mut b.flags, "LOADED", true);
+        }
+        self.def.reload_jobs.remove(k);
+        self.def.stats.traps_reloaded += 1;
+        self.add_xp(s, "MECHANICS", 30);
+        self.ai[s].task = Task::Idle;
+        self.decide(s, now);
+    }
+
+    /// [cancel hook] The mechanic gave up: drop what it carries, the job waits.
+    pub(crate) fn defense_cancel_reload(&mut self, s: usize, trap: i32, item: i32) {
+        let now = self.ticks;
+        if self.ai[s].carrying == item {
+            let here = self.ai[s].pos;
+            self.drop_item(s, item, here);
+        }
+        self.unreserve(item);
+        for j in &mut self.def.reload_jobs {
+            if j.trap == trap && j.claimed == s as u32 {
+                j.claimed = NONE;
+                j.item = -1;
+                j.retry_at = now + 200;
+            }
+        }
+    }
+
+    /// DF job caption of a re-arm job.
+    pub(crate) fn defense_reload_caption(&self, trap: i32) -> &'static str {
+        match self.def.by_id.get(&trap).map(|&m| self.def.mechs[m].kind) {
+            Some(MechKind::StoneFallTrap) => "Load Stone Trap",
+            _ => "Load Cage Trap",
+        }
+    }
+
+    /// [decide hook] An idle citizen takes a waiting "Pull the Lever" job it can reach, an
+    /// idle mechanic a trap to re-arm.
     pub(crate) fn defense_try_job(&mut self, s: usize, now: u64) -> bool {
-        if self.def.lever_jobs.is_empty() {
+        if self.def.lever_jobs.is_empty() && self.def.reload_jobs.is_empty() {
             return false;
         }
         let c = self.nav.comp_near(self.ai[s].pos as usize);
         if c == 0 {
             return false;
         }
+        if !self.def.reload_jobs.is_empty() && self.try_reload_job(s, c, now) {
+            return true;
+        }
         for k in 0..self.def.lever_jobs.len() {
             let j = self.def.lever_jobs[k];
             if j.claimed != NONE || j.retry_at > now {
                 continue;
             }
-            let goals = self.lever_goals(j.lever);
+            let goals = self.building_goals(j.lever);
             if !goals.as_slice().iter().any(|&t| self.nav.comp_root(t as usize) == c) {
                 continue;
             }
@@ -1118,7 +1295,7 @@ impl Sim {
             self.decide(s, now);
             return;
         };
-        let goals = self.lever_goals(lever);
+        let goals = self.building_goals(lever);
         if !goals.as_slice().contains(&self.ai[s].pos) {
             self.request_path(s, goals, now);
             return;
@@ -1612,6 +1789,33 @@ mod tests {
         sim.move_to(s, t, now);
         sim.run_ticks(2);
         assert_eq!(sim.defense_stats().stones_dropped, 1, "single use until reloaded");
+    }
+
+    #[test]
+    fn mechanic_rearms_a_sprung_cage_trap() {
+        let (mut w, gap) = walled_hall();
+        w.buildings.push(building(540, "Trap", "CageTrap", gap.x, gap.y, gap.x, gap.y, gap.z));
+        item(&mut w, 9400, "CAGE", "", "PLANT:OAK:WOOD", gap, 540);
+        // A spare cage on the floor and a mechanic.
+        let spare = gap.offset(3, -4, 0);
+        item(&mut w, 9401, "CAGE", "", "PLANT:OAK:WOOD", spare, -1);
+        let it = w.items.last_mut().unwrap();
+        it.flags = ItemFlags { on_ground: true, ..Default::default() };
+        w.units[0].labors.push("MECHANIC".into());
+        let mut sim = quiet(w);
+        let g = goblin_at(&mut sim, gap.offset(-1, 0, 0));
+        let s = sim.unit_slot[&g];
+        let t = sim.world.idx(gap).unwrap() as u32;
+        let now = sim.ticks();
+        sim.move_to(s, t, now);
+        sim.run_ticks(2);
+        assert_eq!(sim.defense_stats().caught, 1);
+        assert_eq!(sim.trap_loaded(540), Some(false));
+        sim.run_ticks(3000);
+        assert_eq!(sim.defense_stats().traps_reloaded, 1, "{:?}", sim.unit_status(1));
+        assert_eq!(sim.trap_loaded(540), Some(true));
+        let cage = sim.world.item(9401).unwrap();
+        assert!(cage.flags.in_building && cage.building == 540 && cage.holder < 0);
     }
 
     #[test]
