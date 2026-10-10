@@ -62,6 +62,8 @@ pub struct R4Ui {
     pub appoint_scroll: usize,
     /// `CARAVAN_ARRIVAL` flags from DF's announcements.txt (`BOX`, `P`, `R`, ...).
     pub caravan_flags: Option<Vec<String>>,
+    /// `--ui fake-caravan`: a made-up caravan for layout tests while the sim has none.
+    pub debug_caravan: Option<TradeStatus>,
 }
 
 /// Flags of an announcement type from the player's DF prefs (then the install's defaults).
@@ -113,7 +115,36 @@ pub fn poll_trade(g: &mut Game, force: bool) {
         return;
     }
     g.r4.trade_polled = now;
-    g.r4.trade = g.sim.trade_status();
+    g.r4.trade = g.sim.trade_status().or_else(|| g.r4.debug_caravan.clone());
+}
+
+/// `--ui fake-caravan`: merchants "offer" some of the fort's own crafts (layout tests only;
+/// trading still goes through the sim, which refuses without a real caravan).
+pub fn debug_caravan(g: &mut Game) {
+    let w = &g.sim.world;
+    let depot = w.buildings.iter().find(|b| b.kind == "TradeDepot").map(|b| b.id).unwrap_or(-1);
+    let civ = w.entities.iter().find(|e| e.trades && e.race == "DWARF").or_else(|| w.entities.iter().find(|e| e.kind == "Civilization" && e.relation == "Own"));
+    let goods: Vec<i32> = w
+        .items
+        .iter()
+        .filter(|it| it.container < 0 && it.value > 0 && !it.flags.artifact && matches!(it.kind.as_str(), "CRAFTS" | "GOBLET" | "INSTRUMENT" | "TOY" | "FIGURINE" | "AMULET" | "RING" | "CROWN" | "BRACELET" | "EARRING" | "SCEPTER"))
+        .take(14)
+        .map(|it| it.id)
+        .collect();
+    let fort_goods: Vec<i32> = match w.building(depot) {
+        Some(d) => w.items.iter().filter(|it| d.contains(it.pos) && it.container < 0 && it.building != d.id).map(|it| it.id).collect(),
+        None => Vec::new(),
+    };
+    g.r4.debug_caravan = Some(TradeStatus {
+        civ: civ.map(|e| e.name.clone()).unwrap_or_else(|| "the mountainhomes".into()),
+        race: civ.map(|e| e.race.clone()).unwrap_or_else(|| "DWARF".into()),
+        depot,
+        broker_present: true,
+        goods,
+        fort_goods,
+        leaves_in: rf_core::TICKS_PER_DAY as u64 * 9,
+    });
+    poll_trade(g, true);
 }
 
 /// Once per frame: caravan arrival like DF ("A caravan from X has arrived.").

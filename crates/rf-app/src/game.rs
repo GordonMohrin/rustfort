@@ -738,6 +738,7 @@ impl Game {
                 "spawn-hostile" => crate::ui::alerts::debug_spawn_hostile(self),
                 // [round 4] screens for screenshots/tests
                 "trade" => crate::ui::round4::open_trade(self),
+                "fake-caravan" => crate::ui::round4::debug_caravan(self),
                 "depot" => {
                     crate::ui::round4::open_trade(self);
                     self.r4.depot_open = true;

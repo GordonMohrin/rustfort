@@ -224,7 +224,8 @@ rustfort play --screenshot target/shots/a.png --frames 20 --view 48,48,22,1 \
   (test hook: the 8 non-citizens nearest the camera turn hostile, so the arrival alert fires).
   Round 4: `trade`, `depot[:search]` (move-goods picker), `nobles`, `appoint[:TOKEN]`,
   `settings`, `link` (link tool for the building selected with `bld:`), `caravan-popup` (the
-  arrival box without a caravan).
+  arrival box without a caravan), `fake-caravan` (made-up merchant goods to check the trade
+  screen layout while the sim has no caravan; trading still goes to the sim).
 - Screenshot runs print the average ticks/s and, with the sim thread, how busy the worker was;
   `RUSTFORT_MEASURE=a,b` prints the real time from sim tick a to b.
 - `--mouse x,y` parks the cursor.
