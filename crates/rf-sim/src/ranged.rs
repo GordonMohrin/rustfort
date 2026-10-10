@@ -626,8 +626,8 @@ impl Sim {
             }
             let ti = t as usize;
             let u = &self.world.units[self.ai[ti].uidx];
-            if u.flags.inactive || u.flags.caged {
-                continue;
+            if u.flags.inactive || u.flags.caged || self.combat.f.get(ti).map(|f| f.hidden).unwrap_or(false) {
+                continue; // [military2] hidden raiders cannot be targeted
             }
             if !hostile && self.combat.f.get(ti).map(|f| f.role == Role::None).unwrap_or(false) && !u.flags.hostile {
                 continue;
@@ -1032,8 +1032,9 @@ impl Sim {
             let quiver = self.quiver_of(s);
             let pick = if quiver.is_none() {
                 self.ranged_find_item(s, |it| (it.kind == "QUIVER").then_some(it.quality as i32)).map(|id| (id, true))
-            } else if n < QUIVER_WANT {
+            } else if n < self.squad_ammo_spec(s, duty == Duty::Train).1.min(QUIVER_WANT) {
                 let training = duty == Duty::Train;
+                let (spec, _) = self.squad_ammo_spec(s, training); // [military2] squad ammo settings
                 let mut classes: Vec<(String, bool)> = Vec::new();
                 for it in &self.world.items {
                     if it.kind == "AMMO" && !classes.iter().any(|(k, _)| *k == it.subtype) {
@@ -1046,7 +1047,7 @@ impl Sim {
                 let ok: Vec<String> = classes.into_iter().filter(|e| e.1).map(|e| e.0).collect();
                 let mats: Vec<bool> = self.world.materials.iter().map(|m| m.is_metal || m.token.starts_with("INORGANIC:")).collect();
                 self.ranged_find_item(s, |it| {
-                    if it.kind != "AMMO" || !ok.contains(&it.subtype) {
+                    if it.kind != "AMMO" || !ok.contains(&it.subtype) || !self.ammo_fits(&spec, it) {
                         return None;
                     }
                     let metal = mats.get(it.mat as usize).copied().unwrap_or(false);

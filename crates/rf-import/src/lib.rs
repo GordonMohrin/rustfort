@@ -1583,6 +1583,7 @@ mod tests {
             orders: vec!["Train".into()],
             uniform: vec!["ARMOR@Armor".into(), "WEAPON:ITEM_WEAPON_AXE_BATTLE@INORGANIC:IRON".into()],
             schedule: "Constant training".into(),
+            ..Default::default() // [military2] new Squad fields
         }];
         w.burrows = vec![Burrow {
             id: 1,

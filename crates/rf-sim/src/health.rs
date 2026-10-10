@@ -62,6 +62,8 @@ mod ml {
     pub const BONE: u8 = 8;
     pub const SURGERY: u8 = 16;
     pub const FEED: u8 = 32;
+    /// [military2] RECOVER_WOUNDED: carry immobile patients to a bed.
+    pub const RESCUE: u8 = 64;
 }
 
 const OPEN: u16 = wf::CUT | wf::TORN | wf::SEVERED;
@@ -75,6 +77,8 @@ pub enum Treat {
     Surgery,
     Water,
     Food,
+    /// [military2] Recover wounded: carry an immobile patient to a bed.
+    Carry,
 }
 
 impl Treat {
@@ -86,6 +90,7 @@ impl Treat {
             Treat::SetBone => ml::BONE,
             Treat::Surgery => ml::SURGERY,
             Treat::Water | Treat::Food => ml::FEED,
+            Treat::Carry => ml::RESCUE,
         }
     }
     fn skill(self) -> &'static str {
@@ -106,6 +111,7 @@ impl Treat {
             Treat::SetBone => 400,
             Treat::Surgery => 600,
             Treat::Water | Treat::Food => 60,
+            Treat::Carry => 20,
         }
     }
     /// DF job caption.
@@ -118,6 +124,7 @@ impl Treat {
             Treat::Surgery => "Surgery",
             Treat::Water => "Give Water",
             Treat::Food => "Give Food",
+            Treat::Carry => "Recover Wounded",
         }
     }
     /// Item kind the treatment uses up.
@@ -137,6 +144,8 @@ enum CStep {
     GoItem,
     GoPatient,
     Work(u64),
+    /// [military2] Carrying the patient to bed `.0`.
+    Carry(i32),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -148,6 +157,9 @@ pub(crate) struct CareJob {
     item: i32,
     step: CStep,
 }
+
+/// [military2] Crawling is this many times slower than walking (estimate).
+pub(crate) const CRAWL_FACTOR: i32 = 4;
 
 /// Counters and recent events.
 #[derive(Clone, Debug, Default)]
@@ -273,6 +285,7 @@ impl Sim {
                         "BONE_SETTING" => ml::BONE,
                         "SURGERY" => ml::SURGERY,
                         "FEED_WATER_CIVILIANS" => ml::FEED,
+                        "RECOVER_WOUNDED" => ml::RESCUE, // [military2]
                         _ => 0,
                     };
                 }
@@ -323,11 +336,19 @@ impl Sim {
     /// Cannot walk: a broken bone in a leg or foot, or unconscious.
     pub(crate) fn health_bedridden(&self, s: usize) -> bool {
         let Some(f) = self.combat.f.get(s) else { return false };
-        if f.uncon_until > self.ticks {
-            return true;
-        }
-        if f.body == u16::MAX {
+        f.uncon_until > self.ticks || self.cannot_stand(s)
+    }
+
+    /// [military2] Cannot stand: an unset broken bone in a limb that carries weight (STANCE),
+    /// or a lost foot (no crutches yet). Such a unit crawls (wiki Health care / Crutch).
+    pub(crate) fn cannot_stand(&self, s: usize) -> bool {
+        let Some(f) = self.combat.f.get(s) else { return false };
+        if f.body == u16::MAX || f.wounds.is_empty() {
             return false;
+        }
+        let body = &self.combat.bodies[f.body as usize];
+        if f.wounds.iter().any(|w| w.flags & wf::SEVERED != 0 && (w.part as usize) < body.parts.len() && body.parts[w.part as usize].flags & bp::STANCE != 0) {
+            return true;
         }
         let body = &self.combat.bodies[f.body as usize];
         f.wounds.iter().any(|w| {
@@ -447,7 +468,9 @@ impl Sim {
                     continue;
                 }
             }
-            if citizen && self.in_care(s) {
+            if citizen && self.needs_carry(s) {
+                want.push((s32, Treat::Carry)); // [military2] recover wounded first
+            } else if citizen && self.in_care(s) {
                 if let Some(t) = self.next_treat(s, true) {
                     want.push((s32, t));
                 }
@@ -460,13 +483,22 @@ impl Sim {
             let p = j.patient as usize;
             let still = want.iter().any(|&(s, t)| s == j.patient && t == j.treat);
             let alive = p < self.ai.len() && self.ai[p].kind != Kind::Dead;
-            if alive && (still || j.doctor != NONE && self.in_care(p)) {
+            let carrying = j.treat == Treat::Carry && j.doctor != NONE && matches!(j.step, CStep::Carry(_)); // [military2]
+            if alive && (still || carrying || j.doctor != NONE && self.in_care(p)) {
                 k += 1;
                 continue;
             }
             self.health.jobs.remove(k);
+            if let CStep::Carry(b) = j.step {
+                self.rescue_free_bed(b, j.patient); // [military2]
+            }
             if j.doctor != NONE {
                 let d = j.doctor as usize;
+                if self.combat.f.get(d).map(|f| f.carry != NONE).unwrap_or(false) {
+                    if let Some(v) = self.carry_drop(d, now) {
+                        self.rescue_lay_down(v, -1, now); // [military2]
+                    }
+                }
                 if self.ai[d].task == Task::Care {
                     self.care_drop_item(d, j.item);
                     self.ai[d].task = Task::Idle;
@@ -561,8 +593,8 @@ impl Sim {
                 continue;
             }
             let pt = self.ai[j.patient as usize].pos as usize;
-            if self.nav.comp_near(pt) != c {
-                continue;
+            if self.nav.comp_near(pt) != c || self.alert_blocks(s, pt) {
+                continue; // [military2] under a civilian alert: patients inside the burrow only
             }
             let d = crate::manhattan(up, self.nav.xyz(pt));
             if d < best.0 {
@@ -638,6 +670,9 @@ impl Sim {
                 continue;
             }
             let Some(t) = self.world.idx(it.pos) else { continue };
+            if self.alert_blocks(s, t) {
+                continue; // [military2]
+            }
             let d = crate::manhattan(up, self.nav.xyz(t));
             if (d, it.id) < best && self.nav.comp_near(t) == c {
                 best = (d, it.id);
@@ -714,12 +749,17 @@ impl Sim {
                     self.request_path(s, g, now);
                     return;
                 }
+                if j.treat == Treat::Carry {
+                    self.rescue_pick_up(s, k, p, now); // [military2]
+                    return;
+                }
                 let sk = j.treat.skill();
                 let rating = if sk.is_empty() { 0 } else { self.social_rating(s, self.world.units[self.ai[s].uidx].skill(sk).clamp(0, 20)) };
                 let dur = (j.treat.ticks() * 10 / (10 + 2 * rating.clamp(0, 20))).max(10) as u64;
                 self.health.jobs[k].step = CStep::Work(now + dur);
                 self.ai[s].wake = now + dur;
             }
+            CStep::Carry(b) => self.rescue_arrive(s, k, b, now), // [military2]
             CStep::Work(until) => {
                 if now < until {
                     self.ai[s].wake = until;
@@ -814,6 +854,7 @@ impl Sim {
                 }
                 self.health.stats.meals_given += 1;
             }
+            Treat::Carry => {}
         }
         if !t.skill().is_empty() {
             self.add_xp(d, t.skill(), 50);
@@ -856,6 +897,15 @@ impl Sim {
     /// [moods] `cancel_task` of a doctor: free the job and the supply.
     pub(crate) fn care_cancel(&mut self, s: usize) {
         let Some(k) = self.care_job_of(s) else { return };
+        if let CStep::Carry(b) = self.health.jobs[k].step {
+            // [military2] Interrupted while carrying: put the patient down here.
+            let now = self.ticks;
+            let p = self.health.jobs[k].patient;
+            self.rescue_free_bed(b, p);
+            if let Some(v) = self.carry_drop(s, now) {
+                self.rescue_lay_down(v, -1, now);
+            }
+        }
         let item = self.health.jobs[k].item;
         self.care_drop_item(s, item);
         let j = &mut self.health.jobs[k];
@@ -896,6 +946,7 @@ impl Sim {
         let st = &self.health.stats;
         mix(((st.diagnoses as u64) << 40) ^ ((st.sutures as u64) << 20) ^ st.infections as u64);
         mix(self.health.jobs.len() as u64);
+        mix(self.combat.stats.rescues ^ (self.combat.stats.crawlers << 20)); // [military2]
     }
 
     // ------------------------------------------------------------------ public API
@@ -952,6 +1003,144 @@ impl Sim {
         self.health.stats.infections += n as u32;
         let _ = AnnouncementKind::Info;
         n
+    }
+}
+
+// ---------------------------------------------------------------------- [military2] recover wounded
+//
+// Wiki (Health care, Recover wounded labor): dwarves with the Recover wounded labor carry
+// injured dwarves who cannot move (unconscious, or unable to stand) to a hospital bed, else
+// another free bed. Units with a broken leg cannot stand and crawl (no crutches yet).
+// Estimates: crawling is CRAWL_FACTOR (4) times slower than walking; nobody is carried while an
+// able hostile is within 3 tiles of the patient; picking up and putting down take no time.
+
+impl Sim {
+    /// Free bed for a patient: hospital beds first, then its own bed, then any free bed.
+    pub(crate) fn rescue_bed_for(&self, p: usize) -> Option<usize> {
+        let pos = self.ai[p].pos as usize;
+        let c = self.nav.comp_near(pos);
+        if c == 0 {
+            return None;
+        }
+        let up = self.nav.xyz(pos);
+        let uid = self.ai[p].id;
+        let mut best = (i32::MAX, usize::MAX);
+        for (k, bed) in self.beds.iter().enumerate() {
+            if bed.occupant != NONE || (bed.owner >= 0 && bed.owner != uid) || self.nav.comp_near(bed.tile as usize) != c {
+                continue;
+            }
+            let bp_ = self.world.pos_of(bed.tile as usize);
+            let hosp = self.combat.hospitals.iter().any(|&(x1, y1, x2, y2, z)| bp_.z == z && bp_.x >= x1 && bp_.x <= x2 && bp_.y >= y1 && bp_.y <= y2);
+            let d = crate::manhattan(up, self.nav.xyz(bed.tile as usize)) - if hosp { 10_000 } else { 0 } - if bed.owner == uid { 5_000 } else { 0 };
+            if d < best.0 {
+                best = (d, k);
+            }
+        }
+        (best.1 != usize::MAX).then_some(best.1)
+    }
+
+    /// Lies on the floor (or was knocked out), cannot walk to a bed and somebody could carry it.
+    fn needs_carry(&self, s: usize) -> bool {
+        if self.health.any_med & ml::RESCUE == 0 {
+            return false;
+        }
+        let Some(f) = self.combat.f.get(s) else { return false };
+        if f.carried_by != NONE || matches!(f.sub, Sub::Resting(b) | Sub::Rest(b) if b >= 0) {
+            return false;
+        }
+        (f.uncon_until > self.ticks || self.cannot_stand(s)) && self.needs_rest(s) && !self.fight_nearby(s) && self.rescue_bed_for(s).is_some()
+    }
+
+    /// [combat hook] Somebody could carry this patient to bed (it should wait instead of crawling).
+    pub(crate) fn rescue_available(&self, s: usize) -> bool {
+        self.health.any_med & ml::RESCUE != 0 && !self.health.off && self.rescue_bed_for(s).is_some()
+    }
+
+    /// Next to the patient: pick it up and head for a bed.
+    fn rescue_pick_up(&mut self, s: usize, k: usize, p: usize, now: u64) {
+        let busy = self.combat.f[p].carried_by != NONE || self.ai[p].kind == Kind::Dead;
+        let bed = if busy { None } else { self.rescue_bed_for(p) };
+        let Some(b) = bed else {
+            self.health.jobs.remove(k);
+            self.ai[s].task = Task::Idle;
+            self.ai[s].wake = now + 1;
+            return;
+        };
+        self.beds[b].occupant = p as u32;
+        self.carry_start(s, p, now);
+        self.health.jobs[k].step = CStep::Carry(b as i32);
+        let t = self.beds[b].tile;
+        self.request_path(s, Goals::one(t), now);
+    }
+
+    /// At the bed with the patient: lay it down.
+    fn rescue_arrive(&mut self, s: usize, k: usize, b: i32, now: u64) {
+        let p = self.health.jobs[k].patient as usize;
+        self.health.jobs.remove(k);
+        if let Some(v) = self.carry_drop(s, now) {
+            self.rescue_lay_down(v, b, now);
+            self.combat.stats.rescues += 1;
+            let (dn, pn) = (self.uname(s), self.uname(p));
+            self.health.stats.events.push((now, format!("{dn} carried {pn} to bed.")));
+        } else {
+            self.rescue_free_bed(b, p as u32);
+        }
+        self.ai[s].task = Task::Idle;
+        self.decide(s, now);
+    }
+
+    /// Put a carried patient down: in bed `b` (reserved for it) or on the floor (-1).
+    pub(crate) fn rescue_lay_down(&mut self, v: usize, b: i32, now: u64) {
+        if self.ai[v].kind == Kind::Dead {
+            self.rescue_free_bed(b, v as u32);
+            return;
+        }
+        let f = &mut self.combat.f[v];
+        f.role = crate::combat::Role::Patient;
+        f.sub = Sub::Resting(b);
+        if b >= 0 {
+            self.beds[b as usize].occupant = v as u32;
+        }
+        self.ai[v].task = Task::Combat;
+        self.ai[v].wake = now + 1;
+    }
+
+    pub(crate) fn rescue_free_bed(&mut self, b: i32, p: u32) {
+        if b >= 0 && (b as usize) < self.beds.len() && self.beds[b as usize].occupant == p {
+            self.beds[b as usize].occupant = NONE;
+        }
+    }
+
+    /// [raids hook] A carrier died or passed out: its rescue job ends.
+    pub(crate) fn health_carry_dropped(&mut self, s: usize) {
+        let Some(k) = self.care_job_of(s) else { return };
+        let j = self.health.jobs.remove(k);
+        if let CStep::Carry(b) = j.step {
+            self.rescue_free_bed(b, j.patient);
+        }
+        let p = j.patient as usize;
+        if p < self.combat.f.len() && self.combat.f[p].carried_by == NONE && self.ai[p].kind != Kind::Dead {
+            let now = self.ticks;
+            self.rescue_lay_down(p, -1, now);
+        }
+    }
+
+    /// Every 100 ticks for wounded units: crawl (slow) while unable to stand.
+    pub(crate) fn health_gait(&mut self, s: usize) {
+        if self.ai[s].kind == Kind::Dead {
+            return;
+        }
+        let crawl = self.cannot_stand(s);
+        if crawl == self.combat.f[s].crawl {
+            return;
+        }
+        self.combat.f[s].crawl = crawl;
+        let base = self.world.units[self.ai[s].uidx].walk_speed;
+        let base = if base > 0 { base } else { 900 };
+        self.ai[s].speed = if crawl { base * CRAWL_FACTOR } else { base };
+        if crawl {
+            self.combat.stats.crawlers += 1;
+        }
     }
 }
 

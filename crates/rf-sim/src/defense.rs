@@ -1354,7 +1354,8 @@ impl Sim {
         if c == 0 {
             return false;
         }
-        if !self.def.reload_jobs.is_empty() && self.try_reload_job(s, c, now) {
+        let restricted = self.alert_restricted(s); // [military2] civilian alert: levers inside only
+        if !restricted && !self.def.reload_jobs.is_empty() && self.try_reload_job(s, c, now) {
             return true;
         }
         for k in 0..self.def.lever_jobs.len() {
@@ -1363,7 +1364,7 @@ impl Sim {
                 continue;
             }
             let goals = self.building_goals(j.lever);
-            if !goals.as_slice().iter().any(|&t| self.nav.comp_root(t as usize) == c) {
+            if !goals.as_slice().iter().any(|&t| self.nav.comp_root(t as usize) == c && !self.alert_blocks(s, t as usize)) {
                 continue;
             }
             self.def.lever_jobs[k].claimed = s as u32;

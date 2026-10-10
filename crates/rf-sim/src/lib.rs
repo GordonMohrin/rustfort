@@ -54,6 +54,10 @@ pub use defense::{DefenseStats, MechKind}; // [defense]
 pub mod combat;
 pub mod invasion;
 pub mod military;
+mod raids; // [military2] ambushes, thieves, snatchers, siege camps and monsters
+pub use raids::RaidKind; // [military2]
+mod barracks; // [military2] barracks, sparring, patrols, uniforms and ammo per squad
+pub use barracks::SquadEquipment; // [military2]
 pub use combat::CombatStats;
 mod ranged; // [ranged]
 pub use ranged::RangedStats; // [ranged]
@@ -1578,6 +1582,9 @@ impl Sim {
         if carrying >= 0 {
             self.set_item_pos(carrying, p);
         }
+        if self.combat.carriers > 0 {
+            self.carry_follow(s, q, p); // [military2] carried children and patients
+        }
     }
 
     fn step(&mut self, s: usize, now: u64) {
@@ -1631,10 +1638,10 @@ impl Sim {
             return;
         }
         let restricted = self.alert_restricted(s); // [r7] civilian alert: burrow jobs only
-        if !restricted && self.health_decide(s, now) {
+        if self.health_decide(s, now) { // [military2] doctors work inside the alert burrow too
             return; // [moods] doctors and caretakers
         }
-        if !restricted && self.defense_try_job(s, now) {
+        if self.defense_try_job(s, now) { // [military2] levers inside the alert burrow too
             return; // [defense] Pull the Lever
         }
         if !restricted && self.society_decide(s, now) {
@@ -1977,7 +1984,7 @@ impl Sim {
                 Some(t) => t,
                 None => continue,
             };
-            let d = manhattan(up, self.nav.xyz(t));
+            let d = manhattan(up, self.nav.xyz(t)) + if self.alert_blocks(s, t) { 1 << 20 } else { 0 }; // [military2] alert: burrow first
             if d < best.0 && self.nav.comp_near(t) == c {
                 best = (d, id);
             }
@@ -1995,6 +2002,9 @@ impl Sim {
         let up = self.nav.xyz(pos);
         let uid = self.ai[s].id;
         let mut best: (i32, i32) = (i32::MAX, -1);
+        if let Some(b) = self.barracks_bed(s) {
+            best = (i32::MIN, b); // [military2] soldiers on duty sleep in their barracks
+        }
         // Own bed first, then the nearest free unowned bed (wiki "Sleep").
         for (b, bed) in self.beds.iter().enumerate() {
             if bed.occupant != NONE || (bed.owner >= 0 && bed.owner != uid) {
@@ -2003,7 +2013,7 @@ impl Sim {
             if c == 0 || self.nav.comp_near(bed.tile as usize) != c {
                 continue;
             }
-            let d = if bed.owner == uid { -1 } else { manhattan(up, self.nav.xyz(bed.tile as usize)) };
+            let d = if bed.owner == uid { -1 } else { manhattan(up, self.nav.xyz(bed.tile as usize)) } + if self.alert_blocks(s, bed.tile as usize) { 1 << 20 } else { 0 }; // [military2]
             if d < best.0 {
                 best = (d, b as i32);
             }
