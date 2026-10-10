@@ -1619,7 +1619,9 @@ impl Sim {
             }
             Kind::Worker => {}
         }
+        let p0 = perf::prof::t(); // [perf12]
         self.update_needs(s, now);
+        perf::prof::add(perf::prof::D0 + 15, p0); // [perf12]
         let (th, hu, sl) = (self.ai[s].thirst, self.ai[s].hunger, self.ai[s].sleep);
         if th >= needs::THIRST_DEATH {
             self.kill(s, now, "has died of dehydration");
@@ -1754,7 +1756,16 @@ impl Sim {
     fn decide(&mut self, s: usize, now: u64) {
         let _p = perf::prof::Guard::new(perf::prof::DECIDE); // [perf11]
         self.stats.decisions += 1;
-        if self.moods_decide(s, now) {
+        // [perf12] cycle counters per sub-call (only with the `prof` feature)
+        macro_rules! pf {
+            ($k:expr, $e:expr) => {{
+                let p0 = perf::prof::t();
+                let r = $e;
+                perf::prof::add(perf::prof::D0 + $k, p0);
+                r
+            }};
+        }
+        if pf!(0, self.moods_decide(s, now)) {
             return; // [moods] strange mood, insanity
         }
         if self.justice_confined(s, now) {
@@ -1784,7 +1795,7 @@ impl Sim {
             return;
         }
         // [combat] soldiers on duty, civilian alert, wounded resting
-        if self.combat_decide(s, now) {
+        if pf!(1, self.combat_decide(s, now)) {
             return;
         }
         if self.social_no_work(s) {
@@ -1793,28 +1804,28 @@ impl Sim {
             return;
         }
         let restricted = self.alert_restricted(s); // [r7] civilian alert: burrow jobs only
-        if self.health_decide(s, now) { // [military2] doctors work inside the alert burrow too
+        if pf!(2, self.health_decide(s, now)) { // [military2] doctors work inside the alert burrow too
             return; // [moods] doctors and caretakers
         }
-        if self.defense_try_job(s, now) { // [military2] levers inside the alert burrow too
+        if pf!(3, self.defense_try_job(s, now)) { // [military2] levers inside the alert burrow too
             return; // [defense] Pull the Lever
         }
-        if self.power_try_job(s, now) {
+        if pf!(4, self.power_try_job(s, now)) {
             return; // [gaps10] Operate pump by hand
         }
         if restricted && self.alert_burial(s, now) {
             return; // [military2] burial inside the alert burrow
         }
-        if !restricted && self.society_decide(s, now) {
+        if !restricted && pf!(5, self.society_decide(s, now)) {
             return; // [society] burial, depot hauling, broker
         }
-        if !restricted && self.animals_decide(s, now) {
+        if !restricted && pf!(6, self.animals_decide(s, now)) {
             return; // [animals] lead to pasture, slaughter, training
         }
-        if !restricted && (self.lifestyle_decide(s, now) || self.society2_idle(s, now)) {
+        if !restricted && (pf!(7, self.lifestyle_decide(s, now)) || pf!(8, self.society2_idle(s, now))) {
             return; // [society2] replacing worn clothing; occupations work at their location
         }
-        if self.construct_try(s, now) {
+        if pf!(9, self.construct_try(s, now)) {
             return; // [construct] constructions, detailing, dumping
         }
         let ai = &self.ai[s];
@@ -1825,13 +1836,13 @@ impl Sim {
         let periodic = now >= ai.next_search;
         if jobs_changed || haul_changed || prod_changed || periodic {
             // Each search only runs when its own work list changed (or periodically).
-            if (jobs_changed || periodic) && self.try_job(s, now) {
+            if (jobs_changed || periodic) && pf!(10, self.try_job(s, now)) {
                 return;
             }
-            if (prod_changed || periodic) && self.try_prod_timed(s, now) {
+            if (prod_changed || periodic) && pf!(11, self.try_prod_timed(s, now)) {
                 return;
             }
-            if (haul_changed || periodic) && self.try_haul(s, now) {
+            if (haul_changed || periodic) && pf!(12, self.try_haul(s, now)) {
                 return;
             }
             let (ej, eh, ep) = (self.epoch_jobs, self.epoch_haul, self.prod.epoch);
@@ -1841,10 +1852,10 @@ impl Sim {
             ai.seen_prod = ep;
             ai.next_search = now + RESEARCH_TICKS + (s as u64 % 64);
         }
-        if !restricted && self.animals_idle_work(s, now) {
+        if !restricted && pf!(13, self.animals_idle_work(s, now)) {
             return; // [animals] hunting and fishing for idle dwarves
         }
-        self.wander(s, now, &mut r);
+        pf!(14, self.wander(s, now, &mut r));
     }
 
     fn wander(&mut self, s: usize, now: u64, r: &mut Rng) {

@@ -1118,6 +1118,7 @@ impl Sim {
                 sh.busy = NONE;
             }
         }
+        self.prod.avail_gen += 1; // [perf12] the workshop is free again
         for &id in &a.collected {
             if self.item_idx.contains_key(&id) {
                 self.release_reagent(id);

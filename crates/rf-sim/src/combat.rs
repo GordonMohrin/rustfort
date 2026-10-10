@@ -527,7 +527,7 @@ pub(crate) struct Combat {
     pub wounded: Vec<u32>,
     /// Fort units (citizens and tame animals) for target and threat searches, ascending.
     pub fort: Vec<u32>,
-    pub log: VecDeque<String>,
+    pub log: VecDeque<LogLine>, // [perf12] blows formatted lazily (saved as text)
     pub log_total: u64,
     pub stats: CombatStats,
     pub mil: crate::military::Military,
@@ -751,11 +751,83 @@ fn flags_of(names: &[String]) -> u16 {
 
 impl Combat {
     pub(crate) fn log_line(&mut self, line: String) {
+        self.log_push(LogLine::Text(line)); // [perf12]
+    }
+
+    /// [perf12] Append a log entry (text or a blow formatted later).
+    pub(crate) fn log_push(&mut self, line: LogLine) {
         self.log.push_back(line);
         self.log_total += 1;
         if self.log.len() > LOG_MAX {
             self.log.pop_front();
         }
+    }
+}
+
+/// [perf12] One combat log line. Blows keep their parts and are formatted only when the log is
+/// read (`Sim::combat_log`, saves): a siege strikes thousands of blows per day, the report
+/// screen shows the last few, and the old per-blow `format!`/`join`/`replace` chain cost about
+/// a third of `strike`. Saved as the formatted text, so the save format is unchanged (a loaded
+/// log holds `Text` lines).
+#[derive(Clone)]
+pub(crate) enum LogLine {
+    Text(String),
+    Strike(Box<StrikeLine>),
+}
+
+/// [perf12] The parts of a "X hacks Y in the Z, ..." line, as `strike` produced them.
+#[derive(Clone)]
+pub(crate) struct StrikeLine {
+    pub an: String,
+    pub verb3: String,
+    pub dn: String,
+    pub loc: String,
+    pub with: String,
+    /// Layer effects; a leading '~' marks a soft-tissue effect (only the deepest of a run shows).
+    pub results: Vec<String>,
+    pub tail: String,
+    /// The formatted line, filled on first read.
+    pub text: std::sync::OnceLock<String>,
+}
+
+impl StrikeLine {
+    /// The exact text the per-blow formatting produced.
+    fn format(&self) -> String {
+        // DF reports the deepest soft-tissue effect of each run, plus bones and organs.
+        let results = &self.results;
+        let mut shown: Vec<&str> = Vec::new();
+        for (k, t) in results.iter().enumerate() {
+            let soft_next = results.get(k + 1).map(|n| n.starts_with('~')).unwrap_or(false);
+            if t.starts_with('~') && soft_next {
+                continue;
+            }
+            shown.push(t.trim_start_matches('~'));
+        }
+        let res = if shown.is_empty() { "but it has no effect".to_string() } else { shown.join(" and ").replace("and into", "into").replace("and and", "and") };
+        let end = if self.tail.is_empty() { "!".to_string() } else { self.tail.clone() };
+        format!("{} {} {} in the {}{}, {}{}", cap(&self.an), self.verb3, self.dn, self.loc, self.with, res, if end == "!" { end } else { format!(",{end}") }.replace(",,", ",").replace(", and the severed", " and the severed"))
+    }
+}
+
+impl LogLine {
+    /// The line as shown in the reports.
+    pub(crate) fn text(&self) -> &str {
+        match self {
+            LogLine::Text(s) => s,
+            LogLine::Strike(b) => b.text.get_or_init(|| b.format()),
+        }
+    }
+}
+
+impl serde::Serialize for LogLine {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(self.text())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for LogLine {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        String::deserialize(d).map(LogLine::Text)
     }
 }
 
@@ -1872,19 +1944,10 @@ impl Sim {
                 died = Some("head");
             }
         }
-        // DF reports the deepest soft-tissue effect of each run, plus bones and organs.
+        // [perf12] The line is formatted when the log is read (`StrikeLine::format`).
         let p_log = crate::perf::prof::Guard::new(crate::perf::prof::STRIKE_LOG); // [perf11]
-        let mut shown: Vec<&str> = Vec::new();
-        for (k, t) in results.iter().enumerate() {
-            let soft_next = results.get(k + 1).map(|n| n.starts_with('~')).unwrap_or(false);
-            if t.starts_with('~') && soft_next {
-                continue;
-            }
-            shown.push(t.trim_start_matches('~'));
-        }
-        let res = if shown.is_empty() { "but it has no effect".to_string() } else { shown.join(" and ").replace("and into", "into").replace("and and", "and") };
-        let end = if tail.is_empty() { "!".to_string() } else { tail };
-        self.combat.log_line(format!("{} {} {} in the {}{}, {}{}", cap(&an), atk.verb3, dn, loc, with, res, if end == "!" { end } else { format!(",{end}") }.replace(",,", ",").replace(", and the severed", " and the severed")));
+        let line = StrikeLine { an, verb3: atk.verb3, dn, loc, with, results, tail, text: std::sync::OnceLock::new() };
+        self.combat.log_push(LogLine::Strike(Box::new(line)));
         drop(p_log); // [perf11]
         if bruise_brain && died.is_none() {
             let until = now + 100 + r.below(200) as u64;

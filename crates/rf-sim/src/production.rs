@@ -451,6 +451,25 @@ pub(crate) struct Prod {
     pub standing: Vec<i32>,
     /// [calib11-econ] Base daily amount of each standing order (before the shortfall bonus).
     pub standing_base: HashMap<i32, i32>,
+    /// [perf12] Labors that can possibly find production work (see `prod_avail_labors`); a
+    /// pure cache, rebuilt after loading.
+    #[serde(skip)]
+    pub avail: AvailCache,
+    /// [perf12] Bumped wherever production work can become available outside the paths that
+    /// already bump `epoch` (index rebuilds, queue refreshes, a strange mood freeing its shop).
+    #[serde(skip)]
+    pub avail_gen: u64,
+}
+
+/// [perf12] Cached upper bound of the labors with production work (`prod_avail_labors`).
+#[derive(Clone, Copy, Default)]
+pub(crate) struct AvailCache {
+    valid: bool,
+    epoch: u64,
+    gen: u64,
+    /// The cache holds while `now < until` (the earliest end of a block that hides work).
+    until: u64,
+    mask: u64,
 }
 
 /// Stock and production overview (for the bench report and the UI).
@@ -973,6 +992,7 @@ impl Sim {
     /// Rebuild the workshop / farm / construction / well index from `world.buildings`,
     /// keeping per-building state.
     pub(crate) fn rebuild_prod_index(&mut self) {
+        self.prod.avail_gen += 1; // [perf12]
         let mut old_shops: HashMap<i32, Shop> = self.prod.shops.drain(..).map(|s| (s.bid, s)).collect();
         // Farm indices change below: pending farm work must be rebuilt before it is used again.
         self.prod.farm_work.clear();
@@ -1147,6 +1167,7 @@ impl Sim {
     /// Wiki "Farming": when the season changes and the planted crop cannot grow any more, the
     /// immature plants are destroyed.
     fn season_change(&mut self, season: i32) {
+        self.prod.avail_gen += 1; // [perf12]
         let bit = season_bit(season);
         let plants = &self.prod.plants;
         for f in &mut self.prod.farms {
@@ -1336,6 +1357,7 @@ impl Sim {
     }
 
     fn refresh_shops(&mut self) {
+        self.prod.avail_gen += 1; // [perf12]
         for si in 0..self.prod.shops.len() {
             let (bi, bid) = (self.prod.shops[si].bi, self.prod.shops[si].bid);
             let mut avail = std::mem::take(&mut self.prod.shops[si].avail);
@@ -1383,6 +1405,7 @@ impl Sim {
     }
 
     fn refresh_farm_work(&mut self, now: u64) {
+        self.prod.avail_gen += 1; // [perf12]
         let mut work = std::mem::take(&mut self.prod.farm_work);
         work.clear();
         let bit = season_bit(self.prod.season);
@@ -1709,11 +1732,71 @@ impl Sim {
         r
     }
 
+    /// [perf12] Upper bound of the labors for which `try_prod` can find a candidate: the recipe
+    /// labors of free, unblocked workshops with runnable queue entries, PLANT when farm work is
+    /// waiting, and the labors of unclaimed constructions. Every filter of `try_prod` that is
+    /// left out here (alert, power, reachability) only removes candidates, so a dwarf without
+    /// any of these labors finds nothing, exactly as the full search would.
+    ///
+    /// At 487 citizens about 3 700 production searches ran per 1000 ticks (every idle dwarf
+    /// after each production pass), 96 % of them without a single candidate. The bound is
+    /// cached until `epoch` or `avail_gen` changes (work freed or refreshed) or a block that
+    /// hides work runs out; claiming work only shrinks the true set, so the cache stays an
+    /// upper bound in between.
+    pub(crate) fn prod_avail_labors(&mut self, now: u64) -> u64 {
+        let a = self.prod.avail;
+        if a.valid && a.epoch == self.prod.epoch && a.gen == self.prod.avail_gen && now < a.until {
+            return a.mask;
+        }
+        let (mut mask, mut until) = (0u64, u64::MAX);
+        for sh in &self.prod.shops {
+            if sh.busy != NONE || sh.avail.is_empty() {
+                continue;
+            }
+            if sh.blocked_until > now {
+                until = until.min(sh.blocked_until);
+                continue;
+            }
+            for &(_, r) in &sh.avail {
+                mask |= RECIPES[r as usize].labor;
+            }
+        }
+        for &(fi, k) in &self.prod.farm_work {
+            if mask & labor::PLANT != 0 {
+                break;
+            }
+            let Some(t) = self.prod.farms.get(fi as usize).and_then(|f| f.tiles.get(k as usize)) else { continue };
+            if t.claimed {
+                continue;
+            }
+            if t.blocked_until > now {
+                until = until.min(t.blocked_until);
+                continue;
+            }
+            mask |= labor::PLANT;
+        }
+        for cs in &self.prod.cons {
+            if cs.claimed {
+                continue;
+            }
+            if cs.blocked_until > now {
+                until = until.min(cs.blocked_until);
+                continue;
+            }
+            mask |= cs.labor;
+        }
+        self.prod.avail = AvailCache { valid: true, epoch: self.prod.epoch, gen: self.prod.avail_gen, until, mask };
+        mask
+    }
+
     /// Look for workshop, farm or construction work (called by idle workers).
     pub(crate) fn try_prod(&mut self, s: usize, now: u64) -> bool {
         let labors = self.ai[s].labors;
         if labors & labor::ANY_PROD == 0 {
             return false;
+        }
+        if labors & self.prod_avail_labors(now) == 0 {
+            return false; // [perf12] no candidate for any of this dwarf's labors
         }
         let pos = self.ai[s].pos as usize;
         let c = self.nav.comp_near(pos);

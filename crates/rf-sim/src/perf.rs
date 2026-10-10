@@ -12,14 +12,18 @@ use std::collections::HashMap;
 /// is an empty inline function. Counts are inclusive (a nested counter is also in its caller).
 #[allow(dead_code)] // the names and the table size are only read with the `prof` feature
 pub(crate) mod prof {
-    pub const N: usize = 33;
+    pub const N: usize = 49; // [perf12] +16 decide sub-calls
     pub const NAMES: [&str; N] = [
         "think worker", "think other", "combat_think", "fighter_think", "soldier_think", "civilian_think", "find_target", "attack",
         "strike", "threat_scan", "request_path", "decide", "sync_wounds", "solve_paths", "commit_paths", "pursue",
         "ranged_pursue", "war_wreck_think", "destroyer_think", "raid_think", "try_haul", "haul_scan", "leave_think", "patient_think",
         "uname", "armor_over", "combat_kill", "wielded", "flow_path", "strike log", "haul no item", "haul no dest",
         "haul skipped",
+        // [perf12] decide sub-calls
+        "d moods", "d combat", "d health", "d defense", "d power", "d society", "d animals", "d lifestyle",
+        "d society2", "d construct", "d try_job", "d try_prod", "d try_haul", "d idle_work", "d wander", "d needs",
     ];
+    pub const D0: usize = 33; // [perf12] first decide sub-call counter (order of NAMES)
     pub const HAUL_NO_ITEM: usize = 30;
     pub const HAUL_NO_DEST: usize = 31;
     pub const HAUL_SKIPPED: usize = 32;
@@ -229,6 +233,11 @@ impl HaulCache {
     }
 }
 
+thread_local! {
+    /// [perf12] Scratch list of haul entries of the wanted categories (`haul_best_per_cat`).
+    static HAUL_SEL: std::cell::RefCell<Vec<u32>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 /// Best haul candidate of one category: (Manhattan distance, item id, item tile).
 pub(crate) type HaulBest = (i32, i32, usize);
 pub(crate) const NO_HAUL: HaulBest = (i32::MAX, i32::MAX, 0);
@@ -247,12 +256,21 @@ impl Sim {
         let mut best = [NO_HAUL; 17];
         let (ux, uy, uz) = (up.0 as i32, up.1 as i32, up.2 as i32);
         let ver = self.nav.version;
-        for (k, &id) in self.haul.iter().enumerate() {
-            // The cache array is read sequentially; only wanted items touch item data.
+        // [perf12] First collect the entries of wanted categories without branches (the
+        // categories are mixed, so a branch per entry mispredicts a lot), then look at those
+        // only. The best per category is the smallest (distance, id), whatever the order.
+        let mut sel = HAUL_SEL.with(|v| std::mem::take(&mut *v.borrow_mut()));
+        sel.clear();
+        sel.resize(self.haul.len() + 1, 0);
+        let mut m = 0usize;
+        for (k, e) in self.haul_cat.iter().enumerate() {
+            sel[m] = k as u32;
+            m += ((want >> (e.cat as u32 & 31)) & 1) as usize;
+        }
+        for &k in &sel[..m] {
+            let k = k as usize;
+            let id = self.haul[k];
             let e = &mut self.haul_cat[k];
-            if want & (1u32 << e.cat) == 0 {
-                continue;
-            }
             let idx = self.haul_ix[k] as usize;
             let m = &self.imeta[idx];
             if want & m.cat.bit() == 0 || m.reserved > 0 || m.blocked_until > now {
@@ -282,6 +300,7 @@ impl Sim {
             }
             *b = (d, id, t);
         }
+        HAUL_SEL.with(|v| *v.borrow_mut() = sel); // [perf12] keep the buffer
         best
     }
 

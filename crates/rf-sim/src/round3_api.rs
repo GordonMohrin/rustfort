@@ -167,6 +167,6 @@ impl Sim {
 
     /// Recent combat report lines (DF "Reports" screen), newest last.
     pub fn combat_log(&self) -> Vec<String> {
-        self.combat.log.iter().cloned().collect() // [combat]
+        self.combat.log.iter().map(|l| l.text().to_string()).collect() // [combat] [perf12] blows formatted here
     }
 }
