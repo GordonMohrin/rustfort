@@ -17,7 +17,9 @@ pub fn draw_ui(g: &mut Game) {
     super::topbar::draw_zbar(g, tb_y - 8.0 * s);
     let top = super::topbar::TOPBAR_H * s + 6.0 * s;
     let right = screen_width() - super::topbar::ZBAR_W * s - 14.0 * s;
-    super::panels::draw_sheet(g, top, toolbar_top.min(tb_y) - 6.0 * s, right);
+    if !super::round8::hides_sheet(g) {
+        super::panels::draw_sheet(g, top, toolbar_top.min(tb_y) - 6.0 * s, right); // [app8] not under the round-8 screens
+    }
     super::minimap::draw(g, top, right); // [app8]
     // Announcements stay out of the way of the big screens.
     // Announcements stay left of the right-hand sheet.

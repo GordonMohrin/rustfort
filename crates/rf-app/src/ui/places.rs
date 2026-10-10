@@ -87,7 +87,7 @@ pub fn draw_places(g: &mut Game) {
     let s = g.ui.scale;
     let lh = g.ui.line_h();
     let Some(c) = frame(g, "Places", 1300.0) else { return };
-    let (hit, _) = tabs(g, c.x + 10.0 * 8.0 * s, c.y - 3.0 * s, PLACE_TABS, g.r8.pl_tab.min(PLACE_TABS.len() - 1));
+    let (hit, _) = tabs(g, super::round8::tabs_x(g, c, "Places"), c.y - 3.0 * s, PLACE_TABS, g.r8.pl_tab.min(PLACE_TABS.len() - 1));
     if let Some(i) = hit {
         g.r8.pl_tab = i;
         g.r8.pl_scroll = 0;
@@ -171,8 +171,12 @@ fn draw_locations(g: &mut Game, c: Rect) {
         if l.kind == "Guildhall" && !l.profession.is_empty() {
             sub = format!("Guildhall of the {}", pretty(&l.profession).to_lowercase());
         }
-        let zones: Vec<String> = l.zones.iter().map(|z| zone_label(g, *z)).collect();
-        sub = format!("{sub}  -  {}  -  {}", if zones.is_empty() { "no zone".into() } else { zones.join(", ") }, if l.allow_visitors { "visitors allowed" } else { "citizens only" });
+        let zones: Vec<String> = l.zones.iter().map(|z| format!("\"{}\"", zone_label(g, *z))).collect();
+        sub = format!(
+            "{sub}, in zone {}, {}",
+            if zones.is_empty() { "(none)".into() } else { zones.join(", ") },
+            if l.allow_visitors { "visitors allowed" } else { "citizens only" }
+        );
         g.font.draw(&clip(&sub, ((c.w - 60.0 * s) / (8.0 * s)) as usize), c.x + 44.0 * s, y + 4.0 * s + lh, s, col::TEXT_DIM);
         // Visitors toggle.
         let vr = Rect::new(c.x + c.w - 30.0 * s, y + 4.0 * s, 26.0 * s, 26.0 * s);
@@ -426,7 +430,7 @@ pub fn draw_justice(g: &mut Game) {
     let s = g.ui.scale;
     let lh = g.ui.line_h();
     let Some(c) = frame(g, "Justice", 1200.0) else { return };
-    let (hit, _) = tabs(g, c.x + 10.0 * 8.0 * s, c.y - 3.0 * s, JUSTICE_TABS, g.r8.j_tab.min(2));
+    let (hit, _) = tabs(g, super::round8::tabs_x(g, c, "Justice"), c.y - 3.0 * s, JUSTICE_TABS, g.r8.j_tab.min(2));
     if let Some(i) = hit {
         g.r8.j_tab = i;
         g.r8.j_scroll = 0;
@@ -558,21 +562,12 @@ pub fn draw_objects(g: &mut Game) {
     let s = g.ui.scale;
     let lh = g.ui.line_h();
     let Some(c) = frame(g, "Objects: artifacts", 1400.0) else { return };
-    let w = &g.sim.world;
-    let mut arts: Vec<&rf_core::Item> = w.items.iter().filter(|it| it.flags.artifact).collect();
-    arts.sort_by(|a, b| a.name.cmp(&b.name));
-    let records = g.sim.mood_records();
-    let rows: Vec<(i32, String, String, String, String, String, Option<rf_core::Pos>, i32)> = arts
-        .iter()
-        .map(|it| {
-            let kind = if it.subtype.is_empty() { pretty(&it.kind) } else { item_subtype_name(w, &it.subtype) };
-            let mat = w.material(it.mat).map(|m| m.name.clone()).unwrap_or_default();
-            let (loc, pos) = item_location(g, it);
-            let maker = records.iter().find(|r| r.artifact_id == it.id).map(|r| r.name.clone()).unwrap_or_else(|| "unknown (made in DF)".into());
-            let name = if it.name.is_empty() { it.desc.clone() } else { it.name.clone() };
-            (it.id, name, kind, mat, loc, maker, pos, it.value)
-        })
-        .collect();
+    let now = get_time();
+    if g.r8.o_rows.is_empty() || now - g.r8.o_at > 2.0 {
+        g.r8.o_rows = artifact_rows(g);
+        g.r8.o_at = now;
+    }
+    let rows = g.r8.o_rows.clone();
     let y0 = c.y + 1.5 * GH * s + 14.0 * s;
     let xs = [c.x + 4.0 * s, c.x + 44.0 * 8.0 * s, c.x + 62.0 * 8.0 * s, c.x + 76.0 * 8.0 * s, c.x + 110.0 * 8.0 * s, c.x + c.w - 9.0 * 8.0 * s];
     for (x, t) in xs.iter().zip(["Name", "Item", "Material", "Where", "Made by", "Value"]) {
@@ -583,7 +578,8 @@ pub fn draw_objects(g: &mut Game) {
     let vis = ((list.h / row_h) as usize).max(1);
     g.r8.o_scroll = scroll(g, list, g.r8.o_scroll, rows.len(), vis);
     let mut goto = None;
-    for (k, (id, name, kind, mat, loc, maker, pos, value)) in rows.iter().enumerate().skip(g.r8.o_scroll).take(vis) {
+    for (k, a) in rows.iter().enumerate().skip(g.r8.o_scroll).take(vis) {
+        let (name, kind, mat, loc, maker, pos, value) = (&a.name, &a.kind, &a.mat, &a.place, &a.maker, &a.pos, &a.value);
         let y = list.y + (k - g.r8.o_scroll) as f32 * row_h;
         let rr = Rect::new(list.x, y, list.w, row_h - 1.0);
         if k % 2 == 0 {
@@ -599,7 +595,6 @@ pub fn draw_objects(g: &mut Game) {
         g.font.draw(&clip(loc, 33), xs[3], ty, s, if pos.is_some() { col::TEXT } else { col::TEXT_DIM });
         g.font.draw(&clip(maker, ((xs[5] - xs[4]) / (8.0 * s)) as usize - 1), xs[4], ty, s, col::TEXT_DIM);
         g.font.draw(&format!("{value}☼"), xs[5], ty, s, col::TEXT_DIM);
-        let _ = id;
     }
     g.font.draw(&format!("{} artifacts. Click one to go to it.", rows.len()), c.x, c.y + c.h - GH * s, s, col::TEXT_DIM);
     if let Some(p) = goto {
@@ -607,6 +602,39 @@ pub fn draw_objects(g: &mut Game) {
         g.screen = Screen::None;
         g.selected = Selected::Tile(p);
     }
+}
+
+/// The artifacts of the world for the Objects screen, by name.
+pub fn artifact_rows(g: &Game) -> Vec<super::round8::ArtifactRow> {
+    let w = &g.sim.world;
+    let records = g.sim.mood_records();
+    let mut v: Vec<super::round8::ArtifactRow> = w
+        .items
+        .iter()
+        .filter(|it| it.flags.artifact)
+        .map(|it| {
+            // DF's own item name is the last "(...)" of the description: "Gulfnet (Battle Axe)".
+            let from_desc = it.desc.trim_end().strip_suffix(')').and_then(|d| d.rfind('(').map(|i| d[i + 1..].to_string()));
+            let kind = match from_desc {
+                Some(k) if !k.is_empty() => k,
+                _ if it.subtype.is_empty() => pretty(&it.kind),
+                _ => item_subtype_name(w, &it.subtype),
+            };
+            let mat = w.material(it.mat).map(|m| m.name.clone()).unwrap_or_default();
+            let (mut place, pos) = item_location(g, it);
+            // On the ground or in furniture: name the room (a named zone) if there is one.
+            if let Some(p) = pos.filter(|_| it.holder < 0) {
+                if let Some(z) = w.buildings.iter().find(|b| b.kind == "Civzone" && !b.name.is_empty() && b.contains(p)) {
+                    place = format!("{place} ({})", z.name);
+                }
+            }
+            let maker = records.iter().find(|r| r.artifact_id == it.id).map(|r| r.name.clone()).unwrap_or_else(|| "unknown (made in DF)".into());
+            let name = if it.name.is_empty() { it.desc.clone() } else { it.name.clone() };
+            super::round8::ArtifactRow { id: it.id, name, kind, mat, place, maker, pos, value: it.value }
+        })
+        .collect();
+    v.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id)));
+    v
 }
 
 fn item_subtype_name(w: &rf_core::World, sub: &str) -> String {
@@ -697,7 +725,7 @@ pub fn draw_world(g: &mut Game) {
         _ => 3,
     };
     ents.sort_by(|a, b| rank(&a.relation).cmp(&rank(&b.relation)).then(a.race.cmp(&b.race)).then(a.id.cmp(&b.id)));
-    let xs = [c.x + 4.0 * s, c.x + 36.0 * 8.0 * s, c.x + 54.0 * 8.0 * s, c.x + 72.0 * 8.0 * s, c.x + 84.0 * 8.0 * s];
+    let xs = [c.x + 4.0 * s, c.x + 36.0 * 8.0 * s, c.x + 54.0 * 8.0 * s, c.x + 72.0 * 8.0 * s, c.x + 92.0 * 8.0 * s];
     for (x, t) in xs.iter().zip(["Name", "Race", "Kind", "Relation", "Trade"]) {
         g.font.draw(t, *x, y0, s, col::TEXT_DIM);
     }
@@ -722,8 +750,8 @@ pub fn draw_world(g: &mut Game) {
             _ => "No contact",
         };
         g.font.draw(rel, xs[3], ty, s, relation_color(&e.relation));
-        if e.trades {
-            g.font.draw("trades", xs[4], ty, s, col::TEXT_GOOD);
+        if e.trades && e.relation != "Own" {
+            g.font.draw("sends caravans", xs[4], ty, s, col::TEXT_GOOD);
         }
     }
     let wars = ents.iter().filter(|e| e.relation == "War").count();
@@ -751,6 +779,11 @@ fn draw_caravans(g: &mut Game, c: Rect) {
             y += lh + 6.0 * s;
         }
     }
+    for l in super::round4::population_lines(g).into_iter().filter(|l| l.to_lowercase().contains("caravan")) {
+        g.font.draw(&l, c.x, y, s, col::TEXT);
+        y += lh;
+    }
+    y += 6.0 * s;
     let carav = g.sim.world.caravans.clone();
     g.font.draw(&format!("Caravans in the save ({}):", carav.len()), c.x, y, s, col::BORDER_HI);
     y += lh;

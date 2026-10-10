@@ -32,6 +32,21 @@ pub fn training_label(t: &str) -> String {
     }
 }
 
+/// The owner, if it is a unit of this world (old exports carry 0 = no field).
+pub fn owner_of(g: &Game, a: &AnimalInfo) -> Option<i32> {
+    (a.owner != a.unit && g.sim.world.unit(a.owner).is_some()).then_some(a.owner)
+}
+
+/// The pen/pasture, if it is a zone of this world.
+pub fn pasture_of(g: &Game, a: &AnimalInfo) -> Option<i32> {
+    g.sim.world.building(a.pasture).filter(|b| b.kind == "Civzone").map(|b| b.id)
+}
+
+/// Creature name from the save's raws (`BIRD_CHICKEN` -> "chicken").
+pub fn creature_name(g: &Game, race: &str) -> String {
+    g.sim.world.creature_raws.iter().find(|c| c.token == race).map(|c| c.name.clone()).filter(|n| !n.is_empty()).unwrap_or_else(|| pretty(race).to_lowercase())
+}
+
 fn on_map(g: &Game, a: &AnimalInfo) -> bool {
     g.sim.world.unit(a.unit).map(|u| u.pos.x >= 0 && !u.flags.inactive).unwrap_or(false)
 }
@@ -46,7 +61,8 @@ pub fn draw(g: &mut Game) {
     let counts: Vec<usize> = (0..TABS.len()).map(|t| all.iter().filter(|a| in_tab(g, a, t)).count()).collect();
     let labels: Vec<String> = TABS.iter().zip(&counts).map(|(t, n)| format!("{t} ({n})")).collect();
     let refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
-    let (hit, _) = tabs(g, c.x + 24.0 * 8.0 * s, c.y - 3.0 * s, &refs, g.r8.an_tab.min(TABS.len() - 1));
+    let tx = c.x + g.font.width("Pets and livestock", 1.5 * s) + 16.0 * s;
+    let (hit, _) = tabs(g, tx, c.y - 3.0 * s, &refs, g.r8.an_tab.min(TABS.len() - 1));
     if let Some(i) = hit {
         g.r8.an_tab = i;
         g.r8.an_scroll = 0;
@@ -94,12 +110,13 @@ pub fn draw(g: &mut Game) {
         if here && g.ui.clicked(nr) {
             act = Some((a.unit, "select"));
         }
-        g.font.draw(&clip(&format!("{} {}", pretty(&a.race).to_lowercase(), sex_sym(&a.caste)), 17), xs[1], ty, s, col::TEXT);
+        g.font.draw(&clip(&format!("{} {}", creature_name(g, &a.race), sex_sym(&a.caste)), 17), xs[1], ty, s, col::TEXT);
         g.font.draw(&clip(&training_label(&a.training), 15), xs[2], ty, s, if a.training.contains("War") || a.training.contains("Hunt") { col::TEXT_HI } else { col::TEXT_DIM });
-        let owner = if a.owner >= 0 { super::round8::unit_label(g, a.owner) } else { "-".into() };
-        g.font.draw(&clip(&owner, 21), xs[3], ty, s, if a.owner >= 0 { col::TEXT_CYAN } else { col::TEXT_DIM });
-        let pasture = if a.pasture >= 0 { zone_label(g, a.pasture) } else { "-".into() };
-        g.font.draw(&clip(&pasture, 21), xs[4], ty, s, if a.pasture >= 0 { col::TEXT_GOOD } else { col::TEXT_DIM });
+        let (own, pas) = (owner_of(g, a), pasture_of(g, a));
+        let owner = own.map(|o| super::round8::unit_label(g, o)).unwrap_or_else(|| "-".into());
+        g.font.draw(&clip(&owner, 21), xs[3], ty, s, if own.is_some() { col::TEXT_CYAN } else { col::TEXT_DIM });
+        let pasture = pas.map(|z| zone_label(g, z)).unwrap_or_else(|| "-".into());
+        g.font.draw(&clip(&pasture, 21), xs[4], ty, s, if pas.is_some() { col::TEXT_GOOD } else { col::TEXT_DIM });
         let mut st: Vec<&str> = Vec::new();
         if a.pregnant {
             st.push("pregnant");
@@ -121,7 +138,7 @@ pub fn draw(g: &mut Game) {
             (if a.slaughter { "PETS_LIVESTOCK_SLAUGHTER_ACTIVE" } else { "PETS_LIVESTOCK_SLAUGHTER_INACTIVE" }, a.slaughter, "slaughter", "Slaughter"),
             (if a.role == "War" { "PETS_LIVESTOCK_WAR_TRAINING_ACTIVE" } else { "PETS_LIVESTOCK_WAR_TRAINING_INACTIVE" }, a.role == "War", "war", "Train for war"),
             (if a.role == "Hunting" { "PETS_LIVESTOCK_HUNT_TRAINING_ACTIVE" } else { "PETS_LIVESTOCK_HUNT_TRAINING_INACTIVE" }, a.role == "Hunting", "hunt", "Train for hunting"),
-            ("ZONE_PICK_ANIMALS", a.pasture >= 0, "pasture", "Assign to a pen/pasture"),
+            ("ZONE_PICK_ANIMALS", pas.is_some(), "pasture", "Assign to a pen/pasture"),
         ];
         for (i, (icon, on, what, tip)) in buttons.iter().enumerate() {
             let r = Rect::new(bx + i as f32 * 30.0 * s, y + (row_h - 2.0 * s - bsz.h) / 2.0, bsz.w, bsz.h);
@@ -180,7 +197,7 @@ pub fn draw(g: &mut Game) {
             .iter()
             .filter(|b| b.kind == "Civzone" && matches!(b.subtype.as_str(), "Pen" | "Pasture"))
             .map(|b| {
-                let n = rows.iter().filter(|a| a.pasture == b.id).count();
+                let n = rows.iter().filter(|a| pasture_of(g, a) == Some(b.id)).count();
                 PickRow { id: b.id, label: zone_label(g, b.id), info: format!("{}x{} z{}, {n} animals", b.x2 - b.x1 + 1, b.y2 - b.y1 + 1, b.z), color: col::TEXT }
             })
             .collect();
@@ -208,9 +225,9 @@ pub fn draw(g: &mut Game) {
 fn in_tab(g: &Game, a: &AnimalInfo, t: usize) -> bool {
     match t {
         1 => on_map(g, a),
-        2 => a.pasture >= 0,
+        2 => pasture_of(g, a).is_some(),
         3 => a.slaughter,
-        4 => a.owner >= 0,
+        4 => owner_of(g, a).is_some(),
         5 => a.pregnant,
         _ => true,
     }

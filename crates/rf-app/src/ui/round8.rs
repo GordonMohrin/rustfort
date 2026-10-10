@@ -70,11 +70,27 @@ pub struct R8Ui {
     pub j_pscroll: usize,
     // ---- objects, world
     pub o_scroll: usize,
+    /// Artifact rows and the real time they were built (refreshed every 2 s).
+    pub o_rows: Vec<ArtifactRow>,
+    pub o_at: f64,
     pub w_tab: usize,
     pub w_scroll: usize,
     // ---- minimap
     pub minimap: bool,
     pub mm: super::minimap::MinimapCache,
+}
+
+/// One line of the artifacts list.
+#[derive(Clone, Debug, Default)]
+pub struct ArtifactRow {
+    pub id: i32,
+    pub name: String,
+    pub kind: String,
+    pub mat: String,
+    pub place: String,
+    pub maker: String,
+    pub pos: Option<Pos>,
+    pub value: i32,
 }
 
 /// A row of a picker list.
@@ -108,6 +124,11 @@ pub fn frame(g: &mut Game, title: &str, max_w: f32) -> Option<Rect> {
     Some(Rect::new(r.x + pad, r.y + pad, r.w - 2.0 * pad, r.h - 2.0 * pad))
 }
 
+/// x of the tab row right of a screen title drawn by [`frame`].
+pub fn tabs_x(g: &Game, c: Rect, title: &str) -> f32 {
+    c.x + g.font.width(title, 1.5 * g.ui.scale) + 16.0 * g.ui.scale
+}
+
 /// A row of text tabs at (x, y). Returns the clicked tab and the x after the last one.
 pub fn tabs(g: &mut Game, x: f32, y: f32, labels: &[&str], cur: usize) -> (Option<usize>, f32) {
     let s = g.ui.scale;
@@ -135,6 +156,9 @@ pub fn scroll(g: &mut Game, area: Rect, cur: usize, n: usize, rows: usize) -> us
 pub fn picker(g: &mut Game, r: Rect, title: &str, rows: &[PickRow], scroll_pos: usize, none_label: Option<&str>) -> (usize, Pick) {
     let s = g.ui.scale;
     let lh = g.ui.line_h();
+    // Modal: dim everything behind it, then an opaque panel.
+    draw_rectangle(0.0, 0.0, screen_width(), screen_height(), Color::new(0.0, 0.0, 0.0, 0.45));
+    draw_rectangle(r.x, r.y, r.w, r.h, Color::new(0.05, 0.045, 0.04, 1.0));
     panel(&mut g.ui, r);
     let pad = 10.0 * s;
     let (x, mut y) = (r.x + pad, r.y + pad);
@@ -400,6 +424,11 @@ pub fn global_keys(g: &mut Game) -> bool {
     };
     g.toggle_screen(s);
     true
+}
+
+/// The unit/building sheet is not drawn under these screens (they are wide and translucent).
+pub fn hides_sheet(g: &Game) -> bool {
+    matches!(g.screen, Screen::StockpileSettings | Screen::Animals | Screen::Places | Screen::Justice | Screen::Objects | Screen::World)
 }
 
 /// Draw the round-8 full-window screens (called from `overlay::draw_ui`).

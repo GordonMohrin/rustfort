@@ -436,7 +436,7 @@ fn draw_members(g: &mut Game, d: &WorkDetail, area: Rect) {
     let cname = area.x + 30.0 * s;
     let cprof = cname + 22.0 * 8.0 * s;
     let cskill = cprof + 16.0 * 8.0 * s;
-    let cother = cskill + 16.0 * 8.0 * s;
+    let cother = cskill + 21.0 * 8.0 * s;
     for (x, t) in [(cname, "Name"), (cprof, "Profession"), (cskill, "Skill"), (cother, "Other work details")] {
         g.font.draw(t, x, hy, s, col::TEXT_DIM);
     }
@@ -470,7 +470,7 @@ fn draw_members(g: &mut Game, d: &WorkDetail, area: Rect) {
         g.font.draw(&clip(prof, 15), cprof, ty, s, col::TEXT_DIM);
         if !skills.is_empty() {
             let t = if *best > 0 { format!("{} ({best})", skill_level_name(*best)) } else { "-".to_string() };
-            g.font.draw(&clip(&t, 15), cskill, ty, s, if *best >= 10 { col::TEXT_HI } else if *best > 0 { col::TEXT_GOOD } else { col::TEXT_DIM });
+            g.font.draw(&clip(&t, 20), cskill, ty, s, if *best >= 10 { col::TEXT_HI } else if *best > 0 { col::TEXT_GOOD } else { col::TEXT_DIM });
         }
         g.font.draw(&clip(others, maxo), cother, ty, s, col::TEXT_DIM);
         if hit {
