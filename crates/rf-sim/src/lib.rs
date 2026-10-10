@@ -347,6 +347,9 @@ const RESEARCH_TICKS: u64 = 600;
 /// of microseconds, more than a few short A* searches.
 const PAR_MIN_PATHS: usize = 8;
 const PATH_CACHE_MAX: usize = 4096;
+/// [perf] Phase timers: think, paths, commit, items, production, then the per-tick passes.
+const PHASES: usize = 10;
+const PHASE_NAMES: [&str; PHASES] = ["think", "paths", "commit", "items", "production", "social", "combat", "fluids", "society", "defense"];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Kind {
@@ -528,7 +531,7 @@ pub struct Sim {
     n_path: usize,
     failed: Vec<usize>,
     path_cache: HashMap<(u32, u32), Vec<u32>>,
-    phase: [f64; 5],
+    phase: [f64; PHASES], // [perf]
     stats: SimStats,
     par_min_paths: usize,
     /// Workshops, farms, orders, construction (see `production`).
@@ -640,7 +643,7 @@ impl Sim {
             n_path: 0,
             failed: Vec::new(),
             path_cache: HashMap::new(),
-            phase: [0.0; 5],
+            phase: [0.0; PHASES], // [perf]
             stats: SimStats::default(),
             par_min_paths: PAR_MIN_PATHS,
             prod: production::Prod::default(),
@@ -886,13 +889,13 @@ impl Sim {
 
     /// Advance the simulation by exactly one DF tick.
     pub fn tick(&mut self) {
-        self.phase = [0.0; 5];
+        self.phase = [0.0; PHASES]; // [perf]
         self.tick_inner();
         self.sync_units();
     }
 
     pub fn run_ticks(&mut self, n: u32) {
-        self.phase = [0.0; 5];
+        self.phase = [0.0; PHASES]; // [perf]
         for _ in 0..n {
             self.tick_inner();
         }
@@ -1039,7 +1042,7 @@ impl Sim {
         s.dead_units = self.ai.iter().filter(|a| a.kind == Kind::Dead && self.world.units[a.uidx].flags.dead).count();
         s.items = self.world.items.len();
         s.nav_rebuilds = self.nav.rebuilds;
-        s.phase_times = vec![("think", self.phase[0]), ("paths", self.phase[1]), ("commit", self.phase[2]), ("items", self.phase[3]), ("production", self.phase[4])];
+        s.phase_times = PHASE_NAMES.iter().copied().zip(self.phase.iter().copied()).collect(); // [perf]
         s
     }
 
@@ -1164,21 +1167,31 @@ impl Sim {
         self.ticks += 1;
         self.world.calendar.advance(1);
         let now = self.ticks;
+        let tp = Instant::now(); // [perf] per-pass phase times
         if now % production::PROD_PERIOD == 0 {
-            let tp = Instant::now();
             self.production_pass(now);
-            self.phase[4] += tp.elapsed().as_secs_f64();
         }
+        let tq = Instant::now(); // [perf]
+        self.phase[4] += (tq - tp).as_secs_f64(); // [perf]
         if now % social::SOCIAL_PERIOD == 50 {
             self.social_pass(now); // [social]
         }
+        let tp = Instant::now(); // [perf]
+        self.phase[5] += (tp - tq).as_secs_f64(); // [perf]
         self.combat_tick(now); // [combat]
+        let tq = Instant::now(); // [perf]
+        self.phase[6] += (tq - tp).as_secs_f64(); // [perf]
         self.fluids_tick(now); // [fluids]
+        let tp = Instant::now(); // [perf]
+        self.phase[7] += (tp - tq).as_secs_f64(); // [perf]
         if now % population::POP_PERIOD == population::POP_PHASE {
             self.population_tick(now); // [society]
         }
+        let tq = Instant::now(); // [perf]
+        self.phase[8] += (tq - tp).as_secs_f64(); // [perf]
         self.defense_tick(now); // [defense]
         let t0 = Instant::now();
+        self.phase[9] += (t0 - tq).as_secs_f64(); // [perf]
         for s in 0..self.ai.len() {
             if self.ai[s].wake <= now {
                 self.think(s, now);
