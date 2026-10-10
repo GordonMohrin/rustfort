@@ -69,7 +69,9 @@ pub const ANN_TYPES: &[AnnType] = &[
     at("MEGABEAST", "Forgotten beast, megabeast", "A monster has come!", &["MEGABEAST_ARRIVAL"], fl(true, false, false, true)),
     at("HOSTILE_ANIMAL", "Hostile wildlife", "Hostile creatures", &[], fl(false, false, false, true)),
     at("INVASION_END", "Invaders retreat", "Retreat", &[], fl(false, false, false, true)),
-    at("DEATH", "Death", "Death", &["CITIZEN_DEATH"], fl(false, false, false, true)),
+    at("DEATH", "Citizen dies", "Death", &["CITIZEN_DEATH"], fl(false, false, false, true)),
+    at("PET_DEATH", "Pet or livestock dies", "Death", &["PET_DEATH"], fl(false, false, false, true)),
+    at("ENEMY_DEATH", "Enemy or wild creature dies", "Death", &[], fl(false, false, false, true)),
     at("MIGRANTS", "Migrants arrive", "Migrants", &["MIGRANT_ARRIVAL", "D_MIGRANTS_ARRIVAL"], fl(false, false, false, true)),
     at("CARAVAN", "Caravan arrives", "Caravan", &["CARAVAN_ARRIVAL"], fl(false, false, false, true)),
     at("VISITOR", "Visitor arrives", "Visitor", &["GUEST_ARRIVAL"], fl(false, false, false, true)),
@@ -310,7 +312,10 @@ pub fn on_announcements(g: &mut Game, fresh: &[Announcement]) -> Vec<bool> {
     ensure_ann(g);
     let mut show = Vec::with_capacity(fresh.len());
     for a in fresh {
-        let t = classify(&a.text, a.kind);
+        let mut t = classify(&a.text, a.kind);
+        if ANN_TYPES[t].id == "DEATH" {
+            t = death_type(&g.sim.world, &a.text, a.pos);
+        }
         let f = g.r9.flags[t];
         show.push(f.show || f.popup);
         if alert_handled(t) {
@@ -334,6 +339,23 @@ pub fn on_announcements(g: &mut Game, fresh: &[Announcement]) -> Vec<bool> {
         }
     }
     show
+}
+
+/// DF tells citizen deaths (`CITIZEN_DEATH`) from pet deaths (`PET_DEATH`); other deaths
+/// (invaders, wildlife) have no box. The sim's line starts with the unit's name.
+pub fn death_type(w: &World, text: &str, pos: Option<Pos>) -> usize {
+    let named = |u: &&Unit| !u.name.is_empty() && text.starts_with(u.name.as_str());
+    let u = w
+        .units
+        .iter()
+        .filter(|u| pos.map(|p| u.pos == p).unwrap_or(true))
+        .find(named)
+        .or_else(|| w.units.iter().find(named));
+    match u {
+        Some(u) if u.flags.citizen => ty("DEATH"),
+        Some(u) if u.flags.tame && !u.flags.hostile => ty("PET_DEATH"),
+        _ => ty("ENEMY_DEATH"),
+    }
 }
 
 /// The hostile alert's announcement type for a new wave (when the sim sent no raid line).
@@ -425,13 +447,14 @@ pub fn draw_popups(g: &mut Game) {
     let (sw, sh) = (screen_width(), screen_height());
     let maxw = (sw - 60.0).min(760.0 * s);
     let lines = wrap(&p.text, ((maxw - 40.0 * s) / (8.0 * s)) as usize);
-    let tw = lines.iter().map(|l| g.font.width(l, s)).fold(g.font.width(&p.title, 1.5 * s), f32::max) + 48.0 * s;
+    let note = "Paused. Which events open a box: Esc > Settings > Announcements.";
+    let tw = lines.iter().map(|l| g.font.width(l, s)).fold(g.font.width(&p.title, 1.5 * s).max(g.font.width(note, s)), f32::max) + 48.0 * s;
     let nbtn = if p.petition.is_some() { 4.0 } else { 3.0 };
     let bw = 15.0 * 8.0 * s;
     let gap = 12.0 * s;
     let w = tw.max(nbtn * bw + (nbtn - 1.0) * gap + 40.0 * s).clamp(420.0 * s, sw - 40.0);
     let extra = if p.more > 0 { lh } else { 0.0 };
-    let h = 1.5 * GH * s + 30.0 * s + lines.len() as f32 * lh + extra + 26.0 * s + 2.0 * lh;
+    let h = 1.5 * GH * s + 40.0 * s + lines.len() as f32 * lh + extra + 26.0 * s + 2.0 * lh;
     let r = Rect::new((sw - w) / 2.0, (sh - h) / 2.5, w, h);
     draw_rectangle(0.0, 0.0, sw, sh, Color::new(0.0, 0.0, 0.0, 0.25));
     draw_rectangle(r.x, r.y, r.w, r.h, Color::new(0.04, 0.04, 0.04, 1.0));
@@ -457,7 +480,6 @@ pub fn draw_popups(g: &mut Game) {
         let t = format!("... and {} more like this (see Reports)", p.more);
         g.font.draw(&t, r.x + (w - g.font.width(&t, s)) / 2.0, y, s, col::TEXT_DIM);
     }
-    let note = "The game is paused. Esc settings > Announcements changes which events pop up.";
     let note = clip(note, ((w - 20.0 * s) / (8.0 * s)) as usize);
     g.font.draw(&note, r.x + (w - g.font.width(&note, s)) / 2.0, r.y + r.h - 26.0 * s - 14.0 * s - lh - 2.0 * s, s, col::TEXT_DIM);
     let bh = 26.0 * s;
@@ -549,12 +571,12 @@ pub fn draw_ann_settings(g: &mut Game) {
     g.font.draw("Announcements", x, y, 1.5 * s, col::TEXT_HI);
     y += 1.5 * GH * s + 8.0 * s;
     let maxc = ((w - 2.0 * pad) / (8.0 * s)) as usize;
-    g.font.draw(&clip("Like DF's announcements.txt: Box = pop-up that pauses (BOX), Pause (P), Center (R), Log = announcement line (D_D).", maxc), x, y, s, col::TEXT_DIM);
+    g.font.draw(&clip("Like DF's announcements.txt: Box = pop-up that pauses (BOX), Pause (P), Center (R), Log (D_D).", maxc), x, y, s, col::TEXT_DIM);
     y += lh;
     g.font.draw(&clip("Defaults come from your DF prefs/announcements.txt; changes are saved in saves/settings.json.", maxc), x, y, s, col::TEXT_DIM);
     y += lh + 8.0 * s;
     let cx = [x, x + 0.40 * (w - 2.0 * pad), x + 0.50 * (w - 2.0 * pad), x + 0.60 * (w - 2.0 * pad), x + 0.71 * (w - 2.0 * pad), x + 0.80 * (w - 2.0 * pad)];
-    for (i, hd) in ["Event", "Box", "Pause", "Center", "Log", "From"].iter().enumerate() {
+    for (i, hd) in ["Event", "Box", "Pause", "Center", "Log", "Default from"].iter().enumerate() {
         g.font.draw(hd, cx[i], y, s, col::BORDER_HI);
     }
     y += lh;
@@ -588,14 +610,14 @@ pub fn draw_ann_settings(g: &mut Game) {
             change = Some((i, nf));
         }
         let (src, sc) = match g.r9.src[i] {
-            Src::DfPrefs => (format!("DF prefs {}", t.df.first().copied().unwrap_or("")), col::TEXT_GOOD),
-            Src::DfDefault => (format!("DF default {}", t.df.first().copied().unwrap_or("")), col::TEXT_DIM),
-            Src::Changed => ("changed".to_string(), col::TEXT_HI),
+            Src::DfPrefs => ("your DF prefs".to_string(), col::TEXT_GOOD),
+            Src::DfDefault => ("DF default".to_string(), col::TEXT_DIM),
+            Src::Changed => ("changed here".to_string(), col::TEXT_HI),
             Src::Rustfort => ("Rustfort".to_string(), col::TEXT_DIM),
         };
         g.font.draw(&clip(&src, ((r.x + r.w - pad - cx[5]) / (8.0 * s)) as usize), cx[5], y, s, sc);
-        let rr = Rect::new(cx[0], y - 2.0 * s, cx[1] - cx[0], row_h);
-        if g.ui.hovered(rr) {
+        let rr = Rect::new(cx[0], y - 2.0 * s, r.x + r.w - pad - cx[0], row_h);
+        if g.ui.hovered(rr) && !g.ui.hovered(Rect::new(cx[1], rr.y, cx[5] - cx[1], rr.h)) {
             let toks = if t.df.is_empty() { "no DF token (Rustfort default)".to_string() } else { t.df.join(", ") };
             g.ui.tooltip = Some((format!("{}\nDF: {toks}", t.label), vec2(rr.x, rr.y - 4.0)));
         }
@@ -608,6 +630,10 @@ pub fn draw_ann_settings(g: &mut Game) {
     let by = r.y + r.h - pad - bh;
     if text_button(&mut g.ui, &g.font, Rect::new(x, by, 14.0 * 8.0 * s, bh), "Back", BtnState::Normal) {
         g.menu.page = MenuPage::Settings;
+    }
+    if ANN_TYPES.len() > rows {
+        let t = format!("{}-{} of {} (wheel scrolls)", g.r9.ann_scroll + 1, (g.r9.ann_scroll + rows).min(ANN_TYPES.len()), ANN_TYPES.len());
+        g.font.draw(&t, r.x + r.w - pad - g.font.width(&t, s), by + 6.0 * s, s, col::TEXT_DIM);
     }
     let changed = !g.settings.announcements.is_empty();
     if text_button(&mut g.ui, &g.font, Rect::new(x + 16.0 * 8.0 * s, by, 24.0 * 8.0 * s, bh), "Reset to DF values", if changed { BtnState::Normal } else { BtnState::Disabled }) {
@@ -749,7 +775,8 @@ pub fn draw_petitions(g: &mut Game) {
         let (st, sc) = status_label(&p.status);
         g.font.draw(st, list.x + list.w - g.font.width(st, s), y, s, sc);
         let age = now.saturating_sub(p.tick) / rf_core::TICKS_PER_DAY as u64;
-        let sub = format!("{} for {} - {} days ago", p.role, p.kind.to_lowercase(), age);
+        let role = if p.unit < 0 { format!("{} guild", pretty(&p.role).to_lowercase()) } else { p.role.clone() };
+        let sub = format!("{role} for {} - {} days ago", p.kind.to_lowercase(), age);
         g.font.draw(&clip(&sub, maxc), c.x + 8.0 * s, y + lh, s, col::TEXT_DIM);
         y += row_h;
     }
@@ -770,7 +797,8 @@ pub fn draw_petitions(g: &mut Game) {
     }
     y += 6.0 * s;
     let w = &g.sim.world;
-    let mut facts: Vec<(String, String)> = vec![("Request".into(), p.kind.clone()), ("Visitor role".into(), p.role.clone())];
+    let role = if p.unit < 0 { format!("{} (members in the fortress)", pretty(&p.role).to_lowercase()) } else { p.role.clone() };
+    let mut facts: Vec<(String, String)> = vec![("Request".into(), p.kind.clone()), (if p.unit < 0 { "Group" } else { "Visitor role" }.into(), role)];
     if p.unit >= 0 {
         if let Some(u) = w.unit(p.unit) {
             facts.push(("Profession".into(), super::panels::unit_profession(u)));
@@ -811,14 +839,19 @@ pub fn draw_petitions(g: &mut Game) {
         }
     }
     y += bh + 12.0 * s;
-    let note = if p.kind == "Citizenship" {
-        "Accepted: joins the fortress as a citizen and takes labors."
+    let notes: &[&str] = if p.unit < 0 {
+        &["Accepted: the members are pleased; build the location for them.", "Denied or ignored: the members feel ignored."]
+    } else if p.kind == "Citizenship" {
+        &["Accepted: joins the fortress as a citizen and takes labors.", "Denied: the visitor is unhappy and leaves within a day."]
     } else {
-        "Accepted: stays as a resident and takes the matching occupation."
+        &["Accepted: stays as a resident and takes the matching occupation.", "Denied: the visitor is unhappy and leaves within a day."]
     };
-    g.font.draw(&clip(note, (rw / (8.0 * s)) as usize), rx, y, s, col::TEXT_DIM);
-    y += lh;
-    g.font.draw(&clip("Denied: the visitor is unhappy and leaves within a day.", (rw / (8.0 * s)) as usize), rx, y, s, col::TEXT_DIM);
+    for n in notes {
+        for l in wrap(n, (rw / (8.0 * s)) as usize) {
+            g.font.draw(&l, rx, y, s, col::TEXT_DIM);
+            y += lh;
+        }
+    }
 }
 
 fn status_label(s: &str) -> (&'static str, Color) {
@@ -1081,7 +1114,8 @@ fn ammo_raws(w: &World) -> Vec<(String, String)> {
     let mut v: Vec<(String, String)> = w
         .weapon_raws
         .iter()
-        .filter(|r| r.kind == "AMMO")
+        // Generated or odd definitions (tokens with spaces) are not offered.
+        .filter(|r| r.kind == "AMMO" && !r.token.contains(' '))
         .map(|r| (r.token.clone(), if r.name_plural.is_empty() { pretty(&r.token) } else { r.name_plural.clone() }))
         .collect();
     if v.is_empty() {
@@ -1123,10 +1157,13 @@ fn draw_ammo(g: &mut Game, sid: i32, area: Rect) {
         if y > area.y + area.h - 4.0 * lh {
             break;
         }
-        let txt = ammo_text(&g.sim.world, a);
+        let tok = a.item.split('@').next().unwrap_or("");
+        let txt = ammo_raws(&g.sim.world).into_iter().find(|(t, _)| t == tok).map(|(_, n)| n).unwrap_or_else(|| ammo_text(&g.sim.world, a));
         g.font.draw(&clip(&txt, 26), x, y, s, col::TEXT);
         let mut bx = x + 27.0 * 8.0 * s;
-        if text_button(&mut g.ui, &g.font, Rect::new(bx, y - 2.0 * s, 13.0 * 8.0 * s, bh), "material", BtnState::Normal) {
+        let cur_mat = a.item.split_once('@').map(|(_, m)| m).unwrap_or("");
+        let mlabel = AMMO_MATS.iter().find(|(t, _)| *t == cur_mat).map(|(_, l)| *l).unwrap_or("other material");
+        if text_button(&mut g.ui, &g.font, Rect::new(bx, y - 2.0 * s, 13.0 * 8.0 * s, bh), mlabel, BtnState::Normal) {
             let (tok, mat) = a.item.split_once('@').map(|(t, m)| (t.to_string(), m.to_string())).unwrap_or((a.item.clone(), String::new()));
             let mi = AMMO_MATS.iter().position(|(t, _)| *t == mat).unwrap_or(0);
             let nm = AMMO_MATS[(mi + 1) % AMMO_MATS.len()].0;
@@ -1192,8 +1229,9 @@ fn draw_ammo(g: &mut Game, sid: i32, area: Rect) {
     let members: Vec<(String, i32)> = eq.iter().filter(|e| e.unit >= 0).map(|e| (g.sim.world.unit(e.unit).map(unit_name).unwrap_or_default(), e.ammo)).collect();
     if !members.is_empty() {
         let total: i32 = ammo.iter().map(|a| a.amount).sum();
-        let per = if members.is_empty() { 0 } else { (total / members.len() as i32).min(50) };
-        g.font.draw(&format!("Carried now (each soldier keeps up to {per} rounds, a quiver holds 50)"), x, y, s, col::BORDER_HI);
+        let per = (total / members.len() as i32).min(50);
+        let t = if total > 0 { format!("Carried now (each soldier keeps up to {per} rounds, a quiver holds 50)") } else { "Carried now".to_string() };
+        g.font.draw(&t, x, y, s, col::BORDER_HI);
         y += lh;
         let colw = (area.w / 2.0).floor();
         for (k, (n, a)) in members.iter().enumerate() {
@@ -1217,7 +1255,7 @@ fn draw_patrol(g: &mut Game, sid: i32, area: Rect) {
     g.font.draw(&format!("Patrol route ({} waypoints){}", q.patrol.len(), if patrolling { " - patrolling now" } else { "" }), x, y, s, col::BORDER_HI);
     y += lh + 4.0 * s;
     let bh = 24.0 * s;
-    let bw = 22.0 * 8.0 * s;
+    let bw = 26.0 * 8.0 * s;
     if text_button(&mut g.ui, &g.font, Rect::new(x, y, bw, bh), "New route (pick on map)", BtnState::Normal) {
         g.r9.patrol.clear();
         g.tool = Tool::Patrol(sid);
@@ -1396,10 +1434,41 @@ pub const FIGHT_GAP: u64 = 600;
 const FIGHTS_KEEP: usize = 400;
 const DEATH_WORDS: &[&str] = &["struck down", "bled to death", "has been killed", "dies", "is dead", "slain", "has died"];
 
-/// The fight participants named in a line (longest names first, so "Urist McAxe" wins over
-/// "Urist").
+/// The fight participants named in a line. Names of unnamed creatures are written like the
+/// sim writes them ("the goblin lasher") and match in any case.
 fn named_in(line: &str, names: &[(i32, String, bool)]) -> Vec<(i32, String, bool)> {
-    names.iter().filter(|(_, n, _)| line.contains(n.as_str())).cloned().collect()
+    let mut low = None;
+    names
+        .iter()
+        .filter(|(_, n, _)| {
+            if n.starts_with("the ") {
+                low.get_or_insert_with(|| line.to_lowercase()).contains(n.as_str())
+            } else {
+                line.contains(n.as_str())
+            }
+        })
+        .cloned()
+        .collect()
+}
+
+/// How the sim names a creature in combat lines (`Sim::uname`): its name, else "the goblin"
+/// plus a custom profession.
+pub fn combat_name(w: &World, u: &Unit) -> String {
+    if !u.name.is_empty() {
+        return u.name.clone();
+    }
+    let creature = w
+        .creature_raws
+        .iter()
+        .find(|c| c.token == u.race)
+        .map(|c| c.name.clone())
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| u.race.to_ascii_lowercase().replace('_', " "));
+    if u.custom_profession.is_empty() {
+        format!("the {creature}")
+    } else {
+        format!("the {creature} {}", u.custom_profession).to_lowercase()
+    }
 }
 
 /// Group new combat lines into fights (pure; unit-tested).
@@ -1477,7 +1546,14 @@ fn update_fights(g: &mut Game) {
     g.r9.cl_tail = log[log.len() - k..].to_vec();
     let w = &g.sim.world;
     let mut names: Vec<(i32, String, bool)> = w.citizens().filter(|u| !u.name.is_empty()).map(|u| (u.id, u.name.clone(), true)).collect();
-    names.extend(g.hostiles.iter().filter_map(|id| w.unit(*id)).filter(|u| !u.name.is_empty()).map(|u| (u.id, u.name.clone(), false)));
+    // Everybody else on the map (hostiles, also ones killed this frame, wildlife, pets); unnamed
+    // ones of the same kind ("the goblin") count as one participant.
+    for u in w.units.iter().filter(|u| !u.flags.citizen && !u.flags.inactive) {
+        let n = combat_name(w, u);
+        if n.len() > 4 && !names.iter().any(|x| x.1 == n) {
+            names.push((u.id, n, false));
+        }
+    }
     names.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
     let date = date_string(&w.calendar);
     let tick = g.sim.ticks();
@@ -1909,14 +1985,13 @@ fn fake_petition(g: &mut Game, v: &str) {
         eprintln!("fake-petition: no locations in this fort");
         return;
     };
-    if g.sim.spawn_visitor_for(role, loc).is_none() {
+    let Some(vid) = g.sim.spawn_visitor_for(role, loc) else {
         eprintln!("fake-petition: no visitor could arrive");
         return;
-    }
-    let before = g.sim.petitions().iter().filter(|p| p.status == "Pending").count();
+    };
     for _ in 0..40 {
         g.sim.run_ticks(rf_core::TICKS_PER_DAY as u32);
-        if g.sim.petitions().iter().filter(|p| p.status == "Pending").count() > before {
+        if g.sim.petitions().iter().any(|p| p.unit == vid) {
             break;
         }
     }
@@ -1933,6 +2008,9 @@ fn fake_fights(g: &mut Game) {
         return;
     }
     let date = date_string(&w.calendar);
+    let mut cit = cit;
+    cit.push((-5, "the goblin lasher".into(), false));
+    cit.push((-6, "the kobold thief".into(), false));
     let a = &cit[0].1;
     let b = &cit[1].1;
     let lines = vec![
@@ -1966,6 +2044,12 @@ mod tests {
         assert_eq!(ANN_TYPES[classify("A vile force of darkness has arrived!", w)].id, "SIEGE");
         assert_eq!(ANN_TYPES[classify("Urist has been abducted!", AnnouncementKind::Death)].id, "ABDUCTED");
         assert_eq!(ANN_TYPES[classify("Urist has been struck down.", AnnouncementKind::Death)].id, "DEATH");
+        let mut wd = World::synthetic(8, 8, 4);
+        let cit = wd.units.iter().find(|u| u.flags.citizen).map(|u| u.name.clone()).unwrap();
+        wd.units.push(Unit { id: 9001, name: "Smunstu Monstrousgazes".into(), race: "GOBLIN".into(), ..Default::default() });
+        assert_eq!(ANN_TYPES[death_type(&wd, &format!("{cit} has been struck down."), None)].id, "DEATH");
+        assert_eq!(ANN_TYPES[death_type(&wd, "Smunstu Monstrousgazes has been struck down.", None)].id, "ENEMY_DEATH");
+        assert_eq!(ANN_TYPES[death_type(&wd, "The goblin has bled to death.", None)].id, "ENEMY_DEATH");
         assert_eq!(ANN_TYPES[classify("The Forgotten Beast Ngokang has come! A huge spider.", w)].id, "MEGABEAST");
         assert_eq!(ANN_TYPES[classify("Ber has petitioned for residency.", i)].id, "PETITION");
         assert_eq!(ANN_TYPES[classify("Some migrants have arrived.", i)].id, "MIGRANTS");

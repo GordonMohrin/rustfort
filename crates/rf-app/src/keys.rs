@@ -268,6 +268,8 @@ impl Bindings {
                 Trigger::Char(c) => return c.to_string(),
                 Trigger::Key { mods, key } => {
                     let k = format!("{key:?}");
+                    // [app9] `Key3` -> `3`
+                    let k = if k.len() == 4 && k.starts_with("Key") { k[3..].to_string() } else { k };
                     let k = if k.len() == 1 { k.to_lowercase() } else { k };
                     return match *mods {
                         0 => k,
