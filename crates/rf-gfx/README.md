@@ -15,8 +15,8 @@ Verify visually (paths relative to the repo; in a worktree use absolute export p
 
 ```
 cargo run -p rf-gfx --release --example preview -- --out target/preview_hall.png --rect 18,22,34,20
-cargo run -p rf-gfx --release --example preview -- --export export/tileshtulon --out target/fort.png --z 127 --rect 70,88,56,30
-cargo run -p rf-gfx --release --example preview -- --export export/tileshtulon --z 134 --rect 120,40,32,24 --out target/canopy.png
+cargo run -p rf-gfx --release --example preview -- --export export/<folder> --out target/fort.png --z 127 --rect 70,88,56,30
+cargo run -p rf-gfx --release --example preview -- --export export/<folder> --z 134 --rect 120,40,32,24 --out target/canopy.png
 ```
 
 Preview flags:
@@ -28,7 +28,7 @@ Preview flags:
 - `--month 0..11` (0 = Granite) or `--tick <year tick>` overrides the calendar, to check the seasonal trees (the export's own tick comes from `manifest.json` `year_tick_end`).
 - Items get their designation markers (forbidden, dump, melt, hidden) like in the app.
 
-On the v0.1 export of Gordon's fort `--scan` found 4 sprite-less things left (3 procedural demons, 1 chicken), down from 17,525 (16,804 of them tree canopy tiles). Since round 6 it finds **0 on all 150 levels** of the latest export (year 277).
+On the v0.1 export of the reference fort `--scan` found 4 sprite-less things left (3 procedural demons, 1 chicken), down from 17,525 (16,804 of them tree canopy tiles). Since round 6 it finds **0 on all 150 levels** of the latest export (year 277).
 
 ## Mods (`Gfx::load_with_mods`, `Gfx::load_for_world`)
 
@@ -37,7 +37,7 @@ On the v0.1 export of Gordon's fort `--scan` found 4 sprite-less things left (3 
   - A missing exact version falls back to the newest installed one (or a Steam workshop copy) and is reported in `Gfx::mod_warnings`; `Gfx::mods_loaded` lists what was loaded.
   - An empty list = vanilla only.
 - Override rule (`rf_raws::GraphicsDb`): a mod's `[TILE_PAGE:X]` replaces the vanilla page X, and a mod's `[TILE_GRAPHICS]` for a name replaces *every* earlier definition of that name (repeats inside vanilla, like the 8 `BOULDER`s, are kept). This is what makes perspective_walls' `STONE_WALL_*` pieces and interface_tweaks' `BUILDING_ICON_*` win.
-- Gordon's mods: perspective_walls (wall pages with a front face; the generic wall autotiler handles them), reduced_zfog (replaces the z-fog tile, which rf-app draws itself), interface_tweaks (building icons and interface bits; reach them via `ui_icon`/`building_icon`).
+- Mods tested with (installed alongside vanilla on the development machine): perspective_walls (wall pages with a front face; the generic wall autotiler handles them), reduced_zfog (replaces the z-fog tile, which rf-app draws itself), interface_tweaks (building icons and interface bits; reach them via `ui_icon`/`building_icon`).
 
 ## Pages and palettes
 
@@ -135,7 +135,7 @@ Trees follow their PLANT raws, like DF: `[GROWTH_TIMING]` says when a growth is 
 - `[CUSTOM_EDGING:n]` grasses print their `CUSTOM_EDGE_<dir>` pieces onto neighboring tiles (sides, plus corners whose sides have none). Lower n wins; all of them win over regular grass, whose floors.png bleeding never covers them.
 - `[CUSTOM_RAMP]` grass ramps: the plant's `GRASS_1` plus `OVERLAY_RAMP_WITH_WALL_<dirs>` (`RAMP_OVERLAY` page).
 
-Not yet: `TREE_TRUNK_SLOPE_*` beyond the top piece, crop growth stages (`CROP_SPROUT`), grass blossoms (`[GROWTH:FLOWER] [GROWTH_1..4:GRASS_FLOWERS]`, none of the grasses on Gordon's map has them), dry/dead grass (the `GrassDry`/`GrassDead` tiletypes are drawn like living grass).
+Not yet: `TREE_TRUNK_SLOPE_*` beyond the top piece, crop growth stages (`CROP_SPROUT`), grass blossoms (`[GROWTH:FLOWER] [GROWTH_1..4:GRASS_FLOWERS]`, none of the grasses on the reference map has them), dry/dead grass (the `GrassDry`/`GrassDead` tiletypes are drawn like living grass).
 
 ## Units (`Gfx::unit`)
 
@@ -199,7 +199,7 @@ Not yet: `TREE_TRUNK_SLOPE_*` beyond the top piece, crop growth stages (`CROP_SP
 
 - **Engravings** (`World::engravings`, indexed per tile by `prepare`; DF keeps the smooth tiletype): engraved walls use the `WALL_STONE_ENGRAVED` edge set with the same autotiling as smoothed walls; engraved floors draw `FLOOR_STONE_ENGRAVED_PALETTE` recolored by the stone (`FLOOR_STONE_ENGRAVED_NON_PALETTE` for stones without a palette row). Premium has one engraving image per family, so the quality does not change the look.
 - **Item markers:** `Gfx::item_marker(&item)` returns `DESIGNATION_ITEM_FORBIDDEN` / `_DUMP` / `_FORBIDDEN_DUMP` / `_MELT` / `_FORBIDDEN_MELT` / `_HIDDEN`. rf-app draws the melt marks through it (`// [gfx6]` in `ui/round5.rs`).
-- **Spider webs:** DF's webs are `THREAD` items described as "... web" (3,955 cave spider webs in Gordon's caverns). They are drawn as `ITEM_WEB_HARMLESS:1..4` (variant by position), `ITEM_WEB_THICK` for giant cave spider webs.
+- **Spider webs:** DF's webs are `THREAD` items described as "... web" (3,955 cave spider webs in the reference fort's caverns). They are drawn as `ITEM_WEB_HARMLESS:1..4` (variant by position), `ITEM_WEB_THICK` for giant cave spider webs.
 - **Caste sprites:** `[CREATURE_CASTE_GRAPHICS:BIRD_CHICKEN:MALE]` and the like (rooster/hen, drake/duck, ram/ewe, deer, moose, ...) are picked by `Unit.caste` before the race-wide sprite.
 - **Procedural creatures** (no graphics raws: forgotten beasts, demons such as `DEMON_2` "winged ghost", titans): DF Premium's procedural beast sprites (`[TILE_GRAPHICS_RECTANGLE:BEASTS:x:y:3:2:BEAST_<BODY>]`, now parsed into `named`).
   - The body is classified from the exported body parts: legs (`STANCE` limbs), hands (`GRASP`), wings, head and tail give `AMORPHOUS`, `SNAKE`, `WORM_SHORT`, `HUMANOID`, `BIPEDAL_DINOSAUR`, `FRONT_GRASP`, `QUADRUPED_BULKY`/`_SLINKY`, `INSECT`, `SPIDER` or `SCORPION`.
@@ -213,7 +213,7 @@ Not yet: `TREE_TRUNK_SLOPE_*` beyond the top piece, crop growth stages (`CROP_SP
 - rf-app still calls `Gfx::load`; switch it to `Gfx::load_for_world(&df, &world)` so the save's mods apply.
 - Floors are drawn as-is (no material tint), as DF does for floors.png. The exporter does not export DF's engravings yet (the sim's engravings are drawn).
 - No ramp shadows, no vision shadows, no traffic/blueprint overlays (the `DESIGNATION_TRAFFIC_*` icons exist for the UI).
-- **Brooks, rivers, waterfalls:** the `BROOK`/`RIVER` bed pieces and the `FLOWS` `BROOK_TO_<dir>` / `RIVER_TO_<dir>` flow arrows exist, but Gordon's map has no brook or river tiles (only a murky pool), and the export carries no flow direction, so they are not mapped yet. Liquid depth is drawn by rf-app with the `UNDERWATER_1..7` sprites.
+- **Brooks, rivers, waterfalls:** the `BROOK`/`RIVER` bed pieces and the `FLOWS` `BROOK_TO_<dir>` / `RIVER_TO_<dir>` flow arrows exist, but the reference map has no brook or river tiles (only a murky pool), and the export carries no flow direction, so they are not mapped yet. Liquid depth is drawn by rf-app with the `UNDERWATER_1..7` sprites.
 - **Blood and spatter:** the world data has no spatter/contaminants (DF `block.block_events` material spatter is not exported, and the sim keeps blood only as unit blood volume), so `blood_*.png`, `vomit.png` and `mud.png` are not drawn yet.
 - `USE_STANDARD_PALETTE_FROM_ITEM` (clothing dyed by item material) is drawn uncolored.
 - Custom workshops from mods (Crematorium, Armory) need the custom building token, which the export does not carry (`subtype` is `Custom`).

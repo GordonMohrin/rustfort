@@ -1,9 +1,18 @@
-# Rustfort validation against Gordon's real fort (round 8)
+# Rustfort validation against a real fort's history (round 8)
 
-This file measures how close Rustfort's simulation is to **real DF**, using Gordon's own
-history. We have real DF snapshots of the same fort (Tileshtulon / Trussroads) at different
-dates. Rustfort starts from an earlier snapshot, runs for exactly the in-game time until a
-later snapshot, and the same census is applied to the simulated end state and to the real one.
+This file measures how close Rustfort's simulation is to **real DF**, using the real history of
+the reference fort (Tileshtulon / Trussroads, the DF fort Rustfort is developed with). There are
+real DF snapshots of that fort at different dates. Rustfort starts from an earlier snapshot,
+runs for exactly the in-game time until a later snapshot, and the same census is applied to the
+simulated end state and to the real one.
+
+**What validation needs:** a *series* of exports of **one** fort, taken in DF at different game
+dates while the fort is played on in DF. At least two are needed, and a year or more apart is
+best. DF's `gamelog.txt` from the same time is optional and adds real event counts. The
+reference series used below (`tileshtulon-r1` .. `-r7`) is **not distributed**, because exports
+are data from a real save. To validate on your own fort, export it now and again after some
+game time (the title screen's import keeps every export in its own folder, see
+[INSTALL.md](INSTALL.md)), then run `validate` with the older and the newer export.
 
 - Tool: `crates/rf-sim/examples/validate.rs` (+ `validate_support/gamelog.rs`), read-only.
 - Real events come from DF's `gamelog.txt` (read only), real speed from the export timestamps
@@ -54,19 +63,19 @@ always relative to the start export:
 
 ### Player emulation
 
-Gordon and his scripts gave orders between the snapshots (work orders from his food watch,
-digging, smoothing, new zones, uniforms). Rustfort only has what the start export contains.
+The player and the player's scripts gave orders between the snapshots (work orders from a
+food-watch script, digging, smoothing, new zones, uniforms). Rustfort only has what the start export contains.
 The runs therefore use:
 
 - `--standing-orders`: the sim's fallback orders (brew when drinks are low, cook, barrels,
-  pots), the closest equivalent of Gordon's food watch. **Without it, Rustfort brews nothing**
+  pots), the closest equivalent of that food watch. **Without it, Rustfort brews nothing**
   from r4: the export has 14 active orders (furniture, crafts, ammo, barrels...) and 20 queued
   jobs (11 meals, 2 brews), but no repeating brew or cook order, so after 2.18 years the fort has
   **0 drinks and 20 meals left** (DF real: 1 600 drinks, 645 meals) and lives from the wells.
 - military stand-down like `rustfort bench --standdown` (squads Ready while a reachable hostile
   is near, then off duty after a day of calm). For r4 -> r5 `--restore-schedules` returns the
   squads to the routine of the start export instead (3 squads on constant training at r4),
-  which is what Gordon's fort did. For r3 -> r4 the export was taken mid-siege (all 9 squads
+  which is what the reference fort did. For r3 -> r4 the export was taken mid-siege (all 9 squads
   Ready with Station orders), so restoring that "routine" keeps 70 soldiers stationed forever;
   in 5 of 6 seeds they starved (88 starved in one seed). r3 -> r4 is therefore run with the
   plain stand-down.
@@ -75,14 +84,18 @@ The runs therefore use:
   69 migrants, so the tool copies the caps of the later export (90/120/120) when the start
   export has none.
 
-Run it:
+Run it (here with the reference series; use two exports of your own fort instead):
 
 ```
 cargo run -p rf-sim --release --example validate -- --from export/tileshtulon-r4 --to export/tileshtulon \
     --seeds 1,2,3,4,5,6 --standing-orders --restore-schedules \
-    --gamelog "E:\Program Files (x86)\Steam\steamapps\common\Dwarf Fortress\gamelog.txt" \
+    --gamelog "<DF folder>\gamelog.txt" \
     --gl-from 11816811 --gl-to 12027766 [--md table.md]
 ```
+
+The `--gl-from` / `--gl-to` line numbers belong to the reference install's gamelog. For another
+fort, find the window as described in the next section, or leave out the three `--gamelog`
+options.
 
 About 30-80 s for 6 seeds (each sim runs at 20-55k ticks/s depending on machine load).
 
@@ -254,7 +267,7 @@ which fits tier 5 (Metropolis, 120 regulars + 40 monsters on the wiki) reached b
 - **Siege count** (2-3 per two years) and the population staying near the cap of 90.
 - **Total item count and item wealth** within 5-10 %, ammo stock, bars, blocks, gems, furniture
   stock, stockpile space.
-- **Drink and meal production** when the fallback standing orders stand in for Gordon's food
+- **Drink and meal production** when the fallback standing orders stand in for the player's food
   watch (0.77 and 0.85 of DF on r4 -> r5).
 - **Overall item quality** (mean 1.3-2.2 on both sides), though for different items (below).
 
@@ -276,7 +289,7 @@ which fits tier 5 (Metropolis, 120 regulars + 40 monsters on the wiki) reached b
 | 12 | Trees grow in DF (+65 in 2.18 years), never in Rustfort | no sapling growth | MISSING; **r9: +70** (`growth.rs`) |
 | 13 | Building destroyers wrecked 17 of 31 workshops in DF's last siege ([r9]: destroyers wreck 8 buildings per siege median, mostly furniture; workshops 31 -> 30) | invaders do not attack workshops | `combat.rs` / `defense.rs` (MISSING) |
 | 14 | Stockpiles hold items on 37-39 % of their tiles in DF, 25 % in Rustfort (r4 -> r5) | containers are filled more densely (bin volume ESTIMATE), fewer new items to store | `storage.rs` "Bin volume" (ESTIMATE) |
-| 15 | Clothing, cloth, beds, barrels, coffins, digging, smoothing, new zones | Gordon's orders and designations after the start export | player-driven, not a sim error |
+| 15 | Clothing, cloth, beds, barrels, coffins, digging, smoothing, new zones | the player's orders and designations after the start export | player-driven, not a sim error |
 
 ## Prioritized calibration fixes for round 9
 
@@ -290,7 +303,7 @@ which fits tier 5 (Metropolis, 120 regulars + 40 monsters on the wiki) reached b
    level (furniture, crafts, weapons, armor). Remove the level cap of 20.
 3. **Military training** (`military.rs`): sparring and demonstrations that train situational
    awareness, discipline, melee combat and the weapon, with teacher/student XP; less flat
-   dodge/armor/shield XP. Target: 14-27k military XP per dwarf-year with Gordon's routine.
+   dodge/armor/shield XP. Target: 14-27k military XP per dwarf-year with the reference fort's routine.
 4. **Social and mental skills** (`social.rs`): XP for conversation, comedy, flattery,
    consoling, pacifying and so on from the social interactions the sim already counts, plus
    concentration, knowledge acquisition and teaching from demonstrations and reading, and
@@ -304,14 +317,14 @@ which fits tier 5 (Metropolis, 120 regulars + 40 monsters on the wiki) reached b
 8. **Stress after deaths and sieges**: grief and fear thoughts strong enough that a fort
    losing 14 dwarves ends with about 17 stressed citizens, as DF did.
 9. **Tree growth** (saplings to trees) and a milling/bag balance check.
-10. For the tool: a player emulation for Gordon's routine digging and building is out of
+10. For the tool: a player emulation for the player's routine digging and building is out of
     scope; compare those only as "player-driven".
 
-## UI behavior checked against Gordon's DF setup (round 9, rf-app)
+## UI behavior checked against the reference DF setup (round 9, rf-app)
 
-The validation runs are headless, so the UI does not change any number above. What the game window now takes from Gordon's real DF setup (read-only):
+The validation runs are headless, so the UI does not change any number above. What the game window now takes from the reference install's real DF setup (read-only):
 
-| What | Gordon's DF | Rustfort round 9 |
+| What | reference DF install | Rustfort round 9 |
 |---|---|---|
 | Boxes that pause (`prefs/announcements.txt`) | `BOX` on citizen deaths, migrants, thieves, snatchers, caravans, tantrums, berserkers, mood workshop claims (also `R`), artifacts begun | the same types open a box and pause; enemy deaths do not (DF has no box for them) |
 | Petitions | answered in DF's petitions window | petitions screen + box with Accept / Deny; unanswered ones are denied after 28 days (sim ESTIMATE) |
@@ -324,7 +337,7 @@ Changes (`invasion.rs`, `raids.rs`, `warcal.rs`, `caverns.rs`, `defense.rs`, `co
 in docs/FIDELITY.md):
 
 - **Invasion tier** by population **or** created wealth **or** exported wealth, with the save's
-  own `ENEMY_*_TRIGGER` settings (wiki Difficulty). Gordon's fort (87 citizens, 3.2 M created
+  own `ENEMY_*_TRIGGER` settings (wiki Difficulty). The reference fort (87 citizens, 3.2 M created
   wealth) is at the Metropolis tier, not the Town tier.
 - **Created wealth** is a persistent counter (`World::fort_history`), seeded with the imported
   items' value; every made item adds base value x material x quality at creation.
@@ -418,7 +431,7 @@ Notes:
 
 - The craft quality roll gives skilled crafters DF-like results (skill 16: 82 % exceptional,
   18 % masterwork), but in the sim most craft jobs go to the many unskilled dwarves with the
-  craft labor (62 of Gordon's dwarves have it, most at skill 0-4), so the mean stays at 1.8.
+  craft labor (62 of the reference fort's dwarves have it, most at skill 0-4), so the mean stays at 1.8.
 - `quality.new_mean` (all new durable goods) is 2.8 vs DF 1.3 and masterworks 156 vs 76: most of
   them are meals (cook skill 28, `lifestyle.rs` roll, not changed here).
 - Speaking stays 0: no poetry performers took the stage in these runs.
@@ -427,7 +440,7 @@ Notes:
 
 ## Round 10: crash hunting ([chaos10])
 
-Gordon now plays the fort, so a crash or a lost save is the worst bug. `examples/chaos.rs`
+Once a fort is played in Rustfort, a crash or a lost save is the worst bug. `examples/chaos.rs`
 (shared code in `examples/chaos_support/mod.rs`, short versions and regression tests in
 `tests/chaos.rs`) loads the real fort (or a synthetic world) and, for many seeds and game
 years, fires random but valid player actions through the public `Sim` API:
@@ -452,7 +465,7 @@ steps below N ticks/s, and `CHAOS_TRACE=1` prints each phase, which locates a st
 that kills the process.
 
 ```
-RUSTFORT_EXPORT=<abs path>/export/tileshtulon \
+RUSTFORT_EXPORT=<abs path>/export/<fort export> \
 cargo run -p rf-sim --release --example chaos -- --seeds 1-12 --years 2 --jobs 4 [--peaceful --no-invasions]
 ```
 
@@ -563,7 +576,7 @@ Reading it:
    1.3, meals); job assignment should favour skilled crafters, meal quality is too high.
 6. **Siege lethality on the fall**: 34 of 73; invaders still do not dig, climb or ride their
    mounts.
-7. **Furniture and digging** remain player-driven (Gordon's orders); not a sim error.
+7. **Furniture and digging** remain player-driven (the player's orders); not a sim error.
 
 ## Round 11: stress, masterpieces, meal quality ([calib11-social])
 
@@ -575,7 +588,7 @@ New rows: `quality.meal_new_*` (new prepared meals per item), `ev.masterpieces` 
 applied (`SocialReport::stress_by_thought`).
 
 **Diagnosis.** The per-thought sums showed that in the calm r3 -> r4 window over 90 % of the stress gain
-came from witnessed deaths, dead bodies and their relived memories. In DF none of Gordon's
+came from witnessed deaths, dead bodies and their relived memories. In DF none of the reference fort's
 dwarves feel anything about those any more: in the r3, r4 and r5 exports **all** `SawDeadBody`
 (1 636 / 2 597 / 11 578 records) and `WitnessDeath` emotions are `ANYTHING` ("felt nothing"),
 and all 70 `Death` (grief) emotions in r5 are `SADNESS`. The sim reused that emotion only while
@@ -642,7 +655,7 @@ side by side on a machine shared with three other agents' builds (ticks/s are no
 between the columns; an interleaved 3-seed r4 -> r5 comparison gave 35.5k / 30.0k before and
 29.6k / 26.0k after, the after runs doing 2-3x more brewing and cooking).
 
-**What Gordon's gamelog shows** (`gamelog.txt`, 8 forts; read-only):
+**What the reference install's gamelog shows** (`gamelog.txt`, 8 forts; read-only):
 
 - Never more than 3 migration messages per year (spring, summer, autumn): no winter waves.
 - Trussroads, years 262-280: 22 waves, 14 "The fortress attracted no migrants this season.";
@@ -686,13 +699,13 @@ Reading it:
   than DF's (DF's fall came in its last 8 %), not from the migration rules.
 - r4 -> r5 now matches drink and meal production and stocks; migrants are a bit low
   (waves 5 as in DF, but 1.2 instead of 2.2 migrants per wave).
-- Under a civilian alert on Gordon's "Zuflucht" burrow the fort did **no work at all** in two
+- Under a civilian alert on the reference fort's "Zuflucht" burrow the fort did **no work at all** in two
   months (r5): the burrow has 2 stills and a kitchen, but brew/cook orders were not due (stock
   above target) and the farms and other workshops lie outside, which matches DF's burrow rule.
   The order dispatch fix makes due orders use the burrow's workshops.
 - **Craft quality is unchanged (1.6-1.8 vs DF 2.4-2.9).** The wiki gives no skill preference in
   job assignment ("an idle dwarf who does not have that labor disabled will be assigned the
-  job"); round 10 found default workshop profiles in Gordon's fort. The wiki's remaining lever,
+  job"); round 10 found default workshop profiles in the reference fort. The wiki's remaining lever,
   maker attributes and preferences for the item or material, belongs to `skills.rs` and is not
   done.
 - 2 years `rustfort bench --standdown` on r5 (seed 1): 87 -> **56** citizens, 144 deaths, the
@@ -706,7 +719,7 @@ Reading it:
 ## Round 12: wiki item-quality formula, raw reactions ([metal12])
 
 The quality of workshop products now follows the wiki's quality-point formula (w:Skill):
-skill level, the skill's physical and mental attributes (Gordon's exported current values), focus,
+skill level, the skill's physical and mental attributes (the exported current values), focus,
 skill penalties and preferences (see FIDELITY, `skills::quality_points_roll`). Before = the v0.11
 build, after = this round, same seeds 1-3 and flags (r4 -> r5 `--standing-orders
 --restore-schedules`, r3 -> r4 `--standing-orders`), medians:
@@ -717,7 +730,7 @@ build, after = this round, same seeds 1-3 and flags (r4 -> r5 `--standing-orders
 | craft masterworks | 25 | 11 | 14 | 46 | 5 | 5 |
 | all new durable goods: quality mean | 1.3 | 2.1 | 2.1 | 1.9 | 2.9 | **2.6** |
 | all new durable goods: masterworks | 76 | 96 | 103 | 70 | 183 | **123** |
-| new bars | 5 | 0 | 0 | 51 | 8 | **23** (coke from Gordon's queue) |
+| new bars | 5 | 0 | 0 | 51 | 8 | **23** (coke from the fort's queue) |
 | metrics in range or close | | 99 / 191 | 103 / 196 | | 66 / 182 | 70 / 183 |
 
 Reading it:
@@ -743,7 +756,7 @@ Reading it:
 ## Limitations
 
 - One real history and a few seeds. Sieges dominate the deaths, so seeds vary a lot.
-- Gordon's scripts changed orders between the exports; production of goods without a standing
+- The player's scripts changed orders between the exports; production of goods without a standing
   equivalent (clothing, beds, barrels, armor) cannot be compared.
 - "New items" also counts stacks split off older stacks (food, drink, ammo) and misses goods
   that were made and then eaten, traded or destroyed; compare durable goods only.
