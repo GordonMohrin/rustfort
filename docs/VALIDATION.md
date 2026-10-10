@@ -23,7 +23,7 @@ later snapshot, and the same census is applied to the simulated end state and to
 | `tileshtulon-r3` | 275, tick 294 557 (Timber) | 01:02:24 | 90 | 35 goblins of a running siege; **no settings.json** |
 | `tileshtulon-r4` | 277, tick 22 298 (Granite) | 02:09:11 | 88 | no engravings exported yet |
 | `tileshtulon` (r5) | 279, tick 94 209 (Felsite) | 05:13:09 | 87 | 16 246 engravings |
-| `tileshtulon-r6` | 280, tick 150 232 (Hematite) | 06:21 | **15** | taken during the siege that broke the fort |
+| `tileshtulon-r6` | 280, tick 150 232 (Malachite) | 06:21 | **15** | taken during the siege that broke the fort |
 
 Intervals used: **r4 -> r5** (878 311 ticks = 2.18 years, the main comparison), r3 -> r4
 (534 141 ticks = 1.32 years) and r5 -> r6 (459 223 ticks = 1.14 years).
