@@ -703,6 +703,42 @@ Reading it:
   waves (1 and 4) in 1.7 years.
 - Chaos harness on r5, seeds 1-4, 1 year each: 0 panics, 0 new invariant violations.
 
+## Round 12: wiki item-quality formula, raw reactions ([metal12])
+
+The quality of workshop products now follows the wiki's quality-point formula (w:Skill):
+skill level, the skill's physical and mental attributes (Gordon's exported current values), focus,
+skill penalties and preferences (see FIDELITY, `skills::quality_points_roll`). Before = the v0.11
+build, after = this round, same seeds 1-3 and flags (r4 -> r5 `--standing-orders
+--restore-schedules`, r3 -> r4 `--standing-orders`), medians:
+
+| metric | r4 -> r5 DF | before | after | r3 -> r4 DF | before | after |
+|---|---|---|---|---|---|---|
+| craft quality mean | 2.6 | 1.9 | 1.8 (1.6-1.9) | 2.9 | 1.7 | 1.7 (1.6-1.8) |
+| craft masterworks | 25 | 11 | 14 | 46 | 5 | 5 |
+| all new durable goods: quality mean | 1.3 | 2.1 | 2.1 | 1.9 | 2.9 | **2.6** |
+| all new durable goods: masterworks | 76 | 96 | 103 | 70 | 183 | **123** |
+| new bars | 5 | 0 | 0 | 51 | 8 | **23** (coke from Gordon's queue) |
+| metrics in range or close | | 99 / 191 | 103 / 196 | | 66 / 182 | 70 / 183 |
+
+Reading it:
+
+- Non-craft goods by masons and smiths moved toward DF on r3 -> r4 (2.9 -> 2.6, masterworks
+  183 -> 123): their skills have no mental attributes beyond Kinesthetic sense, so they score
+  fewer points than with the old roll.
+- **Craft quality is still low (1.7-1.8 vs DF 2.6-2.9).** The formula's attribute points lift
+  unskilled crafters to "well-crafted" only now and then. The one documented lever that is left
+  is preferences: +10 points each when the item and the material match the maker's likes (about
+  two quality levels for a crafter carving a liked material). The export has no preferences;
+  the exporter would need `unit.status.current_soul.preferences`.
+- The r3 queue's `BITUMINOUS_COAL_TO_COKE` jobs now run (bars 8 -> 23, DF 51).
+- Same war outcomes per seed before and after (the r4 -> r5 seeds lose 0, 0 and 44 citizens in
+  both builds).
+- 2 years `rustfort bench --standdown` on r5 (seed 1): 87 -> 47 citizens, 226 deaths, the same
+  state hash `c7c43932c5d8c7c7` with 1 and N threads. Throughput was 13.4k ticks/s on a machine
+  running four other builds; the v0.11 binary ran at 12.5k ticks/s under the same load, with the
+  same production share (31 us/tick).
+- saveload N = M = 20 000: IDENTICAL. Chaos r5 seeds 1-4, 1 year each: 0 panics.
+
 ## Limitations
 
 - One real history and a few seeds. Sieges dominate the deaths, so seeds vary a lot.
