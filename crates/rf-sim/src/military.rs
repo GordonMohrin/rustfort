@@ -167,7 +167,7 @@ impl Sim {
                 Role::Patient
             } else if f.duty != Duty::None {
                 Role::Soldier
-            } else if self.combat.mil.alert.is_some() && !self.combat.mil.alert_list.is_empty() {
+            } else if self.combat.mil.alert.is_some() && !self.combat.mil.alert_list.is_empty() && f.alert_skip_until <= now {
                 Role::Civilian
             } else if self.needs_rest(s) {
                 Role::Patient
@@ -657,6 +657,11 @@ impl Sim {
                 // Burrow unreachable: behave normally.
                 self.ai[s].wake = now + 100;
                 if self.combat.f[s].threat == NONE {
+                    // [chaos10] ... for a while: `release` decides again, and without this the
+                    // decision made the unit a civilian of the alert again, which came back
+                    // here: endless recursion, stack overflow (a unit cut off from the burrow,
+                    // e.g. behind a raised bridge, crashed the game when the alert went on).
+                    self.combat.f[s].alert_skip_until = now + 200;
                     self.release(s, now);
                 }
             }

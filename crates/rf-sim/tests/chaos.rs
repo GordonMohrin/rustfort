@@ -127,6 +127,39 @@ fn many_constructions_without_material_under_an_alert_do_not_overflow_the_stack(
     assert!(n > 1_000, "only {n} constructions planned");
 }
 
+/// Round 10 chaos (second stack overflow, after the construction fix): a civilian alert on a
+/// burrow a dwarf cannot reach (solid rock here; in a real fort a raised bridge or a dwarf cut
+/// off by a cave-in) made `burrow_think` -> `release` -> `decide` -> civilian ->
+/// `burrow_think` recurse without end. Such a dwarf now ignores the alert for a while.
+#[test]
+fn civilian_alert_on_an_unreachable_burrow_does_not_recurse() {
+    let h = std::thread::Builder::new()
+        .stack_size(512 * 1024)
+        .spawn(|| {
+            let (dx, dy, dz) = (48u16, 48u16, 20u16);
+            let surface_z = (dz as i16 * 2 / 3).max(2);
+            let hz = (surface_z - 4).max(0);
+            let mut w = World::synthetic(dx, dy, dz);
+            // A dug-out pocket in the granite far from the hall: walkable, but cut off.
+            let floor = w.tiletypes.by_name("StoneFloor1").unwrap();
+            w.tile_mut(Pos::new(3, 3, hz)).unwrap().tt = floor;
+            let mut sim = Sim::new(w, 6);
+            sim.set_invasions(false);
+            let b = sim.create_burrow("Pocket", Pos::new(2, 2, hz), Pos::new(4, 4, hz));
+            assert!(sim.is_walkable(Pos::new(3, 3, hz)));
+            let hall = sim.world.citizens().next().unwrap().pos;
+            assert!(!sim.reachable(hall, Pos::new(3, 3, hz)));
+            sim.set_civilian_alert(Some(b));
+            sim.run_ticks(2_000);
+            sim.set_civilian_alert(None);
+            sim.run_ticks(500);
+            sim.world.citizens().filter(|u| !u.flags.dead).count()
+        })
+        .unwrap();
+    let alive = h.join().expect("the sim thread overflowed or panicked");
+    assert!(alive >= 6, "{alive} citizens alive");
+}
+
 /// Round 10 chaos, real fort, every seed: seeds planted in DF's farm plots are turned into
 /// crops (the seed item is destroyed), but the plot kept the dead item ids in
 /// `Building::items` forever, and saves carried them. Compaction now drops them.
