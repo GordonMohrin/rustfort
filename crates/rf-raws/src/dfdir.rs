@@ -413,8 +413,8 @@ mod tests {
 
     #[test]
     fn vdf_v2_format_with_escaped_backslashes() {
-        let t = "\u{feff}\"libraryfolders\"\n{\n\t\"0\"\n\t{\n\t\t\"path\"\t\t\"E:\\\\Program Files (x86)\\\\Steam\"\n\t\t\"label\"\t\t\"\"\n\t\t\"apps\"\n\t\t{\n\t\t\t\"975370\"\t\t\"1139421922\"\n\t\t}\n\t}\n\t\"1\"\n\t{\n\t\t\"path\"\t\t\"D:\\\\SteamLibrary\"\n\t\t\"contentid\"\t\t\"-112\"\n\t}\n}\n";
-        assert_eq!(library_paths(t), vec![r"E:\Program Files (x86)\Steam".to_string(), r"D:\SteamLibrary".to_string()]);
+        let t = "\u{feff}\"libraryfolders\"\n{\n\t\"0\"\n\t{\n\t\t\"path\"\t\t\"C:\\\\Program Files (x86)\\\\Steam\"\n\t\t\"label\"\t\t\"\"\n\t\t\"apps\"\n\t\t{\n\t\t\t\"975370\"\t\t\"1000\"\n\t\t}\n\t}\n\t\"1\"\n\t{\n\t\t\"path\"\t\t\"D:\\\\SteamLibrary\"\n\t\t\"contentid\"\t\t\"-112\"\n\t}\n}\n";
+        assert_eq!(library_paths(t), vec![r"C:\Program Files (x86)\Steam".to_string(), r"D:\SteamLibrary".to_string()]);
     }
 
     #[test]
