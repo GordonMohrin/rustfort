@@ -88,7 +88,7 @@ pub struct Nav {
 }
 
 /// [perf9] Landmarks per walk component: number of slots per tile.
-pub const LM_K: usize = 8;
+pub const LM_K: usize = 16;
 /// [perf9] No landmark value for this tile and slot.
 pub const LM_INF: u16 = u16::MAX;
 /// [perf9] Components with fewer walkable tiles get no landmarks (plain heuristic).
