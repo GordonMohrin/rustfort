@@ -546,6 +546,9 @@ impl Sim {
     /// [move hook] Walking time per 100 tiles of slot `s` with its carried weight.
     pub(crate) fn carts_speed(&self, s: usize) -> i32 {
         let sp = self.ai[s].speed;
+        if self.ai[s].carrying < 0 {
+            return sp;
+        }
         match self.carts.slow.iter().find(|x| x.0 == s as u32) {
             Some(&(_, pct)) => sp * pct as i32 / 100,
             None => sp,
@@ -745,6 +748,11 @@ impl Sim {
         if now % BARROW_PERIOD == BARROW_PHASE {
             self.barrows_pass();
         }
+        if now % PLAN_PERIOD == PLAN_PHASE && !self.carts.slow.is_empty() {
+            // Drop weight entries of units that left their haul some other way.
+            let ai = &self.ai;
+            self.carts.slow.retain(|&(s, _)| ai.get(s as usize).map(|a| a.carrying >= 0 && matches!(a.task, Task::GoStore(..) | Task::Cart(_))).unwrap_or(false));
+        }
         if self.carts.carts.is_empty() && self.world.haul_routes.is_empty() {
             return;
         }
@@ -836,6 +844,23 @@ impl Sim {
             let tile = self.world.idx(it.pos).unwrap_or(0) as u32;
             self.reserve_vehicle(v, true);
             self.carts.carts.push(Cart { item: v, route, tile, ..Default::default() });
+        }
+        // Unclaimed jobs that no longer fit (item gone, cart gone or not at its stop).
+        let dead = |sim: &Sim, id: i32| sim.item_idx.get(&id).map(|&i| sim.imeta[i as usize].dead).unwrap_or(true);
+        let stale: Vec<u32> = self
+            .carts
+            .jobs
+            .iter()
+            .filter(|j| j.claimed == NONE && j.kind != JobK::Barrow)
+            .filter(|j| {
+                let cart = self.carts.carts.iter().find(|c| c.item == j.cart);
+                let at_stop = cart.map(|c| c.state == CartState::AtStop).unwrap_or(false);
+                cart.is_none() || dead(self, j.cart) || (matches!(j.kind, JobK::Load | JobK::Unload) && (!at_stop || dead(self, j.item)))
+            })
+            .map(|j| j.id)
+            .collect();
+        for id in stale {
+            self.cart_remove_job(id);
         }
         // 2. Work at the stops.
         let mut load_piles: Vec<u32> = Vec::new();
