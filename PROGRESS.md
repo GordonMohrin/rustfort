@@ -1,5 +1,47 @@
 # Rustfort: progress
 
+## v0.8.0 (2026-10-10): animals, locations/justice/lifestyle, raids, new screens, validation against real DF
+
+**New since 0.7:**
+- **Exporter round 6** (`export/tileshtulon-r6`, year 280). It adds:
+  - work details (12), full stockpile filters and links, kitchen exclusions (269)
+  - locations (23 temples, taverns, libraries...) with occupations, justice cases (328)
+  - animal owner, training, pasture, slaughter and pregnancy; hauling routes
+  - DF room evaluation thoughts. Finding: **room-thought severity is the wiki tier**, so 54 of 97 rooms match exactly and 90 of 97 are within one tier.
+
+  **Note:** Gordon's real fort was overrun by a siege in year 280 (90 -> 15 citizens), so r6 is a dying fort. The default `export/tileshtulon` stays round 5 (year 279, 87 citizens).
+- **Animals:**
+  - grazers and pastures; breeding (6-month gestation, litters); egg-laying in nest boxes with hatching
+  - milking, shearing (your ShearCreature order now runs), cheese and thread; slaughter at the butcher
+  - war, hunting and taming training; hunting with crossbows, fishing; cats killing vermin; pet adoption
+- **Locations and lifestyle:**
+  - temples (deity match), taverns (keeper serves, performers), libraries (scholars)
+  - visitors and petitions (`Sim::answer_petition`)
+  - justice: crimes from tantrums, thieves and mandates; sheriff or captain investigates; jail, beating and hammerstrikes
+  - clothing wear and replacement, meal quality from cook skill, kitchen exclusions respected, miasma
+- **Raids and military:**
+  - ambushes (3 of 4 invasions, hidden until spotted), kobold thieves, goblin snatchers
+  - siege camps, trolls and beak dogs from the City tier, retreat when the leader dies
+  - recover wounded (carried to bed; broken legs do not walk), barracks, sparring and demonstrations, patrols
+  - per-position uniforms and squad ammo API; civilian alert prefers burrow resources
+- **UI:**
+  - v50 **Work details** screen (the old labor grid moved to "Advanced"), **stockpile editor** in DF Steam style (categories, groups, leaves, presets, containers, links), Kitchen screen
+  - Animals screen, Places (locations, zones, piles, workshops, farms), Justice, Objects (293 artifacts), World (civs, caravans)
+  - **minimap**; unspotted raiders stay hidden
+- **Validation against Gordon's real history** (`examples/validate.rs`, `docs/VALIDATION.md`): Rustfort runs from a real snapshot to the date of the next one, for example r4 -> r5 (2.18 years), with several seeds.
+  - **Matches DF:** caravans 4/4, moods and artifacts 5/5, siege count, item wealth within 5 %, stocks.
+  - **Diverges:** sieges far too weak (DF sent at least 137 goblins and killed 14, later 73), forgotten beasts too frequent, social XP missing, military XP 0.5x, craft quality, pregnancy rate.
+  - These calibration fixes are the plan for round 9.
+  - DF's real speed on this fort was about **107 calendar ticks/s**; Rustfort is about 500x faster.
+- **Result:** 2 years headless with `--standdown` on r5: 87 -> 92 citizens, about 55k ticks/s, the same state hash with 1 and N threads.
+
+**Known gaps (next, round 9):**
+- The calibrations above.
+- Intermittent nondeterminism under heavy load reported by two agents.
+- r5 has slower high-population scaling (hostiles' long A* searches).
+- 80 tame animals are exported off-map (cages?).
+- Invaders that are leaving can get stuck on traps; civilians fleeing a threat cannot drink.
+
 ## v0.7.0 (2026-10-10): DF engravings, civilian alert with work, cave-ins, wealth-based sieges
 
 **New since 0.6:**
