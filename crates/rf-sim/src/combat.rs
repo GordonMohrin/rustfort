@@ -1207,6 +1207,9 @@ impl Sim {
 
     /// Wielded weapon: (item index, weapon template).
     pub(crate) fn wielded(&mut self, s: usize) -> Option<(usize, u16)> {
+        if s == self.def.trap_unit {
+            return self.def.trap_weapon; // [defense] weapon traps, falling stones, upright spikes
+        }
         let uidx = self.ai[s].uidx;
         let inv = self.world.units[uidx].inventory.clone();
         for id in inv {
@@ -2304,6 +2307,9 @@ impl Sim {
         }
         // Hostile without target: look for one.
         let invader = self.combat.f[s].siege > 0 || self.world.units[self.ai[s].uidx].invader_civ >= 0;
+        if self.defense_destroyer_think(s, now, invader) {
+            return; // [defense] building destroyers smash locked doors in their way
+        }
         if now < self.combat.f[s].dormant_until {
             self.ai[s].wake = self.combat.f[s].dormant_until;
             return;
@@ -2330,10 +2336,13 @@ impl Sim {
         let hs = self.combat.hostiles.clone();
         for &h in &hs {
             let h = h as usize;
-            if self.ai[h].kind == Kind::Dead || !self.can_fight(h, now) || self.combat.f[h].role == Role::Leave {
+            // [defense] Helpless hostiles (paralyzed or knocked out, e.g. by a trap) are still
+            // finished off by soldiers on duty; civilians ignore them.
+            let helpless = !self.can_fight(h, now);
+            if self.ai[h].kind == Kind::Dead || self.combat.f[h].role == Role::Leave {
                 continue;
             }
-            if self.combat.f[h].target == NONE && self.combat.f[h].dormant_until > now {
+            if !helpless && self.combat.f[h].target == NONE && self.combat.f[h].dormant_until > now {
                 continue;
             }
             let hp = self.nav.xyz(self.ai[h].pos as usize);
@@ -2351,6 +2360,9 @@ impl Sim {
                 let dz = (hp.2 as i32 - tp.2 as i32).abs();
                 let f = &self.combat.f[t];
                 let soldier = f.duty != crate::military::Duty::None;
+                if helpless && !soldier {
+                    continue; // [defense]
+                }
                 let radius = if soldier { SIGHT } else { 12 };
                 if cheb > radius || dz > 2 {
                     continue;
