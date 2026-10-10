@@ -1,6 +1,8 @@
 //! [round 6] "Import from Dwarf Fortress": finds the running DF, asks DFHack (read-only) which
-//! fort is loaded, runs `tools/dfhack/rustfort-export.lua` into `export/<fort>-<date>/` and
-//! follows its `progress.json` until `manifest.json` (the done-marker) appears.
+//! fort is loaded, runs `tools/dfhack/rustfort-export.lua` into `export/<fort>-<date>/` (under
+//! the working directory, or `$RUSTFORT_EXPORT_ROOT`) and follows its `progress.json` until
+//! `manifest.json` (the done-marker) appears. Needs DF running with a fort loaded and DFHack
+//! installed (a free, separate Steam app that installs into the DF folder).
 //!
 //! Everything here talks to DF only through `hack/dfhack-run.exe`, with two scripts that never
 //! pause the game or write to its memory: `rustfort-probe.lua` (one JSON line about the loaded
@@ -41,9 +43,9 @@ pub fn tools_dir() -> Option<PathBuf> {
     c.into_iter().find(|d| d.join("rustfort-export.lua").exists()).map(|d| std::fs::canonicalize(&d).map(|p| plain(&p)).unwrap_or(d))
 }
 
-/// Root folder of the exports: `$RUSTFORT_EXPORT_ROOT`, else `export/`.
+/// Root folder of the exports: `$RUSTFORT_EXPORT_ROOT`, else `export/` (`rf_import::EXPORT_ROOT`).
 pub fn export_root() -> PathBuf {
-    std::env::var_os("RUSTFORT_EXPORT_ROOT").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("export"))
+    std::env::var_os("RUSTFORT_EXPORT_ROOT").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(rf_import::EXPORT_ROOT))
 }
 
 /// Strip Windows' `\\?\` prefix from a canonical path (DF/Lua and humans prefer plain paths).
@@ -342,7 +344,9 @@ impl ExportJob {
         }
         std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
         let script = tools.join("rustfort-export.lua");
-        // --any-fort: the probe just named the fort; the exporter's own check expects Tileshtulon.
+        // Explicit options: the output folder (the exporter's own default would be
+        // <DF folder>/rustfort-export/<fort>) and --any-fort (no fort-name check; that is the
+        // exporter's default too, the probe just named the fort).
         let (ok, out) = run_with_timeout(
             Command::new(&run).arg("lua").arg("-f").arg(lua_path(&script)).arg(lua_path(&dir)).arg("--any-fort"),
             Duration::from_secs(20),

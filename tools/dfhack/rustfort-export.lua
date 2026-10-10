@@ -1,16 +1,19 @@
 -- rustfort-export.lua - READ-ONLY exporter of the loaded DF fort into the Rustfort export format
 -- (docs/EXPORT_FORMAT.md, format_version 1).  DF 53.16 + DFHack 53.16-r2.
 --
---   dfhack-run lua -f <abs path>/rustfort-export.lua <out_dir> [options]
+--   dfhack-run lua -f <abs path>/rustfort-export.lua [<out_dir>] [options]
+--     <out_dir>        where to write; default <DF folder>/rustfort-export/<native fort name, lower case>
+--                      (letters and digits; other characters become _). The start line names the folder.
 --     --budget MS      Lua time per game frame (default 25)
---     --expect NAME    native fort name that must be loaded (default Tileshtulon); --any-fort skips the check
+--     --expect NAME    only export if this native fort name is loaded (default: any fort)
+--     --any-fort       no fort-name check (the default; kept for older callers)
 --     --force          ignore a stale export.lock
 --     --skip-map       only entities (units/items/buildings/plants) - for quick re-tests
 --     --zmin N --zmax N  only export these z-levels of the map (testing; files of other z stay untouched)
 --     --status         print progress.json of <out_dir> and exit
 --     --cancel         ask a running export to stop (creates <out_dir>/cancel)
 --
--- Safety contract (Gordon's live game, possibly with his own agents playing):
+-- Safety contract (a live game the player keeps playing, possibly with their own scripts running):
 --   * never pauses/unpauses, never writes to DF memory or game state, enables no plugin, installs no hook.
 --   * all work runs in a coroutine resumed by one-shot dfhack.timeout(1,'frames') callbacks, each slice
 --     limited to --budget ms (BUG-415: a whole-map scan in one go froze DF for 9-28 s).
@@ -46,7 +49,7 @@ local SCRIPT_REV = '2026-10-10f'
 
 -- ------------------------------------------------------------------------------------------- args
 local args = { ... }
-local opt = { budget = 25, expect = 'Tileshtulon', force = false, skip_map = false }
+local opt = { budget = 25, expect = nil, force = false, skip_map = false }
 do
   local i = 1
   while i <= #args do
@@ -65,7 +68,27 @@ do
     i = i + 1
   end
 end
-local OUT = (opt.out or 'C:/Users/admin/claude gordons projects/rustfort/export/tileshtulon'):gsub('\\', '/'):gsub('/+$', '')
+-- Default output folder: <DF folder>/rustfort-export/<native fort name in lower case>.
+local function fort_slug(name)
+  local s = tostring(name or ''):lower():gsub('[^a-z0-9]', '_'):gsub('^_+', ''):gsub('_+$', '')
+  return s ~= '' and s or 'fort'
+end
+local function default_out()
+  if not dfhack.isMapLoaded() then return nil end
+  local okn, native = pcall(function()
+    return dfhack.translation.translateName(df.global.world.world_data.active_site[0].name, false)
+  end)
+  if not okn then return nil end
+  local okp, dfpath = pcall(dfhack.getDFPath)
+  dfpath = (okp and dfpath and dfpath ~= '') and tostring(dfpath) or '.'
+  return dfpath:gsub('\\', '/'):gsub('/+$', '') .. '/rustfort-export/' .. fort_slug(native)
+end
+local OUT = opt.out or default_out()
+if not OUT then
+  print('{"ok":false,"error":"no output folder given and no fortress loaded"}')
+  return
+end
+OUT = OUT:gsub('\\', '/'):gsub('/+$', '')
 
 local function file_exists(p)
   local f = io.open(p, 'rb')
@@ -1328,7 +1351,7 @@ local r4 = { links = 0, levers = 0, locked_doors = 0, raised_bridges = 0, traps 
              doors = 0, bridges = 0 }
 local building_state   -- (defined in the block below; its helpers stay block-local: Lua allows 200 locals per chunk)
 do
-  -- DF 53.16 door_flags: forbidden (UI "Locked" = Gordon's "forbidden door"), unused_02 (was "internal"),
+  -- DF 53.16 door_flags: forbidden (UI "Locked" = a player's "forbidden door"), unused_02 (was "internal"),
   -- taken_by_invaders, used_by_intruder, closed, operated_by_mechanisms; DF 53 has no pet-passable bit
   local DOOR_FLAG = { forbidden = 'LOCKED', unused_02 = 'INTERNAL', taken_by_invaders = 'TAKEN_BY_INVADERS',
                       used_by_intruder = 'USED_BY_INTRUDER', operated_by_mechanisms = 'OPERATED_BY_MECHANISMS' }
@@ -3571,5 +3594,7 @@ end
 
 progress(true)
 dfhack.timeout(1, 'frames', step)
+-- One readable line for people running this by hand, then the JSON line Rustfort reads.
+print(('rustfort-export: exporting %s (%s) into %s - manifest.json appears there when done'):format(utf(FORT_EN), utf(FORT_NATIVE), OUT))
 print(('{"ok":true,"started":true,"fort":%s,"fort_native":%s,"out":%s,"budget_ms":%d}'):format(
   js(FORT_EN), js(FORT_NATIVE), ja(OUT), opt.budget))

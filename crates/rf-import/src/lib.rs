@@ -37,8 +37,15 @@ pub use round8::{AnimalProducts, MilkInfo, PunishmentInfo, RoomEval, ShearInfo};
 pub mod round9;
 pub use round9::{load_invasions, options_for, wealth, InvasionInfo, WealthInfo};
 
-/// Default export folder of Gordon's fort (gitignored, outside of git).
-pub const DEFAULT_EXPORT: &str = "export/tileshtulon";
+/// Folder (relative to the working directory) that holds the fort exports: the app's
+/// "Import from Dwarf Fortress" writes `export/<fort>-<date>` there, and [`find_export`] takes
+/// the newest complete one by default. Gitignored.
+pub const EXPORT_ROOT: &str = "export";
+
+/// Old name of [`EXPORT_ROOT`] (until v0.12 the default export was the fixed folder
+/// `export/tileshtulon`; now it is the newest export under `export/`).
+#[deprecated(note = "use EXPORT_ROOT and find_export")]
+pub const DEFAULT_EXPORT: &str = EXPORT_ROOT;
 
 /// Export format version this importer understands.
 pub const FORMAT_VERSION: u32 = 1;
@@ -404,19 +411,48 @@ impl Manifest {
     }
 }
 
-/// Find the export folder: explicit path, env `RUSTFORT_EXPORT`, or `export/tileshtulon`
-/// relative to the current dir or the workspace root.
+/// Find the export folder:
+/// 1. the explicit path (`--export DIR`), if it holds a `manifest.json`;
+/// 2. else env `RUSTFORT_EXPORT`, if it holds a `manifest.json`;
+/// 3. else the newest complete export under `export/` in the working directory
+///    ([`newest_export`]); for tests and examples started by cargo from a crate folder also
+///    under `export/` of the workspace root;
+/// 4. else `None` (the app then starts its built-in synthetic test fort).
 pub fn find_export(explicit: Option<&Path>) -> Option<PathBuf> {
     if let Some(p) = explicit {
         return p.join("manifest.json").exists().then(|| p.to_path_buf());
     }
-    if let Some(p) = std::env::var_os("RUSTFORT_EXPORT").map(PathBuf::from) {
+    if let Some(p) = std::env::var_os("RUSTFORT_EXPORT").filter(|v| !v.is_empty()).map(PathBuf::from) {
         if p.join("manifest.json").exists() {
             return Some(p);
         }
     }
-    let ws = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(DEFAULT_EXPORT);
-    [PathBuf::from(DEFAULT_EXPORT), ws].into_iter().find(|p| p.join("manifest.json").exists())
+    let ws = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join(EXPORT_ROOT);
+    newest_export(Path::new(EXPORT_ROOT)).or_else(|| newest_export(&ws))
+}
+
+/// A complete export: `manifest.json` (the exporter writes it last) and no `export.lock`
+/// (an export still running).
+pub fn is_complete_export(dir: &Path) -> bool {
+    dir.join("manifest.json").is_file() && !dir.join("export.lock").exists()
+}
+
+/// The most recently written complete export directly under `root` (by the modification
+/// time of its `manifest.json`; the folder name decides ties), or `None`.
+pub fn newest_export(root: &Path) -> Option<PathBuf> {
+    let rd = std::fs::read_dir(root).ok()?;
+    let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
+    for e in rd.flatten() {
+        let dir = e.path();
+        if !dir.is_dir() || !is_complete_export(&dir) {
+            continue;
+        }
+        let t = std::fs::metadata(dir.join("manifest.json")).and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
+        if best.as_ref().map_or(true, |(bt, bd)| (t, &dir) > (*bt, bd)) {
+            best = Some((t, dir));
+        }
+    }
+    best.map(|(_, d)| d)
 }
 
 /// Read only `manifest.json` (cheap; e.g. to show what an export contains before loading it).
@@ -1256,6 +1292,37 @@ mod tests {
         let d = std::env::temp_dir().join(format!("rf-import-test-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         d
+    }
+
+    /// The default export is the newest complete one under the export root.
+    #[test]
+    fn newest_complete_export_wins() {
+        let root = temp_dir("newest");
+        assert_eq!(newest_export(&root), None, "missing root");
+        std::fs::create_dir_all(&root).unwrap();
+        assert_eq!(newest_export(&root), None, "empty root");
+        let t0 = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        for (name, age, lock) in [("old", 300u64, false), ("new", 100, false), ("running", 0, true), ("loose-file", 0, false)] {
+            if name == "loose-file" {
+                std::fs::write(root.join("manifest.json"), "{}").unwrap(); // a file, not an export folder
+                continue;
+            }
+            let d = root.join(name);
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("manifest.json"), "{}").unwrap();
+            let f = std::fs::File::options().write(true).open(d.join("manifest.json")).unwrap();
+            f.set_modified(t0 - std::time::Duration::from_secs(age)).unwrap();
+            if lock {
+                std::fs::write(d.join("export.lock"), "1").unwrap();
+            }
+        }
+        std::fs::create_dir_all(root.join("no-manifest")).unwrap();
+        assert_eq!(newest_export(&root), Some(root.join("new")));
+        assert!(is_complete_export(&root.join("old")) && !is_complete_export(&root.join("running")));
+        // An explicit folder must itself be an export.
+        assert_eq!(find_export(Some(&root.join("old"))), Some(root.join("old")));
+        assert_eq!(find_export(Some(&root.join("no-manifest"))), None);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

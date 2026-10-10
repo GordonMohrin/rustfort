@@ -778,7 +778,7 @@ fn main() {
         }
     }
     let Some(dir) = rf_import::find_export(dir.as_deref()) else {
-        eprintln!("no export found (pass a folder, set RUSTFORT_EXPORT, or import a fort into export/)");
+        eprintln!("no export found (pass a folder, set RUSTFORT_EXPORT, or import a fort into {}/)", rf_import::EXPORT_ROOT);
         std::process::exit(1);
     };
     let (w, rep) = match rf_import::load_export(&dir) {

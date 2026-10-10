@@ -503,6 +503,7 @@ name = "rf-raws"
 version = "0.1.0"
 dependencies = [
  "rf-core",
+ "windows",
 ]
 
 [[package]]

@@ -4,6 +4,7 @@ description = "Loads a DFHack fort export (docs/EXPORT_FORMAT.md) into an rf-cor
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 publish.workspace = true
 
 [dependencies]

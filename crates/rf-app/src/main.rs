@@ -14,7 +14,7 @@
 
 mod bench;
 mod crash; // [app10]
-mod desktop; // Gordon: test windows open on virtual desktop 1
+mod desktop; // screenshot/test windows open on virtual desktop 1
 mod font;
 mod game;
 mod importer;
@@ -89,7 +89,10 @@ const USAGE: &str = "usage:
                  [--menu] [--menu-page load|exports|import|settings] [--autosave-days N]
   rustfort bench [--export DIR] [--synthetic] [--ticks N] [--seed N] [--no-invasions] [--standdown]
   rustfort savebench [--export DIR]
-  --load FILE.rfsave   start from a save game (play, bench)";
+  --load FILE.rfsave   start from a save game (play, bench)
+  --export DIR         a fort export; default: $RUSTFORT_EXPORT, else the newest export under export/,
+                       else the built-in synthetic test fort
+environment: RUSTFORT_DF_DIR = Dwarf Fortress folder (else Settings, then Steam auto-detection)";
 
 fn parse_args() -> Result<Args, String> {
     let mut a = Args { cmd: "play".into(), seed: 1, ticks: 10_000, frames: 3, gfps: 60, ui_scale: 1.0, size: (96, 96, 40), ..Default::default() };
@@ -185,9 +188,12 @@ fn main() {
             // [app10] Every panic goes to saves/crash.log; the game catches them (crash dialog).
             crash::install_hook();
             // [round 6] Settings file next to the saves (UI scale, frame cap, vsync, DF folder).
+            // The DF folder lookup: RUSTFORT_DF_DIR, this folder, Steam, default paths.
             let settings = settings::Settings::load();
-            if std::env::var_os("RUSTFORT_DF_DIR").is_none() {
-                settings.apply_df_dir();
+            settings.apply_df_dir();
+            match rf_gfx::df_dir_status() {
+                (Some(d), src) => eprintln!("rustfort: Dwarf Fortress at {} ({src})", d.display()),
+                (None, _) => eprintln!("rustfort: {} Without it there are no DF graphics, DF font, DF keys or import.", load::DF_NOT_FOUND_HINT),
             }
             let mut args = args;
             if !args.ui_scale_cli {
@@ -198,7 +204,11 @@ fn main() {
             }
             // A world on the command line (or a screenshot test) skips the title screen.
             let direct = !args.menu && (args.export.is_some() || args.load.is_some() || args.synthetic || args.screenshot.is_some());
-            let loaded = direct.then(|| load::load(&args));
+            let loaded = direct.then(|| {
+                let mut l = load::load(&args);
+                load::add_df_hint(&mut l);
+                l
+            });
             let title = match &loaded {
                 Some(l) => format!("Rustfort - {}", l.label),
                 None => "Rustfort".to_string(),

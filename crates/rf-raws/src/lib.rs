@@ -23,12 +23,9 @@ use std::path::{Path, PathBuf};
 pub mod graphics;
 pub use graphics::*;
 
-/// Default DF install path on Gordon's machine; override with env `RUSTFORT_DF_DIR`.
-pub const DEFAULT_DF_DIR: &str = r"E:\Program Files (x86)\Steam\steamapps\common\Dwarf Fortress";
-
-pub fn df_dir() -> PathBuf {
-    std::env::var_os("RUSTFORT_DF_DIR").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(DEFAULT_DF_DIR))
-}
+/// Finding the DF install: `RUSTFORT_DF_DIR`, the app's Settings, Steam, default paths.
+pub mod dfdir;
+pub use dfdir::{df_dir, df_dir_status, is_df_install, set_settings_df_dir};
 
 /// One `[NAME:arg:arg]` token.
 #[derive(Clone, Debug, PartialEq, Eq)]

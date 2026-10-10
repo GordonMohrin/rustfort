@@ -1,5 +1,6 @@
 //! [round 6] Player settings, kept in a small JSON file next to the saves
-//! (`<save dir>/settings.json`, i.e. `saves/settings.json`).
+//! (`<save dir>/settings.json`, i.e. `saves/settings.json`; `RUSTFORT_SETTINGS` overrides the
+//! path, `RUSTFORT_SAVE_DIR` the save dir).
 //!
 //! The file is optional: a missing or broken file gives the defaults. Unknown fields are
 //! ignored and missing ones take their default, so old files keep working.
@@ -30,7 +31,8 @@ pub struct Settings {
     pub pop_cap: Option<i32>,
     /// Invasions for newly imported forts (`None` = keep the save's value).
     pub invasions: Option<bool>,
-    /// DF install folder (empty = `RUSTFORT_DF_DIR` or the Steam default).
+    /// DF install folder chosen in Settings (empty = find it automatically: Steam, then the
+    /// default paths). `RUSTFORT_DF_DIR` wins over it; a folder without `data/vanilla` is skipped.
     pub df_dir: String,
     /// Ids of the first-time hints that were dismissed.
     pub hints_seen: Vec<String>,
@@ -124,11 +126,11 @@ impl Settings {
         std::fs::write(p, t + "\n").map_err(|e| format!("write {}: {e}", p.display()))
     }
 
-    /// Point `rf_gfx::df_dir()` at the configured install (only when one is set).
+    /// Hand the configured install to `rf_gfx::df_dir()` (step 2 of its lookup, after
+    /// `RUSTFORT_DF_DIR`; an empty field clears it).
     pub fn apply_df_dir(&self) {
-        if !self.df_dir.trim().is_empty() {
-            std::env::set_var("RUSTFORT_DF_DIR", self.df_dir.trim());
-        }
+        let d = self.df_dir.trim();
+        rf_raws::set_settings_df_dir((!d.is_empty()).then(|| std::path::Path::new(d)));
     }
 
     pub fn hint_seen(&self, id: &str) -> bool {
