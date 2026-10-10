@@ -1,6 +1,7 @@
 //! [round 6] The title screen, like DF's: Continue, Load game, Import from Dwarf Fortress,
-//! New synthetic fort (dev), Settings, Quit. It uses DF's own title art from the install
-//! (`data/art/title_background.png`, `df_logo.png`) when it is there.
+//! Built-in test fort, Settings, Quit. It uses DF's own title art from the install
+//! (`data/art/title_background.png`, `df_logo.png`) when it is there; without a DF install it
+//! is text only and says "Dwarf Fortress not found".
 //!
 //! `app_main` runs the title screen and the game in turn: "Save and return to title" in the
 //! game's Esc menu comes back here. `play --export/--load/--synthetic/--screenshot` start the
@@ -85,6 +86,13 @@ pub struct Menu {
     ann: crate::ui::round10::AnnPage,
 }
 
+/// Title screen under "Continue" on a first start (no save, no export).
+const NO_FORT_YET: &str =
+    "No imported fort yet: start DF with DFHack, load your fort, then choose Import from Dwarf Fortress. Or try the built-in test fort.";
+/// Title screen under "Dwarf Fortress not found".
+const DF_NOT_FOUND_TITLE: &str =
+    "Set its folder in Settings, or in the RUSTFORT_DF_DIR environment variable. A Steam install is found automatically.";
+
 fn load_tex(path: &std::path::Path) -> Option<Texture2D> {
     let bytes = std::fs::read(path).ok()?;
     let img = Image::from_file_with_format(&bytes, Some(ImageFormat::Png)).ok()?;
@@ -93,8 +101,8 @@ fn load_tex(path: &std::path::Path) -> Option<Texture2D> {
     Some(t)
 }
 
-/// Newest save, else the newest complete export, else the default export (`RUSTFORT_EXPORT`,
-/// `export/tileshtulon`).
+/// Newest save, else the newest complete export under `export/`, else `RUSTFORT_EXPORT`
+/// (`rf_import::find_export`). `None` on a first start: "Continue" is disabled.
 pub fn continue_target() -> Option<Target> {
     if let Some(s) = crate::save::list_saves(&crate::save::save_dir()).into_iter().find(|s| s.header.saved_unix > 0) {
         return Some(Target::Save(s));
@@ -116,7 +124,7 @@ fn describe(t: &Target) -> String {
             Ok(m) => format!("{}, year {} (DF export {})", m.fort_name, m.year, d.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default()),
             Err(_) => format!("DF export {}", d.display()),
         },
-        Target::Synthetic => "a synthetic test fort".into(),
+        Target::Synthetic => "the built-in test fort".into(),
     }
 }
 
@@ -141,6 +149,7 @@ fn spawn_load(t: Target, size: (u16, u16, u16), seed: u64, first_save: bool) -> 
             }
         }
         crate::load::preload_gfx(&mut l);
+        crate::load::add_df_hint(&mut l);
         Ok(l)
     })
 }
@@ -212,10 +221,7 @@ impl Menu {
 
     fn start(&mut self, t: Target, args: &Args, first_save: bool) {
         self.error = None;
-        let what = match &t {
-            Target::Synthetic => "a synthetic fort".to_string(),
-            other => describe(other),
-        };
+        let what = describe(&t);
         self.loading = Some(Loading { what, started: get_time(), handle: spawn_load(t, args.size, args.seed, first_save) });
         self.page = Page::Loading;
     }
@@ -231,13 +237,8 @@ impl Menu {
     }
 
     fn store_settings(&mut self) {
-        let had = !self.settings.df_dir.is_empty();
-        self.settings.df_dir = self.dir_text.trim().to_string();
-        // Back to the default: drop the folder this page set before (an env var set outside
-        // Rustfort, with no folder in the settings, stays).
-        if self.settings.df_dir.is_empty() && had {
-            std::env::remove_var("RUSTFORT_DF_DIR");
-        }
+        self.settings.df_dir = self.dir_text.trim().trim_matches('"').trim().to_string();
+        // Empty = find DF automatically again (RUSTFORT_DF_DIR, when set, wins anyway).
         self.settings.apply_df_dir();
         if self.settings_writable {
             if let Err(e) = self.settings.save() {
@@ -378,7 +379,14 @@ impl Menu {
         let bh = 32.0 * s;
         let gap = 8.0 * s;
         let n = 6.0;
-        let ph = n * (bh + gap) + 18.0 * s + if self.continue_target.is_some() { GH * s + 6.0 * s } else { 0.0 };
+        // Under "Continue": what it loads, or (first start) how to get a fort.
+        let ct = self.continue_target.clone();
+        let sub_chars = ((bw + 28.0 * s) / (GW * s)) as usize;
+        let sub: Vec<String> = match &ct {
+            Some(t) => vec![clip(&describe(t), sub_chars)],
+            None => wrap(NO_FORT_YET, sub_chars),
+        };
+        let ph = n * (bh + gap) + 18.0 * s + sub.len() as f32 * (GH * s + 3.0 * s) + 3.0 * s;
         let px = (sw - bw) / 2.0 - 16.0 * s;
         let py = y0.min(sh - ph - 60.0 * s).max(8.0);
         let pr = Rect::new(px, py, bw + 32.0 * s, ph);
@@ -386,13 +394,11 @@ impl Menu {
         draw_rectangle_lines(pr.x, pr.y, pr.w, pr.h, 2.0, col::BORDER);
         let bx = px + 16.0 * s;
         let mut by = py + 12.0 * s;
-        let ct = self.continue_target.clone();
         let enter = self.input.fired.contains(&KeyCode::Enter) || self.input.fired.contains(&KeyCode::KpEnter);
         let cont = text_button(&mut self.ui, &self.font, Rect::new(bx, by, bw, bh), "Continue", if ct.is_some() { BtnState::Normal } else { BtnState::Disabled }) || enter;
         by += bh + 3.0 * s;
-        if let Some(t) = &ct {
-            let d = clip(&describe(t), ((bw + 28.0 * s) / (GW * s)) as usize);
-            self.font.draw(&d, bx + (bw - self.font.width(&d, s)) / 2.0, by, s, col::TEXT_DIM);
+        for d in &sub {
+            self.font.draw(d, bx + (bw - self.font.width(d, s)) / 2.0, by, s, if ct.is_some() { col::TEXT_DIM } else { col::TEXT });
             by += GH * s + 3.0 * s;
         }
         by += gap - 3.0 * s;
@@ -407,19 +413,33 @@ impl Menu {
         };
         let load = click(self, "Load game", "Your saves (and autosaves) and earlier DF exports", &mut by);
         let import = click(self, "Import from Dwarf Fortress", "Copy the fort that is running in DF right now (read-only, DF keeps running)", &mut by);
-        let synth = click(self, "New synthetic fort (dev)", "A small generated test fort", &mut by);
+        let synth = click(self, "Built-in test fort", "A small generated fort to try Rustfort (no DF export needed)", &mut by);
         let sett = click(self, "Settings", "Interface size, frame rate, autosave, DF folder", &mut by);
         let quit = click(self, "Quit", "", &mut by);
+        // No DF install: say so plainly (graphics, DF font, keys and the import need it).
+        let (found, _) = rf_gfx::df_dir_status();
+        let mut ey = by.max(pr.y + pr.h) + 14.0 * s;
+        if found.is_none() {
+            let k = 1.5 * s;
+            let t = "Dwarf Fortress not found";
+            self.font.draw_shadow(t, (sw - self.font.width(t, k)) / 2.0, ey, k, col::TEXT_BAD);
+            ey += GH * k + 6.0 * s;
+            for l in wrap(DF_NOT_FOUND_TITLE, ((sw / (GW * s)) as usize).saturating_sub(6)) {
+                self.font.draw_shadow(&l, (sw - self.font.width(&l, s)) / 2.0, ey, s, col::TEXT);
+                ey += GH * s + 4.0 * s;
+            }
+            ey += 6.0 * s;
+        }
         if let Some(e) = &self.error {
             let e = clip(&format!("Could not load: {e}"), (sw / (GW * s)) as usize - 4);
-            self.font.draw_shadow(&e, (sw - self.font.width(&e, s)) / 2.0, by + 10.0 * s, s, col::TEXT_BAD);
+            self.font.draw_shadow(&e, (sw - self.font.width(&e, s)) / 2.0, ey, s, col::TEXT_BAD);
         }
         // Footer: where things are.
         let df = rf_gfx::df_dir();
-        let df_ok = df.join("data").join("art").exists();
+        let df_ok = found.is_some();
         let left = "F1 in the game: all controls";
         self.font.draw_shadow(left, 10.0 * s, sh - GH * s - 10.0 * s, s, Color::from_rgba(190, 180, 160, 255));
-        let right = format!("DF: {} {}", crate::importer::plain(&df).display(), if df_ok { "√" } else { "(not found - see Settings)" });
+        let right = if df_ok { format!("DF: {} √", crate::importer::plain(&df).display()) } else { "DF: not found - see Settings".to_string() };
         let right = clip(&right, ((sw * 0.6) / (GW * s)) as usize);
         self.font.draw_shadow(&right, sw - self.font.width(&right, s) - 10.0 * s, sh - GH * s - 10.0 * s, s, if df_ok { Color::from_rgba(190, 180, 160, 255) } else { col::TEXT_BAD });
         if cont {
@@ -604,11 +624,18 @@ impl Menu {
                 line(&self.font, &format!("Looking for Dwarf Fortress and DFHack{dots}"), col::TEXT, &mut y);
             }
             Some(ImportState::Probed(p)) => match p.clone() {
+                Probe::NoDfhackRun(_) if !rf_raws::is_df_install(&df) => {
+                    line(&self.font, "Dwarf Fortress was not found.", col::TEXT_BAD, &mut y);
+                    line(&self.font, &format!("No data/vanilla in {}", crate::importer::plain(&df).display()), col::TEXT_DIM, &mut y);
+                    y += 6.0 * s;
+                    line(&self.font, "Set the Dwarf Fortress folder in Settings (or RUSTFORT_DF_DIR). The import also needs DFHack: on Steam it is the free \"DFHack\" app, it installs into the DF folder.", col::TEXT, &mut y);
+                    to_settings = true;
+                }
                 Probe::NoDfhackRun(path) => {
                     line(&self.font, "DFHack was not found.", col::TEXT_BAD, &mut y);
                     line(&self.font, &format!("Expected {}", path.display()), col::TEXT_DIM, &mut y);
                     y += 6.0 * s;
-                    line(&self.font, "Check the Dwarf Fortress folder in Settings, and install DFHack (on Steam it is the free \"DFHack\" app).", col::TEXT, &mut y);
+                    line(&self.font, "Install DFHack (on Steam it is the free \"DFHack\" app; it installs into the DF folder), or check the Dwarf Fortress folder in Settings.", col::TEXT, &mut y);
                     to_settings = true;
                 }
                 Probe::NoTools => {
@@ -820,7 +847,15 @@ impl Menu {
         let fr = Rect::new(vx, y, c.x + c.w - vx - 96.0 * s, bh);
         draw_rectangle(fr.x, fr.y, fr.w, fr.h, Color::new(0.08, 0.08, 0.09, 1.0));
         draw_rectangle_lines(fr.x, fr.y, fr.w, fr.h, 1.0, if self.editing_dir { col::ACTIVE_BORDER } else { Color::new(0.4, 0.4, 0.44, 1.0) });
-        let shown = if self.dir_text.is_empty() && !self.editing_dir { format!("(default) {}", crate::importer::plain(&rf_gfx::df_dir()).display()) } else { self.dir_text.clone() };
+        let (in_use, src) = rf_gfx::df_dir_status();
+        let shown = if self.dir_text.is_empty() && !self.editing_dir {
+            match &in_use {
+                Some(d) => format!("(auto) {}", crate::importer::plain(d).display()),
+                None => "(not found) type or paste the DF folder".to_string(),
+            }
+        } else {
+            self.dir_text.clone()
+        };
         let maxc = ((fr.w - 10.0 * s) / (GW * s)) as usize;
         let tail: String = {
             let n = shown.chars().count();
@@ -837,21 +872,37 @@ impl Menu {
         } else if self.ui.lpressed && !self.ui.hovered(fr) {
             self.editing_dir = false;
         }
-        if text_button(&mut self.ui, &self.font, Rect::new(fr.x + fr.w + 8.0 * s, y, 88.0 * s, bh), "Default", BtnState::Normal) {
+        if text_button(&mut self.ui, &self.font, Rect::new(fr.x + fr.w + 8.0 * s, y, 88.0 * s, bh), "Auto", BtnState::Normal) {
             self.dir_text.clear();
             self.editing_dir = false;
         }
         y += bh + 4.0 * s;
-        let probe_dir = if self.dir_text.trim().is_empty() { rf_gfx::df_dir() } else { PathBuf::from(self.dir_text.trim()) };
-        let has_df = probe_dir.join("Dwarf Fortress.exe").exists() || probe_dir.join("data").join("art").exists();
+        let typed = self.dir_text.trim().trim_matches('"').trim();
+        let probe_dir = if typed.is_empty() { rf_gfx::df_dir() } else { PathBuf::from(typed) };
+        let has_df = rf_raws::is_df_install(&probe_dir);
         let has_hack = crate::importer::dfhack_run(&probe_dir).exists();
         let (st, sc) = match (has_df, has_hack) {
             (true, true) => ("Found Dwarf Fortress and DFHack.", col::TEXT_GOOD),
             (true, false) => ("Found Dwarf Fortress, but no DFHack (needed for the import).", col::TEXT_HI),
-            _ => ("No Dwarf Fortress there (graphics, font and import need it).", col::TEXT_BAD),
+            _ if typed.is_empty() => ("Dwarf Fortress not found (graphics, font and import need it).", col::TEXT_BAD),
+            _ => ("No Dwarf Fortress there (no data/vanilla folder).", col::TEXT_BAD),
         };
         self.font.draw(st, vx, y, s, sc);
         y += lh;
+        // Which install is in use right now, and where that came from (rf_gfx::df_dir_status).
+        let maxc_use = ((c.x + c.w - vx) / (GW * s)) as usize;
+        let saved_field = !self.settings.df_dir.trim().is_empty();
+        let use_line = match (&in_use, src) {
+            (Some(d), "RUSTFORT_DF_DIR") => format!("Source: RUSTFORT_DF_DIR = {} (wins over this field)", crate::importer::plain(d).display()),
+            (Some(_), "settings") => "Source: settings (this field)".to_string(),
+            (Some(d), src) if saved_field => format!("Source: {src}, {} (the folder in this field has no data/vanilla)", crate::importer::plain(d).display()),
+            (Some(_), src) => format!("Source: {src}"),
+            (None, _) => "Source: not found (checked RUSTFORT_DF_DIR, this field, Steam and the default paths)".to_string(),
+        };
+        for l in wrap(&use_line, maxc_use) {
+            self.font.draw(&l, vx, y, s, if in_use.is_some() { col::TEXT } else { col::TEXT_BAD });
+            y += lh;
+        }
         self.font.draw("Click to edit, Ctrl+V pastes; applies on Back.", vx, y, s, col::TEXT_DIM);
         y += lh + 14.0 * s;
         // Hints.
@@ -1012,8 +1063,8 @@ pub async fn run_menu(args: &Args, settings: Settings, start_frame: u32) -> (Opt
 /// Title screen and game in turn. `initial`: a world loaded from the command line (no title
 /// screen first).
 pub async fn app_main(mut args: Args, mut settings: Settings, mut initial: Option<Loaded>) {
-    // Automated (screenshot) runs go to virtual desktop 1 so they don't pop up on Gordon's
-    // active desktop; normal play stays where Windows opens the window.
+    // Automated (screenshot) runs go to virtual desktop 1 so they don't pop up on the
+    // player's active desktop; normal play stays where Windows opens the window.
     if let Some(n) = crate::desktop::wanted(args.desktop, args.screenshot.is_some()) {
         macroquad::window::next_frame().await;
         crate::desktop::move_to(n);

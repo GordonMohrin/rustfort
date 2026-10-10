@@ -220,7 +220,10 @@ pub fn ensure_ann(g: &mut Game) {
     if g.r9.flags.len() == ANN_TYPES.len() {
         return;
     }
-    let texts: Vec<(String, Src)> = df_files(&g.gfx.df_dir).into_iter().filter_map(|(p, s)| std::fs::read_to_string(p).ok().map(|t| (t, s))).collect();
+    // Without graphics (no DF install) `gfx.df_dir` is empty: ask the lookup instead of
+    // reading relative paths. Missing files just leave Rustfort's defaults.
+    let df = if g.gfx.df_dir.as_os_str().is_empty() { rf_gfx::df_dir() } else { g.gfx.df_dir.clone() };
+    let texts: Vec<(String, Src)> = df_files(&df).into_iter().filter_map(|(p, s)| std::fs::read_to_string(p).ok().map(|t| (t, s))).collect();
     let base = df_defaults(&texts);
     g.r9.base = base.iter().map(|b| b.0).collect();
     g.r9.flags = Vec::with_capacity(ANN_TYPES.len());
@@ -2154,7 +2157,7 @@ mod tests {
         assert_eq!(f, AnnFlags { popup: true, pause: false, recenter: false, show: true });
         let f = flags_from_df(&["P".into(), "R".into()]);
         assert!(f.pause && f.recenter && !f.popup && !f.show);
-        // Gordon's prefs: thieves and deaths pop up; the install default does not.
+        // A player's prefs: thieves and deaths pop up; the install default does not.
         let prefs = "[AMBUSH_THIEF:BOX:A_D:D_D:ALERT]\n[CITIZEN_DEATH:BOX:A_D:D_D:UCR_A:ALERT]\n".to_string();
         let init = "[AMBUSH_THIEF:A_D:D_D:ALERT]\n[MOOD_BUILDING_CLAIMED:A_D:D_D]\n".to_string();
         let d = df_defaults(&[(prefs, Src::DfPrefs), (init, Src::DfDefault)]);

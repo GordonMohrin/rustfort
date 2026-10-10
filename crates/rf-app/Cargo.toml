@@ -4,6 +4,7 @@ description = "Rustfort game executable: Steam-style mouse UI with the Premium t
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 publish.workspace = true
 
 [[bin]]

@@ -2,7 +2,9 @@
 rem Rustfort launcher: builds the game when something changed, then starts it.
 rem   rustfort.cmd                              title screen (Continue, Load, Import from DF, Settings)
 rem   rustfort.cmd play --load saves\X.rfsave   any rustfort arguments are passed through
-rem Saves go to saves\ and DF imports to export\ next to this file.
+rem Saves go to saves\ and DF imports to export\ next to this file. A Steam install of
+rem Dwarf Fortress is found automatically; otherwise choose its folder in Settings or set
+rem RUSTFORT_DF_DIR.
 setlocal
 cd /d "%~dp0"
 set "EXE=target\release\rustfort.exe"

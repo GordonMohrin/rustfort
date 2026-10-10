@@ -1,8 +1,27 @@
-//! Picks the world to play: the DFHack export of Gordon's fort if there is one, else a
-//! synthetic fort.
+//! Picks the world to play: a save (`--load`), else a DFHack fort export (`--export DIR`,
+//! `RUSTFORT_EXPORT`, or the newest export under `export/`, see `rf_import::find_export`),
+//! else the built-in synthetic test fort.
 
 use rf_core::World;
 use std::path::Path;
+
+/// Shown (game log, console) when no DF install was found. Short: the log shows one line.
+pub const DF_NOT_FOUND_HINT: &str = "Dwarf Fortress not found: set its folder in Settings or RUSTFORT_DF_DIR.";
+
+/// Shown in the game log when no fort export exists yet (first start).
+pub const NO_EXPORT_HINT: &str = "No imported fort yet: this is the built-in test fort. Use Import from Dwarf Fortress.";
+
+/// Put [`DF_NOT_FOUND_HINT`] in front of the load warnings when DF is not found (play only;
+/// the game log shows the start of the line).
+pub fn add_df_hint(l: &mut Loaded) {
+    if rf_gfx::df_dir_status().0.is_some() {
+        return;
+    }
+    l.warning = Some(match l.warning.take() {
+        Some(w) => format!("{DF_NOT_FOUND_HINT} {w}"),
+        None => DF_NOT_FOUND_HINT.to_string(),
+    });
+}
 
 pub struct Loaded {
     pub world: World,
@@ -82,8 +101,8 @@ pub fn load_world(export: Option<&Path>, synthetic: bool, size: (u16, u16, u16))
     }
     let Some(dir) = rf_import::find_export(export) else {
         let w = match export {
-            Some(p) => Some(format!("no export found at {}", p.display())),
-            None => Some("no fort export found (export/tileshtulon); using a synthetic fort".to_string()),
+            Some(p) => Some(format!("no export found at {} (no manifest.json); started the built-in test fort", p.display())),
+            None => Some(NO_EXPORT_HINT.to_string()),
         };
         return synth(w);
     };
@@ -104,7 +123,7 @@ pub fn load_world(export: Option<&Path>, synthetic: bool, size: (u16, u16, u16))
             );
             Loaded { world, label, report: Some(report), warning: None, new_game: true, gfx: None, seed: 0 }
         }
-        Err(e) => synth(Some(format!("import of {} failed: {e}; using a synthetic fort", dir.display()))),
+        Err(e) => synth(Some(format!("import of {} failed: {e}; started the built-in test fort", dir.display()))),
     }
 }
 

@@ -4,6 +4,7 @@ description = "[saves10] Frozen copy of the rf-core data model of Rustfort v0.9 
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 publish.workspace = true
 
 [dependencies]
