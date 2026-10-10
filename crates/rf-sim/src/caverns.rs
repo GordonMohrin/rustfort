@@ -17,6 +17,7 @@
 //!   situational awareness), a building destroyer that avoids traps (`[TRAPAVOID]`), that hunts
 //!   the fort wherever it can walk. It never leaves. Announcement in DF's style:
 //!   "The Forgotten Beast X has come! A great four-legged creature made of granite. ...".
+//! - Special attacks (venom, breath, webs) and their syndromes: see `syndrome.rs` (round 6).
 //!
 //! # Estimates (not on the wiki)
 //! - Cavern detection: regions of at least 1 500 such tiles; regions overlapping in z are

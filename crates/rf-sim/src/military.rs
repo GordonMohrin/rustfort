@@ -10,6 +10,10 @@
 //!   spot and holds it, Train trains in place (skill experience every 100 ticks). They engage
 //!   every hostile that comes within sight (20 tiles) on their own. They still drink, eat and
 //!   sleep (off duty for that moment).
+//! - Soldiers also spot **lurking** (dormant) hostiles in sight (round 6). **Wounded** soldiers
+//!   (broken bones, heavy damage, wounds the doctors can treat) go to bed like other patients
+//!   when no able enemy is within 3 tiles, and return to duty once healed; resting soldiers are
+//!   not pulled out of bed by hostiles in sight.
 //! - **Civilians** flee from hostiles within 12 tiles; when cornered they fight back. With a
 //!   civilian alert they go to the alert burrow and stay there.
 //!

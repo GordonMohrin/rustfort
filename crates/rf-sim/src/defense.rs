@@ -32,6 +32,9 @@
 //!     ground; single use.
 //!   - Weapon trap: every weapon/trap component inside attacks (trap components `HITS` times,
 //!     vanilla raws), resolved by the combat module (dodge, armor, layered wounds); reusable.
+//!     Half of the kills by the trap itself jam it (wiki: "a 50% chance that a kill will result in
+//!     the victim getting stuck in the mechanism"); a jammed trap does nothing until a mechanic
+//!     cleans it ("Clean Trap", not while enemies are within 20 tiles).
 //!   - Pressure plate: sends "on" when triggered and "off" when it resets.
 //! - **Upright spikes** (building `Weapon`) attack everybody on their tile when extended.
 //! - **Building destroyers** (`BUILDINGDESTROYER` in the vanilla raws: trolls, ogres, giants,
