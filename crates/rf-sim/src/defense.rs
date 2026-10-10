@@ -206,8 +206,12 @@ pub struct DefenseStats {
     pub weapon_trap_triggers: u64,
     /// Single trap weapon attacks (weapon traps and upright spikes, incl. falling stones).
     pub trap_attacks: u64,
-    /// Creatures killed by traps (weapons, stones, spikes).
+    /// Creatures killed by traps outright (weapons, stones, spikes).
     pub trap_kills: u64,
+    /// Creatures hit by trap weapons at least once, and how many of them are dead by now
+    /// (bled out or finished off later).
+    pub trap_victims: u64,
+    pub trap_victims_dead: u64,
     /// Creatures that set off a trap but were not affected (empty trap, dodged, ...).
     pub plates_triggered: u64,
     pub levers_pulled: u64,
@@ -244,6 +248,10 @@ pub(crate) struct Defense {
     occupied: HashMap<i32, i32>,
     /// Trap attacks so far (gives each attack its own random stream).
     attack_seq: u64,
+    /// Units hit by a trap weapon (ids, for the report).
+    trap_victims: Vec<i32>,
+    /// Mechanism kinds switched off (`RF_DEFENSE_OFF`).
+    skip: Vec<String>,
     nbuildings: usize,
     pub stats: DefenseStats,
 }
@@ -266,6 +274,8 @@ impl Default for Defense {
             smash: Vec::new(),
             occupied: HashMap::new(),
             attack_seq: 0,
+            trap_victims: Vec::new(),
+            skip: Vec::new(),
             nbuildings: usize::MAX,
             stats: DefenseStats::default(),
         }
@@ -315,6 +325,11 @@ impl Sim {
     // ------------------------------------------------------------------ init and scanning
 
     pub(crate) fn init_defense(&mut self) {
+        // Debug/comparison knob: `RF_DEFENSE_OFF=all` (or e.g. `CageTrap,WeaponTrap`) runs the
+        // fort without these mechanisms, i.e. like v0.3.
+        if let Ok(v) = std::env::var("RF_DEFENSE_OFF") {
+            self.def.skip = v.split(',').map(|k| k.trim().to_string()).filter(|k| !k.is_empty()).collect();
+        }
         self.defense_scan();
         // Caught creatures of the export sit in the cage of the trap they stand on.
         for mi in 0..self.def.mechs.len() {
@@ -338,6 +353,9 @@ impl Sim {
         let mut fresh: Vec<Mech> = Vec::new();
         for b in &self.world.buildings {
             let Some(kind) = MechKind::of(&b.kind, &b.subtype) else { continue };
+            if self.def.skip.iter().any(|k| k == "all" || *k == format!("{kind:?}")) {
+                continue;
+            }
             if !b.built {
                 continue;
             }
@@ -1016,9 +1034,14 @@ impl Sim {
         self.def.attack_seq += 1;
         let seed = self.seed;
         self.seed = seed ^ self.def.attack_seq.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let hits = self.combat.stats.hits;
         let died = self.attack(ts, d, now);
         self.seed = seed;
         self.def.trap_weapon = None;
+        let vid = self.world.units[self.ai[d].uidx].id;
+        if self.combat.stats.hits > hits && !self.def.trap_victims.contains(&vid) {
+            self.def.trap_victims.push(vid);
+        }
         self.world.units[uidx].name = String::new();
         self.def.stats.trap_attacks += 1;
         if died {
@@ -1348,7 +1371,10 @@ impl Sim {
 
     /// Fort defense counters (traps, bridges, levers, destroyed buildings).
     pub fn defense_stats(&self) -> DefenseStats {
-        self.def.stats.clone()
+        let mut st = self.def.stats.clone();
+        st.trap_victims = self.def.trap_victims.len() as u64;
+        st.trap_victims_dead = self.def.trap_victims.iter().filter(|&&id| self.world.unit(id).map(|u| u.flags.dead).unwrap_or(false)).count() as u64;
+        st
     }
 
     /// Building ids of the mechanisms the simulation runs, with their kind.
@@ -1774,6 +1800,37 @@ mod tests {
         assert!(gone, "the troll destroyed the door: {:?} {:?}", sim.defense_stats(), sim.combat_log());
         assert!(sim.is_walkable(gap));
         assert_eq!(sim.defense_stats().buildings_destroyed, 1);
+    }
+
+    #[test]
+    fn locked_hatch_blocks_the_stairs_below() {
+        let mut w = World::synthetic(48, 48, DZ);
+        let hz = hall_z();
+        // The stair shaft runs from the hall up to the surface at (24, 24).
+        w.buildings.push(building(1100, "Hatch", "", 24, 24, 24, 24, hz + 1));
+        let mut sim = quiet(w);
+        let (hall, up) = (Pos::new(22, 24, hz), Pos::new(24, 24, hz + 2));
+        assert!(sim.find_path(hall, up).is_some());
+        sim.set_building_flag(1100, "FORBIDDEN", true);
+        assert!(sim.find_path(hall, up).is_none(), "a locked hatch closes the shaft");
+        assert!(sim.is_walkable(Pos::new(24, 24, hz + 1)), "but it can be walked on");
+        sim.set_building_flag(1100, "FORBIDDEN", false);
+        assert!(sim.find_path(hall, up).is_some());
+    }
+
+    #[test]
+    fn floodgate_opens_with_its_lever() {
+        let (mut w, gap) = walled_hall();
+        w.buildings.push(building(1200, "Floodgate", "", gap.x, gap.y, gap.x, gap.y, gap.z));
+        w.buildings.push(building(1201, "Trap", "Lever", 22, 24, 22, 24, gap.z));
+        let mut sim = quiet(w);
+        sim.link_building(1201, 1200).unwrap();
+        let (a, b) = (gap.offset(-3, -1, 0), gap.offset(3, -1, 0));
+        assert!(sim.find_path(a, b).is_none(), "floodgates start closed");
+        sim.pull_lever_now(1201);
+        sim.run_ticks(LINK_DELAY as u32 + 2);
+        assert!(sim.find_path(a, b).is_some(), "open");
+        assert!(sim.world.building(1200).unwrap().flags.iter().any(|f| f == "OPEN"));
     }
 
     #[test]
