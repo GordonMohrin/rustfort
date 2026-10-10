@@ -408,6 +408,7 @@ pub fn draw_map(g: &mut Game) {
     crate::ui::devices::draw_map_overlay(g); // [round 4] lever links, link targets
     crate::ui::round8::draw_map_overlay(g); // [app8] stockpile links, link tool
     crate::ui::round9::draw_map_overlay(g); // [app9] patrol routes
+    crate::ui::round12::draw_map_overlay(g); // [app12] route stops, carts, power overlay, aim
     draw_selection_and_cursor(g);
 }
 

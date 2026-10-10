@@ -348,8 +348,10 @@ pub fn building_sheet(g: &mut Game, id: i32, r: Rect) {
             }
         }
         _ => {
+            // [app12] Machines (power, pump by hand), siege engines (aim, ammo), track stops.
+            y = super::round12::sheet_section(g, &b, x, y, bw, bottom);
             // [round 4] Doors, levers, bridges, traps; the trade depot.
-            if super::devices::is_device(&b) {
+            if super::devices::is_device(&b) && !(b.kind == "Trap" && b.subtype == "TrackStop" && b.links.is_empty()) {
                 y = super::devices::sheet_section(g, &b, x, y, bw, bottom) + 4.0 * s;
             }
             if b.kind == "TradeDepot" && b.built {
