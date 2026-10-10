@@ -512,6 +512,14 @@ fn run_seed(start: &World, ticks: u64, seed: u64, opt: &Opts, years: f64) -> Run
     m.insert("ev.migrant_waves".into(), pr.waves.len() as f64);
     m.insert("ev.migrants".into(), pr.waves.iter().map(|w| w.1).sum::<usize>() as f64);
     m.insert("ev.dwarf_births".into(), pr.births.len() as f64);
+    // [calib11-econ] animal litters ("has given birth to"), migration refusals / blocked waves
+    let ar = sim.animal_report();
+    m.insert("ev.animal_births".into(), ar.litters as f64);
+    m.insert("ev.animal_young".into(), ar.births as f64);
+    m.insert("ev.migrant_no_wave".into(), pr.no_waves.len() as f64);
+    m.insert("ev.migrant_refusals".into(), pr.no_waves.iter().filter(|w| !w.1.contains("attracted no migrants")).count() as f64);
+    m.insert("ev.migrant_waves_blocked".into(), pr.waves_blocked as f64);
+    m.insert("ev.danger_end".into(), sim.fort_dangerousness() as f64);
     m.insert("ev.caravans".into(), tr.caravans.len() as f64);
     m.insert("ev.death_announcements".into(), death_citizens as f64);
     m.insert(

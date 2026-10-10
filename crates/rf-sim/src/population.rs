@@ -30,8 +30,17 @@
 //!   deadline ("MandateIgnored"), a met one a good one. Punishments are not simulated.
 //!
 //! # Estimates (not on the wiki)
-//! - Wave chance 3 in 4 per season below the cap; arrival 1-27 days into the season; wave size
-//!   2 + rand(min(28, 4 + fort wealth / 25 000)), capped by the room under both caps.
+//! - [calib11-econ] Migration (wiki Migrant + Gordon's gamelog): a migrant date 1-27 days into
+//!   spring, summer and autumn (never winter: at most 3 migration messages per year in all 8
+//!   of his forts); the outcome is decided on that date. While a siege is seen on the map the
+//!   wave waits, and it is lost when its season ends. Then 3 in 4 a wave, else "The fortress
+//!   attracted no migrants this season.". Dangerousness (wiki: citizen deaths and insanities,
+//!   this year x1, last year x1/2 ... 5 years x1/32) as last reported to the civilization (by
+//!   its departing caravan, and at each year start): from 10 a wave comes 1 in 3 ("despite
+//!   the danger"), otherwise "Migrants were too wary to make the journey this season."; from
+//!   50 the same with "brave this terrifying place" / "cursed death-trap". Wave size
+//!   1 + rand(max), max = min(4 + fort wealth / 25 000 (at most 28), free places / 3 (at least
+//!   1), the wiki's local-population limit), capped by the room under both caps.
 //! - Conception chance 1 in 36 per month per couple ([skills9] was 1 in 12; Gordon's fort had
 //!   2 births in 2.18 years and none in 1.32 years, Rustfort 6 with 1 in 12), at least one year
 //!   after the last birth; pregnancy 9 months; twins 1 in 50.
@@ -62,6 +71,14 @@ pub const DEFAULT_POP_CAP: i32 = 200;
 pub const DEFAULT_STRICT_CAP: i32 = 220;
 pub const DEFAULT_BABY_CAP: i32 = 100;
 pub const DEFAULT_BABY_PCT: i32 = 1000;
+/// [calib11-econ] Wiki Migrant: dangerousness 0-9 is normal, 10+ "danger", 50+ "cursed death
+/// trap".
+pub const DANGER_DANGEROUS: f32 = 10.0;
+pub const DANGER_DEATH_TRAP: f32 = 50.0;
+/// [calib11-econ] A dangerous fort's wave still comes with a chance of 1 in this (estimate:
+/// Gordon's forts 6 and 7 show 15 arrivals "despite the danger" or "brave this terrifying
+/// place" against 44 "Migrants were too wary to make the journey this season.").
+pub const DANGER_ARRIVE_IN: u32 = 3;
 /// Population needed for the mayor (wiki "Mayor").
 pub const MAYOR_POPULATION: usize = 50;
 /// Pregnancy length (estimate: 9 months).
@@ -132,6 +149,11 @@ pub struct PopulationReport {
     pub mandates_active: Vec<String>,
     /// Citizens at each month start: (year, month, citizens, children incl. babies).
     pub months: Vec<(i32, i32, usize, usize)>,
+    /// [calib11-econ] Seasons whose wave did not come: (tick, announcement), e.g. "The
+    /// fortress attracted no migrants this season." or a danger refusal.
+    pub no_waves: Vec<(u64, String)>,
+    /// [calib11-econ] Waves lost because a siege held them up until their season ended.
+    pub waves_blocked: usize,
 }
 
 #[derive(Default)]
@@ -141,8 +163,17 @@ pub(crate) struct Pop {
     pub last_month: i32,
     pub last_year: i32,
     pub last_day: u64,
-    /// Scheduled migrant wave: (arrival tick, size).
+    /// Scheduled migrant wave: (arrival tick, size). [calib11-econ] The size is 0 until the
+    /// wave arrives (wiki: "the number of immigrants ... determined when the migrant wave
+    /// arrives").
     pub wave_due: Option<(u64, usize)>,
+    /// [calib11-econ] Season key (year * 4 + season) the scheduled wave belongs to; a wave held
+    /// up by a siege past the end of its season is lost.
+    pub wave_season: i32,
+    /// [calib11-econ] Caravan log entries already checked for the danger report.
+    pub danger_caravans: usize,
+    /// [calib11-econ] Insanities already counted into the danger history.
+    pub danger_insane: u64,
     pub preg: Vec<Pregnancy>,
     /// Last birth tick per mother unit id.
     pub last_birth: Vec<(i32, u64)>,
@@ -505,10 +536,9 @@ impl Sim {
         self.pop_carry_babies(now);
         self.pop_check_deaths(now);
         self.pop_check_claims();
-        if let Some((due, n)) = self.pop.wave_due {
+        if let Some((due, _)) = self.pop.wave_due {
             if now >= due {
-                self.pop.wave_due = None;
-                self.spawn_migrants(n);
+                self.pop_wave_arrives(now); // [calib11-econ]
             }
         }
         let day = now / DAY;
@@ -526,6 +556,9 @@ impl Sim {
         self.pop.last_month = c.year * 12 + c.month();
         self.pop.last_year = c.year;
         self.pop.last_day = now / DAY;
+        // [calib11-econ] Danger history: only what happens from now on is new.
+        self.pop.danger_insane = self.social_report().insane;
+        self.pop.danger_caravans = self.trade.rep.caravans.len();
         // Unburied corpses of dwarves from before the sim started.
         let mut old = Vec::new();
         for (i, it) in self.world.items.iter().enumerate() {
@@ -608,6 +641,7 @@ impl Sim {
                 continue;
             }
             let (id, name) = (u.id, u.name.clone());
+            self.danger_note(1); // [calib11-econ]
             let want = format!("{name}'s corpse");
             let corpse = self
                 .world
@@ -721,7 +755,9 @@ impl Sim {
         if c.year != self.pop.last_year {
             self.pop.last_year = c.year;
             self.nobles_yearly(now);
+            self.danger_report(); // [calib11-econ] the yearly decay reaches the civilization
         }
+        self.danger_daily(); // [calib11-econ]
         self.nobles_daily(now);
     }
 
@@ -733,21 +769,171 @@ impl Sim {
         if self.pop.off || self.pop.wave_due.is_some() || !self.has_civilization() {
             return;
         }
+        // [calib11-econ] No migrants in winter: Gordon's gamelog (8 forts, about 100 game years)
+        // never shows more than 3 migration messages per year (spring, summer, autumn); the wiki
+        // says "there is never a migration in the first winter".
+        let c = self.world.calendar;
+        if c.month() / 3 == 3 {
+            return;
+        }
         let (cap, strict, _, _) = self.population_caps();
         let (cit, _) = self.pop_counts();
         let room = (cap - cit as i32).min(strict - cit as i32);
         if room <= 0 {
             return;
         }
+        // Wiki Migrant: "The date on which immigrants appear in a season is determined at the
+        // start of that season, but the number of immigrants and their skills are determined
+        // when the migrant wave arrives."
         let mut r = Rng::for_unit(self.seed, 2, now, 0x316_A7E);
-        if !r.chance(3, 4) {
+        let delay = (1 + r.below(27)) as u64 * DAY;
+        self.pop.wave_due = Some((now + delay, 0));
+        self.pop.wave_season = c.year * 4 + c.month() / 3;
+    }
+
+    /// [calib11-econ] The season's migrant date has come: blocked by a siege, refused because
+    /// of the fort's danger, nobody, or a wave (see FIDELITY.md "Migrants").
+    fn pop_wave_arrives(&mut self, now: u64) {
+        let c = self.world.calendar;
+        if c.year * 4 + c.month() / 3 != self.pop.wave_season {
+            // Held up by a siege until the season ended (gamelog: no migration message in the
+            // spring of 279, when a siege had arrived just before).
+            self.pop.wave_due = None;
+            self.pop.rep.waves_blocked += 1;
             return;
         }
+        // Wiki Migrant: a wave can be "blocked by a siege"; it waits while invaders are seen.
+        if self.siege_active() {
+            return;
+        }
+        self.pop.wave_due = None;
+        let (cap, strict, _, _) = self.population_caps();
+        let (cit, _) = self.pop_counts();
+        let room = (cap - cit as i32).min(strict - cit as i32);
+        if room <= 0 {
+            return;
+        }
+        let mut r = Rng::for_unit(self.seed, 2, now, 0x316_A7F);
+        let danger = self.world.fort_history.danger_reported;
+        let tier = if danger >= DANGER_DEATH_TRAP {
+            2
+        } else if danger >= DANGER_DANGEROUS {
+            1
+        } else {
+            0
+        };
+        let none = |sim: &mut Sim, text: &str| {
+            sim.announce(now, text.to_string(), None, AnnouncementKind::Info);
+            sim.pop.rep.no_waves.push((now, text.to_string()));
+        };
+        if !r.chance(3, 4) {
+            none(self, "The fortress attracted no migrants this season.");
+            return;
+        }
+        if tier > 0 && !r.chance(1, DANGER_ARRIVE_IN) {
+            let text = if tier == 2 {
+                "No one even considered making the journey to such a cursed death-trap this season."
+            } else {
+                "Migrants were too wary to make the journey this season."
+            };
+            none(self, text);
+            return;
+        }
+        let max = self.migrant_wave_max(room);
+        if max <= 0 {
+            none(self, "The fortress attracted no migrants this season.");
+            return;
+        }
+        let n = (1 + r.below(max as u32) as i32).min(room) as usize;
+        let text = match (tier, n == 1) {
+            (0, true) => "A migrant has arrived.",
+            (0, false) => "Some migrants have arrived.",
+            (1, true) => "A migrant has arrived, despite the danger.",
+            (1, false) => "Some migrants have arrived, despite the danger.",
+            (_, true) => "A migrant has decided to brave this terrifying place.",
+            (_, false) => "Some migrants have decided to brave this terrifying place, knowing it may be their tomb.",
+        };
+        self.spawn_migrants_with(n, text);
+    }
+
+    /// [calib11-econ] Largest wave the fort can draw now: the wealth estimate (more created
+    /// wealth attracts more migrants), smaller close to the population cap (estimate from
+    /// Gordon's history: 1-3 per wave within about 15 places of the cap, up to 10 with 40
+    /// free places), and the wiki's limit by local population (1000 units: 10, minus 1 at
+    /// 1300, 1600, 1800, ..., 2900; none from 3000).
+    fn migrant_wave_max(&self, room: i32) -> i32 {
         let wealth: i64 = self.fort_wealth();
-        let max = (4 + wealth / 25_000).clamp(1, 28) as u32;
-        let n = (2 + r.below(max) as i32).min(room) as usize;
-        let delay = (1 + r.below(27)) as u64 * DAY;
-        self.pop.wave_due = Some((now + delay, n));
+        let by_wealth = (4 + wealth / 25_000).clamp(1, 28) as i32;
+        let by_room = (room / 3).max(1);
+        let local = self.world.units.iter().filter(|u| !u.flags.dead).count() as i32;
+        let by_local = if local < 1000 {
+            i32::MAX
+        } else if local >= 3000 {
+            0
+        } else {
+            10 - [1300, 1600, 1800, 2000, 2200, 2400, 2600, 2800, 2900].iter().filter(|&&t| local >= t).count() as i32
+        };
+        by_wealth.min(by_room).min(by_local)
+    }
+
+    /// [calib11-econ] Count `n` deaths or insanities into this year's danger history (kept
+    /// for 5 years).
+    pub(crate) fn danger_note(&mut self, n: u32) {
+        let y = self.world.calendar.year;
+        let h = &mut self.world.fort_history.danger_events;
+        h.retain(|&(yr, _)| y - yr <= 5);
+        match h.iter_mut().find(|e| e.0 == y) {
+            Some(e) => e.1 += n,
+            None => h.push((y, n)),
+        }
+    }
+
+    /// [calib11-econ] Wiki Migrant: "dangerousness" = recent deaths, executions and insanities
+    /// over the past 5 years, "1/2 for the previous year, 1/4 for two years ago, ... 1/32 for
+    /// five years ago" (this year counts fully).
+    pub fn fort_dangerousness(&self) -> f32 {
+        let y = self.world.calendar.year;
+        self.world
+            .fort_history
+            .danger_events
+            .iter()
+            .filter(|&&(yr, _)| yr <= y && y - yr <= 5)
+            .map(|&(yr, n)| n as f32 * 0.5f32.powi(y - yr))
+            .sum()
+    }
+
+    /// [calib11-econ] The fort's civilization learns how dangerous the fort is.
+    fn danger_report(&mut self) {
+        self.world.fort_history.danger_reported = self.fort_dangerousness();
+    }
+
+    /// [calib11-econ] Daily: new insanities count as danger; a caravan of the fort's own
+    /// civilization that leaves the map reports the danger home (Gordon's gamelog, spring 277:
+    /// 11 citizens died in a siege, the human caravan left, two plain "Some migrants have
+    /// arrived." waves followed; only the dwarven caravan's departure after them fits the
+    /// wiki's danger threshold of 10).
+    fn danger_daily(&mut self) {
+        if self.pop.last_day % 7 == 0 {
+            // Weekly (the report clones the social counters).
+            let insane = self.social_report().insane;
+            if insane > self.pop.danger_insane {
+                self.danger_note((insane - self.pop.danger_insane) as u32);
+            }
+            self.pop.danger_insane = insane;
+        }
+        let civ = self.world.meta.civ_id;
+        let own_race = self.world.entities.iter().find(|e| e.id == civ).map(|e| e.race.clone()).unwrap_or_else(|| "DWARF".into());
+        let mut report = false;
+        while let Some(c) = self.trade.rep.caravans.get(self.pop.danger_caravans) {
+            if c.left.is_none() {
+                break;
+            }
+            report |= c.race == own_race && c.merchants > 0;
+            self.pop.danger_caravans += 1;
+        }
+        if report {
+            self.danger_report();
+        }
     }
 
     /// Sum of the base values of the fort's items (an approximation of DF's created wealth).
@@ -765,6 +951,12 @@ impl Sim {
     /// Spawn a migrant wave of `n` dwarves at a map edge (debug/UI and the seasonal wave).
     /// Returns the number that arrived.
     pub fn spawn_migrants(&mut self, n: usize) -> usize {
+        let text = if n == 1 { "A migrant has arrived." } else { "Some migrants have arrived." };
+        self.spawn_migrants_with(n, text)
+    }
+
+    /// [calib11-econ] `spawn_migrants` with DF's announcement variant.
+    fn spawn_migrants_with(&mut self, n: usize, text: &str) -> usize {
         let now = self.ticks;
         let tiles = self.society_edge_tiles(0);
         if tiles.is_empty() || n == 0 {
@@ -811,7 +1003,7 @@ impl Sim {
         self.init_units();
         self.pop.rep.waves.push((now, n));
         let p = self.world.pos_of(start as usize);
-        self.announce(now, "Some migrants have arrived.".into(), Some(p), AnnouncementKind::Info);
+        self.announce(now, text.to_string(), Some(p), AnnouncementKind::Info);
         n
     }
 
@@ -1462,11 +1654,95 @@ pub(crate) mod tests {
             sim.pop.wave_due = None;
             sim.pop_season(k * 3 * MONTH + 7);
             if let Some((_, n)) = sim.pop.wave_due {
-                assert!((2..=53).contains(&n));
+                assert_eq!(n, 0, "[calib11-econ] the size is decided when the wave arrives");
                 scheduled += 1;
             }
         }
-        assert!(scheduled >= 5, "about 3 in 4 seasons bring a wave, got {scheduled}");
+        assert_eq!(scheduled, 12, "every season below the cap (spring here) gets a migrant date");
+    }
+
+    /// [calib11-econ] A synthetic world that counts as the fort of a civilization.
+    fn civ_sim(seed: u64) -> Sim {
+        let mut w = World::synthetic(48, 48, 20);
+        w.meta.source = "export:test".into();
+        let mut sim = Sim::new(w, seed);
+        sim.set_population_cap(60);
+        sim
+    }
+
+    #[test]
+    fn no_migrant_date_in_winter() {
+        let mut sim = civ_sim(4);
+        sim.world.calendar.year_tick = 9 * TICKS_PER_MONTH + 5; // Opal: winter
+        sim.pop_season(7);
+        assert!(sim.pop.wave_due.is_none(), "[calib11-econ] DF has no migration in winter");
+        sim.world.calendar.year_tick = 6 * TICKS_PER_MONTH + 5; // autumn
+        sim.pop_season(8);
+        assert!(sim.pop.wave_due.is_some());
+    }
+
+    #[test]
+    fn danger_turns_migrants_away_and_decays() {
+        // Wiki: deaths count fully this year, 1/2 the year before, ...
+        let mut sim = civ_sim(5);
+        sim.danger_note(12);
+        assert!((sim.fort_dangerousness() - 12.0).abs() < 1e-3);
+        sim.world.calendar.year += 1;
+        assert!((sim.fort_dangerousness() - 6.0).abs() < 1e-3);
+        sim.world.calendar.year += 5;
+        assert_eq!(sim.fort_dangerousness(), 0.0, "older than 5 years");
+        // A death trap: most waves refuse to come.
+        let mut sim = civ_sim(6);
+        sim.danger_note(80);
+        sim.danger_report();
+        let (mut came, mut refused) = (0, 0);
+        for k in 0..60u64 {
+            let before = sim.world.units.len();
+            sim.pop.wave_season = sim.world.calendar.year * 4 + sim.world.calendar.month() / 3;
+            sim.pop.wave_due = Some((0, 0));
+            let refusals = sim.pop.rep.no_waves.len();
+            sim.pop_wave_arrives(k * 1000 + 3);
+            if sim.world.units.len() > before {
+                came += 1;
+            } else if sim.pop.rep.no_waves.len() > refusals && sim.pop.rep.no_waves.last().unwrap().1.contains("cursed death-trap") {
+                refused += 1;
+            }
+        }
+        assert!(refused > came, "a cursed death-trap: {came} waves came, {refused} refused");
+        assert!(came > 0, "some still brave it");
+        assert!(sim.announcements.iter().any(|a| a.text.contains("brave this terrifying place")));
+    }
+
+    #[test]
+    fn waves_shrink_near_the_cap() {
+        let sim = civ_sim(7);
+        assert_eq!(sim.migrant_wave_max(3), 1);
+        assert!(sim.migrant_wave_max(13) <= 4);
+        assert!(sim.migrant_wave_max(40) <= 13);
+    }
+
+    #[test]
+    fn a_siege_holds_the_wave_until_the_season_ends() {
+        let mut sim = civ_sim(8);
+        let n0 = sim.world.units.len();
+        sim.force_siege();
+        if !sim.siege_active() {
+            // Invaders are revealed when spotted; reveal them for the test.
+            for g in &mut sim.combat.inv.sieges {
+                g.revealed = true;
+            }
+        }
+        let n1 = sim.world.units.len();
+        sim.pop.wave_season = sim.world.calendar.year * 4 + sim.world.calendar.month() / 3;
+        sim.pop.wave_due = Some((0, 0));
+        sim.pop_wave_arrives(5);
+        assert!(sim.pop.wave_due.is_some(), "the wave waits while the siege is on");
+        assert_eq!(sim.world.units.len(), n1);
+        sim.world.calendar.year_tick += 3 * TICKS_PER_MONTH;
+        sim.pop_wave_arrives(6);
+        assert!(sim.pop.wave_due.is_none());
+        assert_eq!(sim.pop.rep.waves_blocked, 1, "lost with its season");
+        assert!(n1 >= n0);
     }
 
     #[test]

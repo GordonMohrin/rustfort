@@ -635,6 +635,73 @@ Checks: `rustfort bench --ticks 806400 --standdown` on r5 (seed 1): 87 -> 90 cit
 28 981 ticks/s (two benches side by side), state hash `40c3fc4ecf1f79a7` with the default
 thread count and with `RAYON_NUM_THREADS=1`; chaos 4 seeds x 1 year (war, save/load round
 trips): 0 panics, 0 new invariant violations.
+## Round 11: migrants, animal births, food under stress ([calib11-econ])
+
+Items 2, 3 (animal births), 4 and 5 above. Same tool and windows as round 10, 6 seeds, 3 sims
+side by side on a machine shared with three other agents' builds (ticks/s are not comparable
+between the columns; an interleaved 3-seed r4 -> r5 comparison gave 35.5k / 30.0k before and
+29.6k / 26.0k after, the after runs doing 2-3x more brewing and cooking).
+
+**What Gordon's gamelog shows** (`gamelog.txt`, 8 forts; read-only):
+
+- Never more than 3 migration messages per year (spring, summer, autumn): no winter waves.
+- Trussroads, years 262-280: 22 waves, 14 "The fortress attracted no migrants this season.";
+  near the population cap (90) the waves were 1-3 migrants, with about 40 free places up to 10.
+- Spring 277: a siege killed 11 citizens, then two plain "Some migrants have arrived." waves;
+  the human caravan had left in between, the fort's own dwarven caravan only after them, so the
+  danger reached the civilization with the own caravan (wiki threshold 10).
+- Spring 279: a siege arrived just before spring, and that season has no migration message.
+- Forts 6-7 (dangerous years): 15 arrivals "despite the danger" / "brave this terrifying
+  place", 44 "Migrants were too wary to make the journey this season."
+- **All 23 animal births r3 -> r6 were troglodytes** held together in 7 cage traps; the fort had
+  only 8 tame animals on the map, and the troglodytes stopped near 50 (46 at r5, 2 births to r6).
+
+**Changes** (see FIDELITY.md): migration by the wiki's rules (date per non-winter season,
+outcome on arrival, a seen siege holds the wave until its season ends, dangerousness with the
+5-year decay, refusals and DF's message variants, wave size shrinking near the cap); caged
+creatures sharing a cage breed (not intelligent races, 50-per-race cap); `validate` now counts
+the sim's animal litters and migration refusals; work orders under a civilian alert go to
+workshops inside the burrow; the fallback standing orders aim at DF's real stocks per citizen
+and grow with the shortfall.
+
+| metric | r5 -> r6 DF | before | after | r4 -> r5 DF | before | after | r3 -> r4 DF | before | after |
+|---|---|---|---|---|---|---|---|---|---|
+| migrants arrived | **1** | 26 (0-33) | **5** (3-18) | 11 | 8 | 6 (2-6) | 0 | 7 | 3 (1-5) |
+| migrant waves | 1 | 2 | 3 | 5 | 3 | **5** | 0 | 3 | 2 |
+| citizens lost | 73 | 42 | 36 | 14 | 18 | 12 | 2 | 9 | 8 |
+| animal births | 2 | 0 (not counted) | 5 (4-7) | 12 | 0 | **10** (8-13) | 9 | 0 | **8** (4-9) |
+| new drinks | 1 946 | 271 | **839** | 1 096 | 685 | **1 195** | 709 | 478 | 442 |
+| drinks in stock | 3 176 | 897 | **1 464** | 1 600 | 924 | **1 520** | 1 286 | 906 | 1 008 |
+| new meals | 348 | 89 | 56 | 263 | 238 | 404 | 440 | 63 | 142 |
+| meals in stock | 795 | 281 | 203 | 645 | 348 | **690** | 774 | 292 | 332 |
+| craft quality mean | 2.4 | (1-2 crafts) | (1-2 crafts) | 2.6 | 1.8 | 1.8 | 2.9 | 1.7 | 1.6 |
+| metrics in range or close | | 91 / 193 | 73 / 194 | | 90 / 194 | **109 / 198** | | 75 / 186 | 80 / 189 |
+
+Reading it:
+
+- r5 -> r6 has fewer metrics "in range" because the before runs had a seed whose fort was wiped
+  out (0 citizens), which stretched every range; the medians moved toward DF (migrants 26 -> 5,
+  drinks 0.14 -> 0.43 of DF's production).
+- The migrants that remain on r5 -> r6 come from the sim's sieges arriving earlier in the window
+  than DF's (DF's fall came in its last 8 %), not from the migration rules.
+- r4 -> r5 now matches drink and meal production and stocks; migrants are a bit low
+  (waves 5 as in DF, but 1.2 instead of 2.2 migrants per wave).
+- Under a civilian alert on Gordon's "Zuflucht" burrow the fort did **no work at all** in two
+  months (r5): the burrow has 2 stills and a kitchen, but brew/cook orders were not due (stock
+  above target) and the farms and other workshops lie outside, which matches DF's burrow rule.
+  The order dispatch fix makes due orders use the burrow's workshops.
+- **Craft quality is unchanged (1.6-1.8 vs DF 2.4-2.9).** The wiki gives no skill preference in
+  job assignment ("an idle dwarf who does not have that labor disabled will be assigned the
+  job"); round 10 found default workshop profiles in Gordon's fort. The wiki's remaining lever,
+  maker attributes and preferences for the item or material, belongs to `skills.rs` and is not
+  done.
+- 2 years `rustfort bench --standdown` on r5 (seed 1): 87 -> **56** citizens, 144 deaths, the
+  same state hash `507bddc7f80ba526` with 1 and N threads (86.7k / 82.5k ticks/s on a quieter
+  machine; v0.10: 80-106k). Before, migrants refilled the fort after every siege (round 10: 86-90 of 87). Now a
+  fort that lost 21 citizens in one siege stays "dangerous" (21 this year, 10.5 the next) and
+  draws a wave in about 1 of 4 seasons; the society example shows 86 -> 65 after one siege, then 2
+  waves (1 and 4) in 1.7 years.
+- Chaos harness on r5, seeds 1-4, 1 year each: 0 panics, 0 new invariant violations.
 
 ## Limitations
 

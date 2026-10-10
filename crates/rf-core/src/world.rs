@@ -316,6 +316,14 @@ pub struct FortHistory {
     pub raids: Vec<(i32, i32)>,
     /// Cavern layers (1 = topmost) whose forgotten beast has already come.
     pub beast_layers: Vec<u8>,
+    /// [calib11-econ] Citizen deaths and insanities per game year: (year, count) (wiki
+    /// Migrant: the fort's "dangerousness" deters migrants).
+    #[serde(default)]
+    pub danger_events: Vec<(i32, u32)>,
+    /// [calib11-econ] Dangerousness as the fort's civilization last heard of it (reported by
+    /// its departing caravan, recomputed at each year start).
+    #[serde(default)]
+    pub danger_reported: f32,
 }
 
 impl World {
