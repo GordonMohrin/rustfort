@@ -240,7 +240,8 @@ pub fn draw_build_menu(g: &mut Game, toolbar_y: f32) -> f32 {
         let br = Rect::new(r.x + pad + cx * (cell_w + 4.0 * s), gy + cy * (row_h(s) + 4.0 * s), cell_w, row_h(s));
         let o = &g.build_opts[i];
         let icon = option_icon(o.kind, o.subtype);
-        let label = o.label;
+        let label = super::round10::option_label(g, i); // [app10] with the DF hotkey
+        let label = label.as_str();
         let st = if g.tool == Tool::Build(i) { BtnState::Active } else { BtnState::Normal };
         if g.ui.hovered(br) {
             let o = &g.build_opts[i];

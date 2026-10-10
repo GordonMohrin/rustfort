@@ -34,6 +34,8 @@ pub enum Page {
     Import,
     Settings,
     Loading,
+    /// [app10] Announcement settings (DF announcements.txt), from the Settings page.
+    Announcements,
 }
 
 enum ImportState {
@@ -79,6 +81,8 @@ pub struct Menu {
     quit: bool,
     /// `--menu-page import:go`: start the import once DF answers (end-to-end test).
     auto_import: bool,
+    /// [app10] State of the announcement settings page.
+    ann: crate::ui::round10::AnnPage,
 }
 
 fn load_tex(path: &std::path::Path) -> Option<Texture2D> {
@@ -171,6 +175,7 @@ impl Menu {
             settings_writable: args.screenshot.is_none(),
             quit: false,
             auto_import: false,
+            ann: Default::default(),
         };
         match args.menu_page.as_deref() {
             Some("load") => m.open_load(0),
@@ -181,6 +186,7 @@ impl Menu {
                 m.open_import();
             }
             Some("settings") => m.page = Page::Settings,
+            Some("announcements") => m.page = Page::Announcements, // [app10]
             _ => {}
         }
         m
@@ -263,6 +269,13 @@ impl Menu {
             Page::Import => self.draw_import(args),
             Page::Settings => self.draw_settings(),
             Page::Loading => picked = self.draw_loading(),
+            Page::Announcements => {
+                // [app10] the same table as in the game's Esc > Settings > Announcements
+                if crate::ui::round10::draw_ann_page(&mut self.ui, &self.font, &mut self.input, &mut self.settings, &mut self.ann) {
+                    self.store_settings();
+                    self.page = Page::Settings;
+                }
+            }
         }
         if let Some((t, p)) = self.ui.tooltip.take() {
             let w = self.font.width(&t, s) + 14.0 * s;
@@ -303,6 +316,10 @@ impl Menu {
                 Page::Settings => {
                     self.store_settings();
                     self.back_to_title();
+                }
+                Page::Announcements => {
+                    self.store_settings(); // [app10]
+                    self.page = Page::Settings;
                 }
                 _ => self.back_to_title(),
             }
@@ -845,6 +862,16 @@ impl Menu {
             self.settings.hints_off = false;
             self.settings.hints_seen.clear();
         }
+        // [app10] Announcement settings, also from the title screen.
+        y += bh + 8.0 * s;
+        self.font.draw("Announcements", lx, y + 5.0 * s, s, col::TEXT);
+        let changed = self.settings.announcements.len();
+        if text_button(&mut self.ui, &self.font, Rect::new(vx, y, 18.0 * GW * s, bh), "Announcements...", BtnState::Normal) {
+            self.ann = Default::default();
+            self.page = Page::Announcements;
+        }
+        let note = if changed == 0 { "as in your DF announcements.txt".to_string() } else { format!("{changed} changed from DF") };
+        self.font.draw(&note, vx + 18.0 * GW * s + 10.0 * s, y + 5.0 * s, s, col::TEXT_DIM);
         let _ = y;
         let path = crate::importer::plain(&std::fs::canonicalize(crate::settings::path()).unwrap_or_else(|_| crate::settings::path())).display().to_string();
         let note = clip(&format!("Saved in {path}"), ((c.w - 130.0 * s) / (GW * s)) as usize);

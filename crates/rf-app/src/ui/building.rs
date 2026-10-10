@@ -86,7 +86,7 @@ pub fn job_label(templates: &[rf_sim::OrderTemplate], d: &JobDesc) -> String {
     }
 }
 
-fn job_text(templates: &[rf_sim::OrderTemplate], j: &BuildingJob) -> String {
+pub fn job_text(templates: &[rf_sim::OrderTemplate], j: &BuildingJob) -> String {
     job_label(templates, &JobDesc::of_job(j))
 }
 

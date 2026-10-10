@@ -299,7 +299,7 @@ fn unit_sheet(g: &mut Game, id: i32, r: Rect) {
     }
 }
 
-fn item_label(g: &Game, it: &rf_core::Item) -> String {
+pub fn item_label(g: &Game, it: &rf_core::Item) -> String {
     // [round 5] DF's own description already carries the quality marks (-x-, +x+, *x*, ≡x≡,
     // ☼x☼); only a generated label gets them added.
     let base = if !it.name.is_empty() {
@@ -335,6 +335,14 @@ fn tile_sheet(g: &mut Game, p: Pos, r: Rect) {
     y += lh;
     g.font.draw(&format!("x {}, y {}, z {}", p.x, p.y, p.z), x, y, s, col::TEXT_DIM);
     y += lh + 4.0 * s;
+    // [app10] DF-style look lines: rough/smoothed/constructed, engraving with its quality.
+    for (l, c) in super::round10::look_lines(g, p) {
+        for part in super::round9::wrap(&l, maxc) {
+            g.font.draw(&part, x, y, s, c);
+            y += lh;
+        }
+    }
+    y += 4.0 * s;
     let mut lines: Vec<(String, Color)> = Vec::new();
     {
         let w = &g.sim.world;
@@ -445,14 +453,22 @@ fn tile_sheet(g: &mut Game, p: Pos, r: Rect) {
             g.sim.set_items_flag_in(p, p, "forbid", !all_forbidden);
         }
         y += lh + 2.0 * s;
-        let n = items.len();
-        for (k, (id, it, forbid)) in items.into_iter().enumerate() {
+        // [app10] Identical items are grouped ("12 granite boulders"); a group's F/D toggles
+        // apply to all of its items.
+        let groups = super::round10::item_groups(g, p);
+        let n = groups.len();
+        for (k, (text, ids, forbid)) in groups.into_iter().enumerate() {
             if y > r.y + r.h - 2.0 * lh - pad {
-                g.font.draw(&format!("... and {} more", n - k), x, y, s, col::TEXT_DIM);
+                let more: usize = n - k;
+                g.font.draw(&format!("... and {more} more groups"), x, y, s, col::TEXT_DIM);
                 break;
             }
-            g.font.draw(&clip(&it, maxc.saturating_sub(5)), x, y, s, if forbid { Color::from_rgba(230, 120, 110, 255) } else { col::TEXT });
-            super::round5::item_row_toggles(g, id, r.x + r.w - pad, y);
+            g.font.draw(&clip(&text, maxc.saturating_sub(5)), x, y, s, if forbid { Color::from_rgba(230, 120, 110, 255) } else { col::TEXT });
+            if ids.len() == 1 {
+                super::round5::item_row_toggles(g, ids[0], r.x + r.w - pad, y);
+            } else {
+                super::round10::group_toggles(g, &ids, r.x + r.w - pad, y);
+            }
             y += lh;
         }
     }
