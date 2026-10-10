@@ -1617,8 +1617,8 @@ impl Sim {
         if self.moods_decide(s, now) {
             return; // [moods] strange mood, insanity
         }
-        if self.justice_confined(s, now) || self.lifestyle_decide(s, now) {
-            return; // [society2] prisoners stay in jail; replacing worn clothing
+        if self.justice_confined(s, now) {
+            return; // [society2] prisoners stay in jail
         }
         let mut r = Rng::for_unit(self.seed, s, now, 1);
         let ai = &mut self.ai[s];
@@ -1662,8 +1662,8 @@ impl Sim {
         if !restricted && self.society_decide(s, now) {
             return; // [society] burial, depot hauling, broker
         }
-        if !restricted && self.society2_idle(s, now) {
-            return; // [society2] occupations: tavern keeper, performer, scholar work at their location
+        if !restricted && (self.lifestyle_decide(s, now) || self.society2_idle(s, now)) {
+            return; // [society2] replacing worn clothing; occupations work at their location
         }
         if self.construct_try(s, now) {
             return; // [construct] constructions, detailing, dumping

@@ -55,6 +55,8 @@ const MONTH: u64 = TICKS_PER_MONTH as u64;
 const WHEEL: u64 = DAY / S2_PERIOD;
 /// Unanswered petitions are denied after this many ticks (estimate).
 pub const PETITION_TIMEOUT: u64 = 28 * DAY;
+/// Members a religion or guild needs in the fort before it petitions (estimate).
+pub const LOCATION_PETITION_MEMBERS: usize = 10;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LocKind {
@@ -201,6 +203,9 @@ pub(crate) struct Locs {
     pub petitions: Vec<Petition>,
     next_petition: i32,
     last_season: i32,
+    last_month: i32,
+    /// Members (unit ids) of the religion / guild behind each temple / guildhall petition.
+    members: Vec<(i32, Vec<i32>)>,
     /// Per-slot: next tick a citizen may read again.
     next_read: Vec<u64>,
     /// Blank quires / scrolls (item ids), refreshed daily.
@@ -393,7 +398,127 @@ impl Sim {
             next += 1;
         }
         self.locs.rep.derived_locations = out.len();
+        // DF shows a citizen's occupation as the profession: give the derived locations the
+        // tavern keepers, performers and scholars the export names.
+        for u in &self.world.units {
+            if !u.flags.citizen || u.flags.dead {
+                continue;
+            }
+            let (want, occ) = match u.profession.as_str() {
+                "TAVERN_KEEPER" => ("Tavern", "TAVERN_KEEPER"),
+                "POET" | "BARD" | "DANCER" => ("Tavern", "PERFORMER"),
+                "SCHOLAR" | "PHILOSOPHER" | "HISTORIAN" | "MATHEMATICIAN" | "ASTRONOMER" | "NATURALIST" | "CHEMIST" | "GEOGRAPHER" | "SCRIBE" => ("Library", "SCHOLAR"),
+                _ => continue,
+            };
+            if let Some(l) = out.iter_mut().filter(|l| l.kind == want).min_by_key(|l| l.occupations.len()) {
+                l.occupations.push(Occupation { kind: occ.into(), unit: u.id });
+            }
+        }
         self.world.locations = out;
+    }
+
+    /// Guild of a profession (DF guilds group related professions; grouping is an estimate).
+    fn guild_of(profession: &str) -> Option<&'static str> {
+        Some(match profession {
+            "PLANTER" | "FARMER" | "THRESHER" | "HERBALIST" | "MILLER" | "CHEESE_MAKER" | "BREWER" | "COOK" | "BEEKEEPER" => "FARMER",
+            "MASON" | "STONECUTTER" | "ENGRAVER" | "STONE_CARVER" | "STONECRAFTER" => "MASON",
+            "MINER" => "MINER",
+            "WOODCUTTER" | "CARPENTER" | "WOODCRAFTER" | "BOWYER" | "WOODWORKER" => "CARPENTER",
+            "BLACKSMITH" | "ARMORER" | "WEAPONSMITH" | "METALSMITH" | "METALCRAFTER" | "FURNACE_OPERATOR" => "METALSMITH",
+            "WEAVER" | "CLOTHIER" | "SHEARER" | "SPINNER" | "DYER" | "LEATHERWORKER" | "TANNER" => "CLOTHIER",
+            "JEWELER" | "GEM_CUTTER" | "GEM_SETTER" | "BONE_CARVER" | "CRAFTSMAN" | "GLAZER" | "GLASSMAKER" | "POTTER" => "CRAFTSMAN",
+            _ => return None,
+        })
+    }
+
+    /// Monthly: religions and guilds with enough members in the fort petition for a temple /
+    /// guildhall (w:Petition). Unanswered petitions anger the members.
+    fn location_petitions_month(&mut self, now: u64) {
+        let mut deity: std::collections::BTreeMap<i32, Vec<i32>> = Default::default();
+        let mut guild: std::collections::BTreeMap<&'static str, Vec<i32>> = Default::default();
+        for s in 0..self.ai.len() {
+            if !self.s2_citizen(s) {
+                continue;
+            }
+            let u = &self.world.units[self.ai[s].uidx];
+            if let Some(d) = u.needs.iter().find(|n| n.id == "PrayOrMeditate" && n.deity_id >= 0).map(|n| n.deity_id) {
+                deity.entry(d).or_default().push(u.id);
+            }
+            if let Some(g) = Sim::guild_of(&u.profession) {
+                guild.entry(g).or_default().push(u.id);
+            }
+        }
+        let mut new: Vec<(String, String, Vec<i32>)> = Vec::new();
+        for (d, members) in deity {
+            if members.len() < LOCATION_PETITION_MEMBERS {
+                continue;
+            }
+            let has = self.locs.rt.iter().any(|l| l.kind == LocKind::Temple && l.deity == d);
+            let name = self.world.hist_figs.iter().find(|h| h.id == d).map(|h| h.name.clone()).unwrap_or_else(|| format!("deity {d}"));
+            if !has {
+                new.push(("Temple".into(), name, members));
+            }
+        }
+        for (g, members) in guild {
+            if members.len() < LOCATION_PETITION_MEMBERS {
+                continue;
+            }
+            let has = self.locs.rt.iter().any(|l| l.kind == LocKind::Guildhall && self.world.locations[l.li].profession == g);
+            if !has {
+                new.push(("Guildhall".into(), g.to_string(), members));
+            }
+        }
+        for (kind, role, members) in new {
+            // At most one open petition per group; a new one a year after the last.
+            let recent = self.locs.petitions.iter().any(|p| p.kind == kind && p.role == role && (p.status == "Pending" || now < p.tick + 12 * MONTH));
+            if recent {
+                continue;
+            }
+            self.locs.next_petition += 1;
+            let id = self.locs.next_petition;
+            let name = if kind == "Temple" { format!("the worshippers of {role}") } else { format!("the {} guild", role.to_lowercase()) };
+            self.locs.petitions.push(Petition { id, unit: -1, name: name.clone(), kind: kind.clone(), role, location: -1, tick: now, status: "Pending".into() });
+            self.locs.members.push((id, members));
+            self.locs.rep.petitions += 1;
+            self.announce(now, format!("{name} have petitioned for a {}.", kind.to_lowercase()), None, AnnouncementKind::Info);
+        }
+    }
+
+    /// Answer a temple / guildhall petition: members are pleased or feel ignored.
+    fn answer_location_petition(&mut self, pi: usize, accept: bool, expired: bool) {
+        let now = self.ticks;
+        let (id, kind) = (self.locs.petitions[pi].id, self.locs.petitions[pi].kind.clone());
+        let members = self.locs.members.iter().find(|m| m.0 == id).map(|m| m.1.clone()).unwrap_or_default();
+        let temple = kind == "Temple";
+        let thought = match (accept, temple) {
+            (true, true) => "AcceptedTemplePetition",
+            (true, false) => "AcceptedGuildhallPetition",
+            (false, true) => "IgnoredTemplePetition",
+            (false, false) => "IgnoredGuildhallPetition",
+        };
+        for uid in members {
+            if let Some(&s) = self.unit_slot.get(&uid) {
+                if self.s2_citizen(s) {
+                    if accept {
+                        self.feel(s, thought, Class::Pos, 120, -1, 0, now);
+                    } else {
+                        self.feel(s, thought, Class::NegMild, 100, -1, 0, now);
+                    }
+                }
+            }
+        }
+        if accept {
+            self.locs.rep.accepted += 1;
+        } else {
+            self.locs.rep.denied += 1;
+        }
+        self.locs.petitions[pi].status = if accept {
+            "Accepted".into()
+        } else if expired {
+            "Expired".into()
+        } else {
+            "Denied".into()
+        };
     }
 
     fn rebuild_loc_rt(&mut self) {
@@ -462,6 +587,13 @@ impl Sim {
         if season != self.locs.last_season {
             self.locs.last_season = season;
             self.visitors_season(now);
+        }
+        let month = self.world.calendar.year * 12 + self.world.calendar.month();
+        if month != self.locs.last_month {
+            if self.locs.last_month != 0 {
+                self.location_petitions_month(now);
+            }
+            self.locs.last_month = month;
         }
         self.visitor_arrivals(now);
         self.locations_tick(now, phase == 0);
@@ -968,6 +1100,10 @@ impl Sim {
         // Unanswered petitions are denied.
         let expired: Vec<i32> = self.locs.petitions.iter().filter(|p| p.status == "Pending" && now >= p.tick + PETITION_TIMEOUT).map(|p| p.id).collect();
         for id in expired {
+            if let Some(pi) = self.locs.petitions.iter().position(|p| p.id == id && p.unit < 0) {
+                self.answer_location_petition(pi, false, true);
+                continue;
+            }
             self.answer_petition_impl(id, false);
             if let Some(p) = self.locs.petitions.iter_mut().find(|p| p.id == id) {
                 p.status = "Expired".into();
@@ -979,6 +1115,10 @@ impl Sim {
         let now = self.ticks;
         let Some(pi) = self.locs.petitions.iter().position(|p| p.id == id && p.status == "Pending") else { return false };
         let (unit, kind) = (self.locs.petitions[pi].unit, self.locs.petitions[pi].kind.clone());
+        if unit < 0 {
+            self.answer_location_petition(pi, accept, false);
+            return true;
+        }
         self.locs.petitions[pi].status = if accept { "Accepted".into() } else { "Denied".into() };
         let Some(vi) = self.locs.visitors.iter().position(|v| v.unit == unit) else { return true };
         let s = self.locs.visitors[vi].slot as usize;

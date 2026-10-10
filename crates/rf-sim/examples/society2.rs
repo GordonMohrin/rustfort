@@ -72,14 +72,20 @@ fn main() {
     let chunk = 1200u64 * 28;
     let mut done = 0u64;
     let mut secs = 0.0;
+    let mut deaths: std::collections::BTreeMap<String, usize> = Default::default();
     let t_all = Instant::now();
     println!("{:<22} {:>5} {:>6} {:>6} {:>6} {:>6} {:>7} {:>8}", "date", "cit", "visit", "crimes", "jail", "miasma", "repl", "ticks/s");
+    let mut month_secs = 0.0;
+    let mut month_ticks = 0u64;
     while done < ticks {
-        let n = chunk.min(ticks - done);
+        // 100-tick steps like `rustfort bench` (standdown reacts within 100 ticks).
+        let n = 100u64.min(ticks - done);
         let t = Instant::now();
         sim.run_ticks(n as u32);
         let el = t.elapsed().as_secs_f64();
         secs += el;
+        month_secs += el;
+        month_ticks += n;
         done += n;
         if standdown {
             let cits: Vec<rf_core::Pos> = sim.world.citizens().map(|u| u.pos).collect();
@@ -107,6 +113,12 @@ fn main() {
                 }
             }
         }
+        for a in sim.drain_announcements() {
+            if a.kind == rf_sim::AnnouncementKind::Death {
+                let cause = a.text.split(" has ").nth(1).unwrap_or(&a.text).trim_end_matches('.').to_string();
+                *deaths.entry(cause).or_default() += 1;
+            }
+        }
         if player {
             let pending: Vec<(i32, String)> = sim.petitions().iter().filter(|p| p.status == "Pending").map(|p| (p.id, p.kind.clone())).collect();
             for (id, kind) in pending {
@@ -115,6 +127,12 @@ fn main() {
                 }
             }
         }
+        if done % chunk != 0 && done != ticks {
+            continue;
+        }
+        let (n, el) = (month_ticks, month_secs.max(1e-9));
+        month_ticks = 0;
+        month_secs = 0.0;
         let c = sim.world.calendar;
         let jr = sim.justice_report();
         let lr = sim.lifestyle_report();
@@ -129,8 +147,31 @@ fn main() {
             lr.replacements,
             n as f64 / el
         );
+        if flag("--food") {
+            let pr = sim.production_report();
+            let ids: Vec<i32> = sim.world.citizens().map(|u| u.id).collect();
+            let hungry = ids.iter().filter(|&&id| sim.unit_needs(id).map(|n| n.1 >= 45_000).unwrap_or(false)).count();
+            let thirsty = ids.iter().filter(|&&id| sim.unit_needs(id).map(|n| n.0 >= 22_000).unwrap_or(false)).count();
+            let mut acts: std::collections::BTreeMap<String, usize> = Default::default();
+            for &id in &ids {
+                *acts.entry(sim.unit_status(id).activity).or_default() += 1;
+            }
+            println!("    meals {} raw {} drinks {} | hungry {} thirsty {} | {:?}", pr.meals, pr.raw_food, pr.drinks, hungry, thirsty, acts);
+            let hs: Vec<String> = sim
+                .hostiles()
+                .iter()
+                .take(6)
+                .map(|&id| {
+                    let u = sim.world.unit(id).unwrap();
+                    format!("{} {} {:?} {}", u.race, u.profession, u.pos, sim.unit_status(id).activity)
+                })
+                .collect();
+            let sq: Vec<String> = sim.world.squads.iter().map(|q| format!("{}:{}:{}", q.id, q.schedule, q.orders.len())).collect();
+            println!("    hostiles {} {:?} | squads {:?}", sim.hostiles().len(), hs, sq);
+        }
     }
     let total = t_all.elapsed().as_secs_f64();
+    println!("deaths by cause: {:?}", deaths);
     println!("\n{} ticks in {:.1} s sim time ({:.0} ticks/s), {:.1} s wall", done, secs, done as f64 / secs, total);
     let lr = sim.location_report();
     println!("\n== locations (derived from zones: {})", lr.derived_locations);

@@ -5,7 +5,7 @@
 //! - **Wear** (w:Wear, w:Clothing): clothing worn by a citizen (armor, pants, shoes, gloves,
 //!   helms of cloth, leather, bone ...; metal does not wear) ages: worn (x), threadbare (X),
 //!   tattered (XX), then it falls apart ("RottedClothing"). Threadbare clothing gives
-//!   "OldClothing", tattered "TatteredClothing". A dwarf whose clothing is worn fetches a new
+//!   "OldClothing", tattered "TatteredClothing". A civilian whose clothing is worn fetches a new
 //!   (unworn) replacement of the same kind (same item subtype) from a stockpile, puts it on
 //!   ("WearItem" for a quality item) and drops the old piece.
 //! - **Meal quality** (w:Kitchen, w:Quality): each prepared meal gets a quality from the cook's
@@ -22,7 +22,7 @@
 //!   Gordon's export is a Rain thought although his world has weather on).
 //!
 //! # Estimates (not on the wiki)
-//! - One wear level per 336 days of wearing; clothing thoughts at most once a month; dwarves
+//! - One wear level per 336 days of wearing; clothing thoughts at most once a year; dwarves
 //!   look for replacements once an item is worn (x) and try again weekly when none is free.
 //!   Calibrated on Gordon's fort: 91 % of the worn clothing is unworn, 7 % worn, 2 % threadbare
 //!   or tattered, no OldClothing/TatteredClothing thoughts but about 25 WearItem a month.
@@ -271,7 +271,7 @@ impl Sim {
             worst = worst.max(self.world.items[i].wear);
         }
         if worst >= 2 && now >= self.life.next_thought[s] {
-            self.life.next_thought[s] = now + 28 * DAY;
+            self.life.next_thought[s] = now + 336 * DAY;
             if worst >= 3 {
                 self.life.rep.tattered_clothing += 1;
                 self.feel(s, "TatteredClothing", Class::Neg, 100, -1, 0, now);
@@ -327,7 +327,7 @@ impl Sim {
             self.ai[s].wake = now + 1;
             return false;
         }
-        if now < self.life.next_try[s] || !self.s2_citizen(s) || self.social_no_work(s) {
+        if now < self.life.next_try[s] || !self.s2_citizen(s) || self.social_no_work(s) || self.world.units[self.ai[s].uidx].squad_id >= 0 {
             return false;
         }
         let ai = &self.ai[s];
