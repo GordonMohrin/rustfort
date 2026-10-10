@@ -411,6 +411,41 @@ pub struct Game {
     pub r4: crate::ui::round4::R4Ui,
     /// [round 5] Construction/detailing/traffic/item tools, cage lookups.
     pub r5: crate::ui::round5::R5Ui,
+    // [round 6] settings, help, hints, autosave, leaving to the title screen.
+    pub settings: crate::settings::Settings,
+    /// The controls overview (F1) is open.
+    pub help_open: bool,
+    /// First-time hints are shown (off in screenshot runs unless `--ui hints`).
+    pub hints_enabled: bool,
+    /// Settings changes are written to disk (not in screenshot runs).
+    pub settings_writable: bool,
+    /// Absolute game day (year * 336 + day of year) of the next autosave.
+    pub autosave_next: Option<i64>,
+    /// Autosave interval in game days (0 = off).
+    pub autosave_days: u32,
+    /// The running background save is an autosave.
+    saving_auto: bool,
+    /// Set to leave the game loop.
+    pub exit: Option<Exit>,
+}
+
+/// [round 6] How the game loop ended.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Exit {
+    Quit,
+    /// Back to the title screen.
+    MainMenu,
+}
+
+/// [round 6] Absolute game day: `year * 336 + day of the year`.
+pub fn game_day(c: &rf_core::Calendar) -> i64 {
+    c.year as i64 * (rf_core::TICKS_PER_YEAR / rf_core::TICKS_PER_DAY) as i64 + (c.year_tick / rf_core::TICKS_PER_DAY) as i64
+}
+
+/// [round 6] First autosave day after `day` for an interval of `every` days: the next multiple
+/// of `every` (for 84 days that is the first day of the next season, like DF's seasonal autosave).
+pub fn next_autosave_day(day: i64, every: u32) -> Option<i64> {
+    (every > 0).then(|| (day.div_euclid(every as i64) + 1) * every as i64)
 }
 
 pub fn ordinal(d: i32) -> String {
@@ -471,25 +506,39 @@ pub fn compute_zclass(w: &World) -> Vec<ZClass> {
 }
 
 impl Game {
-    pub fn new(args: &Args, loaded: Loaded) -> Game {
+    pub fn new(args: &Args, mut loaded: Loaded, settings: crate::settings::Settings) -> Game {
         let df = rf_gfx::df_dir();
-        let world = loaded.world;
-        // Graphics of exactly the save's active mods (vanilla only if the list is empty).
-        let mut gfx = match Gfx::load_for_world(&df, &world) {
-            Ok(g) => g,
-            Err(e) => {
-                eprintln!("graphics: {e}; using fallback tiles");
-                Gfx::default()
+        let world = std::mem::take(&mut loaded.world);
+        // [round 6] The loading thread may have loaded (and prepared) the graphics already.
+        let gfx = match loaded.gfx.take() {
+            Some(g) => g,
+            None => {
+                // Graphics of exactly the save's active mods (vanilla only if the list is empty).
+                let mut gfx = match Gfx::load_for_world(&df, &world) {
+                    Ok(g) => g,
+                    Err(e) => {
+                        eprintln!("graphics: {e}; using fallback tiles");
+                        Gfx::default()
+                    }
+                };
+                // Bake the palette variants (stone colors, dwarf looks) this world needs.
+                gfx.prepare(&world);
+                gfx
             }
         };
         let font = Font::load(&df);
         let binds = Bindings::load(&df);
-        // Bake the palette variants (stone colors, dwarf looks) this world needs.
-        gfx.prepare(&world);
         let zclass = compute_zclass(&world);
         let cam = initial_camera(&world);
         let threaded = !args.sim_inline && std::env::var("RUSTFORT_SIM_THREAD").map(|v| v != "0").unwrap_or(true);
-        let sim = crate::simthread::SimHandle::new(Sim::new(world, args.seed), threaded);
+        let seed = if loaded.seed != 0 { loaded.seed } else { args.seed };
+        let sim = crate::simthread::SimHandle::new(Sim::new(world, seed), threaded);
+        let shot = args.screenshot.is_some();
+        let autosave_days = match args.autosave_days {
+            Some(d) => d,
+            None if shot => 0,
+            None => settings.autosave_days,
+        };
         let mut g = Game {
             sim,
             gfx,
@@ -520,7 +569,7 @@ impl Game {
             log: Vec::new(),
             hover: None,
             zclass,
-            label: loaded.label,
+            label: std::mem::take(&mut loaded.label),
             ui_scale: args.ui_scale,
             quit: false,
             pan_drag: None,
@@ -528,7 +577,7 @@ impl Game {
             follow: None,
             sim_budget: SIM_BUDGET_S.min(0.75 / args.gfps.max(10) as f64),
             prepared_at: 0.0,
-            seed: args.seed,
+            seed,
             screen: Screen::None,
             build_opts: Vec::new(),
             build_cat: 0,
@@ -555,7 +604,25 @@ impl Game {
             busy_prev: 0.0,
             r4: Default::default(),
             r5: Default::default(),
+            settings,
+            help_open: false,
+            hints_enabled: !shot,
+            settings_writable: !shot,
+            autosave_next: None,
+            autosave_days,
+            saving_auto: false,
+            exit: None,
         };
+        // [round 6] Defaults from the settings for a fresh start (imports, synthetic forts).
+        if loaded.new_game {
+            if let Some(cap) = g.settings.pop_cap {
+                g.sim.set_population_cap(cap);
+            }
+            if let Some(on) = g.settings.invasions {
+                g.sim.set_invasions(on);
+            }
+        }
+        g.autosave_next = next_autosave_day(game_day(&g.sim.world.calendar), g.autosave_days);
         g.reset_hostiles();
         g.build_opts = g.sim.build_options();
         g.stocks = crate::ui::topbar::count_stocks(&g.sim.world, 0.0);
@@ -816,6 +883,14 @@ impl Game {
                         }
                     }
                 }
+                // [round 6] help overlay and first-time hints (`hints:3` starts at the third)
+                "help" => self.help_open = true,
+                "hints" => {
+                    self.hints_enabled = true;
+                    self.settings.hints_off = false;
+                    let n = v.parse::<usize>().unwrap_or(1).max(1) - 1;
+                    self.settings.hints_seen = crate::ui::help::HINTS.iter().take(n).map(|h| h.to_string()).collect();
+                }
                 "tile" => {
                     let c = self.cam;
                     self.selected = Selected::Tile(Pos::new(c.x as i16, c.y as i16, c.z as i16));
@@ -843,6 +918,47 @@ impl Game {
 
     pub fn set_status(&mut self, s: String) {
         self.status = Some((s, get_time()));
+    }
+
+    /// [round 6] Write the settings file (not in screenshot runs).
+    pub fn persist_settings(&mut self) {
+        if !self.settings_writable {
+            return;
+        }
+        if let Err(e) = self.settings.save() {
+            self.set_status(format!("Settings not saved: {e}"));
+        }
+    }
+
+    /// [round 6] Change the autosave interval (in-game settings page); applies right away.
+    pub fn set_autosave_days(&mut self, days: u32) {
+        self.settings.autosave_days = days;
+        self.autosave_days = days;
+        self.autosave_next = next_autosave_day(game_day(&self.sim.world.calendar), days);
+        self.persist_settings();
+    }
+
+    /// [round 6] Autosave when the game reaches the next autosave day (DF: seasonal autosave).
+    fn check_autosave(&mut self) {
+        let Some(next) = self.autosave_next else { return };
+        let day = game_day(&self.sim.world.calendar);
+        if day < next || self.saving.is_some() {
+            return;
+        }
+        self.autosave_next = next_autosave_day(day, self.autosave_days);
+        let w = self.sim.world.clone();
+        let seed = self.seed;
+        let keep = self.settings.autosave_keep.max(1) as usize;
+        self.set_status("Autosaving...".into());
+        self.saving_auto = true;
+        self.saving = Some(std::thread::spawn(move || {
+            let dir = crate::save::save_dir();
+            let r = crate::save::save_world_tagged(&w, seed, &dir, crate::save::AUTO_TAG);
+            if r.is_ok() {
+                crate::save::rotate_autosaves(&dir, &w.meta.fort_name, keep);
+            }
+            r
+        }));
     }
 
     // ---------------------------------------------------------------- simulation
@@ -935,6 +1051,7 @@ impl Game {
         if now - self.stocks.at > 1.0 {
             self.stocks = crate::ui::topbar::count_stocks(&self.sim.world, now);
         }
+        self.check_autosave(); // [round 6]
         self.poll_save();
         let date = date_string(&self.sim.world.calendar);
         let fresh = self.sim.drain_announcements();
@@ -962,6 +1079,17 @@ impl Game {
     fn global_keys(&mut self) {
         if self.input.hit(&self.binds, "RF_QUICKSAVE") && self.saving.is_none() {
             self.start_save();
+        }
+        // [round 6] F1 / '?' toggles the controls overview; while it is open only Esc counts.
+        if !self.typing() && self.input.hit(&self.binds, "RF_HELP") {
+            self.help_open = !self.help_open;
+            return;
+        }
+        if self.help_open {
+            if self.input.hit(&self.binds, "LEAVESCREEN") {
+                self.help_open = false;
+            }
+            return;
         }
         let b = &self.binds;
         let inp = &self.input;
@@ -1151,9 +1279,10 @@ impl Game {
         }
         let res = self.saving.take().unwrap().join().unwrap_or_else(|_| Err("save thread panicked".into()));
         let now = get_time();
+        let what = if std::mem::take(&mut self.saving_auto) { "Autosaved" } else { "Saved" };
         let (text, kind) = match res {
             Ok(i) => (
-                format!("Saved {} ({}, {:.2}s)", i.path.display(), crate::save::fmt_bytes(i.bytes), i.secs),
+                format!("{what} {} ({}, {:.2}s)", i.path.display(), crate::save::fmt_bytes(i.bytes), i.secs),
                 AnnouncementKind::Info,
             ),
             Err(e) => (format!("Save failed: {e}"), AnnouncementKind::Warning),
@@ -1200,6 +1329,8 @@ impl Game {
                 self.civ_alert = None;
                 self.mil = MilitaryUi::default();
                 self.burrow_ui = BurrowUi::default();
+                self.help_open = false;
+                self.autosave_next = next_autosave_day(game_day(&self.sim.world.calendar), self.autosave_days); // [round 6]
                 let text = format!(
                     "Loaded {} ({}): {} in {:.2}s + sim {:.2}s",
                     info.header.fort,
@@ -1612,9 +1743,11 @@ fn initial_camera(w: &World) -> Camera {
     Camera { x, y, z, zoom: 1.0, tx: x, ty: y, tzoom: 1.0, zoom_anchor: Vec2::ZERO }
 }
 
-pub async fn run(args: Args, loaded: Loaded) {
-    let mut g = Game::new(&args, loaded);
-    let mut frame: u32 = 0;
+/// The game loop. [round 6] Returns how it ended and the (possibly changed) settings;
+/// `start_frame` continues the frame count of the title screen (scripted screenshot runs).
+pub async fn run(args: Args, loaded: Loaded, settings: crate::settings::Settings, start_frame: u32) -> (Exit, crate::settings::Settings, u32) {
+    let mut g = Game::new(&args, loaded, settings);
+    let mut frame: u32 = start_frame;
     let mut deadline = Instant::now();
     // [round 4] Average speed since the first frame (screenshot runs report it).
     let mut started: Option<(Instant, u64, f64)> = None;
@@ -1629,17 +1762,17 @@ pub async fn run(args: Args, loaded: Loaded) {
             Ok(sc) => Some(sc),
             Err(e) => {
                 eprintln!("{e}");
-                return;
+                return (Exit::Quit, g.settings.clone(), frame);
             }
         },
         (None, Some(m)) => crate::script::Script::parse("", Some(m)).ok(),
         (None, None) => None,
     };
-    loop {
+    let exit = loop {
         // [round 4] Take the sim back from the worker thread for this frame.
         g.sim.acquire();
         g.after_acquire();
-        if started.is_none() && frame == 2 {
+        if started.is_none() && frame == start_frame + 2 {
             started = Some((Instant::now(), g.sim.ticks(), g.sim.busy_secs()));
         }
         // `RUSTFORT_MEASURE=a,b`: real time from sim tick a to tick b (same game span in any
@@ -1686,22 +1819,18 @@ pub async fn run(args: Args, loaded: Loaded) {
 
         frame += 1;
         if let Some(path) = &args.screenshot {
+            if args.shots_at.contains(&frame) {
+                let p = extra_shot_path(path, frame);
+                save_screenshot(&p);
+                println!("saved {} (sim tick {})", p.display(), g.sim.ticks());
+            }
             if frame >= args.frames.max(1) {
-                let mut img = get_screen_data();
-                // [round 4] The window ignores framebuffer alpha; so does the screenshot
-                // (translucent UI layers would otherwise look washed out in image viewers).
-                for px in img.bytes.chunks_exact_mut(4) {
-                    px[3] = 255;
-                }
-                if let Some(dir) = path.parent() {
-                    let _ = std::fs::create_dir_all(dir);
-                }
-                img.export_png(&path.to_string_lossy());
+                let (iw, ih) = save_screenshot(path);
                 println!(
                     "saved {} ({}x{}) after {frame} frames, sim tick {}, {:.0} fps, frame {:.2} ms (cpu), {:.0} ticks/s, avg {:.0} ticks/s ({})",
                     path.display(),
-                    img.width,
-                    img.height,
+                    iw,
+                    ih,
                     g.sim.ticks(),
                     g.fps,
                     g.frame_ms,
@@ -1714,12 +1843,16 @@ pub async fn run(args: Args, loaded: Loaded) {
                         "inline".to_string()
                     }
                 );
-                break;
+                break Exit::Quit;
             }
         }
         if g.quit {
             g.finish_save();
-            break;
+            break Exit::Quit;
+        }
+        if let Some(e) = g.exit {
+            g.finish_save();
+            break e;
         }
         // [round 4] The worker simulates while the GPU flushes and we wait for vsync.
         g.release_sim(dt);
@@ -1735,7 +1868,30 @@ pub async fn run(args: Args, loaded: Loaded) {
             }
         }
         next_frame().await;
+    };
+    let settings = g.settings.clone();
+    (exit, settings, frame)
+}
+
+/// [round 6] `shots/a.png` + frame 300 -> `shots/a-f300.png`.
+pub fn extra_shot_path(path: &std::path::Path, frame: u32) -> std::path::PathBuf {
+    let stem = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "shot".into());
+    path.with_file_name(format!("{stem}-f{frame}.png"))
+}
+
+/// Write the current frame to a PNG (alpha forced to opaque). Returns its size.
+pub fn save_screenshot(path: &std::path::Path) -> (u16, u16) {
+    let mut img = get_screen_data();
+    // [round 4] The window ignores framebuffer alpha; so does the screenshot
+    // (translucent UI layers would otherwise look washed out in image viewers).
+    for px in img.bytes.chunks_exact_mut(4) {
+        px[3] = 255;
     }
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    img.export_png(&path.to_string_lossy());
+    (img.width, img.height)
 }
 
 #[cfg(test)]
@@ -1785,6 +1941,20 @@ mod tests {
         let (d, done) = drag_step(d, b, true, false);
         assert!(d.is_none());
         assert_eq!(done, Some((a, b)));
+    }
+
+    #[test]
+    fn autosave_days_follow_the_seasons() {
+        let mut c = rf_core::Calendar { year: 277, year_tick: 0 };
+        assert_eq!(game_day(&c), 277 * 336);
+        // Seasonal autosave: the first day of the next season.
+        assert_eq!(next_autosave_day(game_day(&c), 84), Some(277 * 336 + 84));
+        c.year_tick = rf_core::TICKS_PER_MONTH * 11 + rf_core::TICKS_PER_DAY * 27;
+        assert_eq!(next_autosave_day(game_day(&c), 84), Some(278 * 336));
+        assert_eq!(next_autosave_day(game_day(&c), 336), Some(278 * 336));
+        assert_eq!(next_autosave_day(5, 7), Some(7));
+        assert_eq!(next_autosave_day(7, 7), Some(14));
+        assert_eq!(next_autosave_day(100, 0), None);
     }
 
     #[test]

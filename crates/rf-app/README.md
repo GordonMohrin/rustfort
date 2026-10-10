@@ -5,7 +5,8 @@ font, keybindings read from your own DF `interface.txt`, z-levels with the level
 visible through open space, and a fast sim loop.
 
 ```
-cargo run --release -p rf-app -- play                       # your export if there is one, else a synthetic fort
+rustfort.cmd                                                # repo root: build if needed, then the title screen
+cargo run --release -p rf-app                               # the title screen (same as `play` without a world)
 cargo run --release -p rf-app -- play --export export/tileshtulon
 cargo run --release -p rf-app -- play --synthetic --size 192,192,153
 cargo run --release -p rf-app -- bench --ticks 100000       # headless ticks/s + phase times
@@ -13,20 +14,107 @@ cargo run --release -p rf-app -- play --load saves/Trussroads-20261009-222118.rf
 cargo run --release -p rf-app -- savebench                  # save + load time and size
 ```
 
-The world comes from `rf_import::find_export` (`--export DIR`, env `RUSTFORT_EXPORT`, or
-`export/tileshtulon`). If there is none, or the import fails, you get `World::synthetic(96,96,40)`
-(the reason is shown as the first announcement). The window title names the loaded world.
+`play` without `--export`, `--load`, `--synthetic`/`--size` or `--screenshot` opens the title
+screen (round 6, below). With one of them the game starts directly, as before: the world comes
+from `rf_import::find_export` (`--export DIR`, env `RUSTFORT_EXPORT`, or `export/tileshtulon`).
+If there is none, or the import fails, you get `World::synthetic(96,96,40)` (the reason is shown
+as the first announcement). The window title names the loaded world.
 
-The DF install is `rf_gfx::df_dir()` (env `RUSTFORT_DF_DIR`). From it the app reads, at runtime only:
+The DF install is `rf_gfx::df_dir()` (env `RUSTFORT_DF_DIR`, else the folder from the settings,
+else the Steam default). From it the app reads, at runtime only:
+- `data/art/title_background.png` and `df_logo.png` for the title screen;
 - `data/art/curses_640x300.png`, the 8x12 CP437 font of the Steam UI;
 - keybindings, from `%APPDATA%\Bay 12 Games\Dwarf Fortress\prefs\interface.txt`, then
   `<install>\prefs\interface.txt`, then `data\init\interface.txt`;
 - Premium sprites and UI icons through rf-gfx. Wherever rf-gfx returns nothing, the app draws
   fallback tiles from material colors and glyphs.
 
+## Title screen (round 6, `menu.rs`)
+
+Like DF's title screen: DF's own background art and logo from the install (a plain gradient
+and text logo without them), "RUSTFORT" below, and a column of buttons:
+
+- **Continue** loads the newest save in `saves/` (autosaves count), else the newest complete
+  export in `export/`, else the default export. The line under the button says what that is.
+- **Load game**: two tabs, *Saves* (fort, game date, when saved, size; autosaves marked
+  `[auto]`) and *DF exports* (every `export/*/manifest.json`: fort, year, when exported,
+  folder). A click loads it.
+- **Import from Dwarf Fortress** (`importer.rs`): see below.
+- **New synthetic fort (dev)**: `World::synthetic` with `--size` (default 96x96x40).
+- **Settings**: interface size (50-300 %), frame cap (used without vsync), vsync (next start),
+  autosave interval (off / week / month / season / year) and how many autosaves to keep,
+  population cap and invasions for new imports ("From the save", or a value: applied when a
+  fresh export or synthetic fort starts, never to a loaded save), the DF folder (a text field:
+  click, type or Ctrl+V, "Default"; it says whether DF and DFHack are there), and "Show them
+  again" for the first-time hints. Back (or Esc) writes the file.
+- **Quit**.
+
+Loading runs in a thread (world, then the Premium graphics), with a progress bar on the title
+screen; a failed load returns to the title with the reason.
+
+The settings live in `saves/settings.json` (next to the saves; `$RUSTFORT_SAVE_DIR` moves both,
+`$RUSTFORT_SETTINGS` names another file). A missing or broken file gives the defaults, unknown
+fields are ignored. `--ui-scale` and `--gfps` win over the file; `RUSTFORT_VSYNC` wins over the
+vsync setting; screenshot runs read the file but never write it.
+
+In the game, Esc > **Save and return to title** saves (in the background, finished before the
+switch) and goes back to the title screen.
+
+### Import from Dwarf Fortress
+
+1. **Check** (a thread, about 0.1 s): `hack/dfhack-run.exe lua -f tools/dfhack/rustfort-probe.lua`
+   prints one JSON line (map loaded, fortress mode, fort and world names, year, citizens,
+   paused). The probe only reads globals; it never pauses DF or writes to it. Only if DFHack does
+   not answer, `tasklist` tells "DF is not running" from "DFHack does not answer" (the process
+   list can take seconds on a busy machine).
+2. The dialog shows what it found ("Found Trussroads (Tileshtulon) in the world Zilirróth. Year
+   278, 88 citizens"), that the export only reads, and the target folder
+   `export/<fort>-<yyyymmdd-hhmmss>/` (UTC; earlier exports are kept).
+3. **Import and play** runs `dfhack-run lua -f tools/dfhack/rustfort-export.lua <dir> --any-fort`
+   (the exporter returns at once and works in frame slices inside DF) and polls `progress.json`
+   about every frame: a bar from the exporter's phase and `i/n` detail (phases weighted by their
+   measured share, the map is about half), the phase name, the seconds so far. "Cancel export"
+   writes the exporter's `cancel` file. `manifest.json` without `export.lock` = done,
+   `error.json` = failed (shown), 90 s without a new `progress.json` = stalled.
+4. The export is loaded like any other, saved once right away as an autosave (so Continue finds
+   it), and the game starts.
+
+Errors are spelled out with what to do: dfhack-run not found (check the DF folder in Settings,
+install DFHack), the scripts not found (start from the repo with `rustfort.cmd`), DF not running,
+DFHack not answering (dfhack-run crashes silently when nothing listens on its port), no fort
+loaded. Retry checks again.
+
+Measured on 10.10.2026 against Gordon's running fort (year 279, while other builds kept the
+machine busy): check 0.3 s; export 64 s wall, 36 s of Lua inside DF, 997 frames, 68 MB; DF kept
+running; Rustfort loaded the result and started at "3rd Granite, 279" with 87 citizens.
+
+Paths: the scripts are found in `$RUSTFORT_TOOLS_DIR`, `tools/dfhack` in the working directory,
+next to the exe's repo (`target/release/../../tools/dfhack`) or in the source tree; exports go to
+`$RUSTFORT_EXPORT_ROOT` or `export/`.
+
+## Autosave (round 6)
+
+Every N game days (Settings; default 84 = one season, so it happens on the first day of each
+season like DF's `AUTOSAVE:SEASONAL`; the in-game Settings page has the same switch and says
+how many days are left). The save runs in the background like F5, into
+`saves/<fort>-auto-<yyyymmdd-hhmmss>.rfsave`, and afterwards only the newest 3 autosaves of that
+fort are kept (`autosave_keep`). Manual saves and other forts' autosaves are never deleted.
+Screenshot runs do not autosave unless `--autosave-days N` is given.
+
+## Help (round 6, `ui/help.rs`)
+
+- **F1**, **?** or the `?` button at the right of the top bar opens the controls overview: View,
+  Time, Game, Orders, Build and Screens with the keys of the bindings in use (from your DF
+  `interface.txt`, so they match your Steam DF; `-` when a binding is not set), plus the mouse
+  controls with your wheel bindings. Esc, F1, "Close" or a click outside close it.
+- **First-time hints**: five bubbles, one at a time, pointing at what they explain (welcome and
+  pause/speed, moving around, looking at things, the toolbar, the help and saving). "Next" /
+  "Got it" moves on, "No more hints" stops them; both are remembered in the settings file.
+
 ## Controls
 
-The defaults below are Steam DF's. Your own `interface.txt` overrides them.
+The defaults below are Steam DF's. Your own `interface.txt` overrides them. F1 in the game shows
+the same overview with your actual keys.
 
 | Action | Mouse | Keys |
 |---|---|---|
@@ -63,6 +151,8 @@ The defaults below are Steam DF's. Your own `interface.txt` overrides them.
 | Labor | toolbar (left group) | `y` |
 | Save | Esc menu "Save game" | F5 (quicksave) |
 | Load | Esc menu "Load game" (list of saves, newest first) | |
+| Controls overview | `?` button (top bar, right) | F1 or `?` |
+| Back to the title screen | Esc menu "Save and return to title" | |
 
 To place designations, stockpiles, zones and farm plots, either press, drag and release, or click
 once and click the second corner. Changing the z-level between the two corners makes a 3D box. While you place
@@ -274,6 +364,15 @@ rustfort play --screenshot target/shots/a.png --frames 20 --view 48,48,22,1 \
 - Screenshot runs print the average ticks/s and, with the sim thread, how busy the worker was;
   `RUSTFORT_MEASURE=a,b` prints the real time from sim tick a to b.
 - `--mouse x,y` parks the cursor.
+- Round 6: `--menu` shows the title screen even with `--screenshot` (the script can click on,
+  and the frame count continues into the game); `--menu-page load|exports|import|settings`
+  opens a page; `--menu-page import:go` starts the import as soon as DF answers (end-to-end
+  test; it reads the live game, so run it on purpose only). `--shots-at 300,900` saves extra
+  screenshots `<shot>-f300.png` on the way (e.g. the import's progress bar). `--ui help` opens
+  the controls overview, `--ui hints[:n]` shows the first-time hints from hint n (hints are off
+  in screenshot runs otherwise). `--autosave-days N` overrides the autosave interval.
+  `RUSTFORT_DF_PROCESS=NoSuchDF.exe` and `DFHACK_PORT=5999` give the "DF is not running" and
+  "DFHack does not answer" states of the import dialog without touching DF.
 - `--script` replays input per frame: `move`, `click`, `ldown`, `lup`, `rclick`, `mdown`,
   `mup`, `wheel n`, `key k` (also `f5`, `backspace`, `tab`), `char c`, `mods shift|ctrl|none`.
   In screenshot runs a save started with F5 finishes within the frame.
@@ -284,6 +383,10 @@ screenshots under `target/`, never in git.
 ## Code map
 
 - `main.rs`: CLI.
+- `menu.rs` (round 6): title screen and its pages, loading thread, `app_main` (title screen and
+  game in turn).
+- `importer.rs` (round 6): DF/DFHack check, exporter start, `progress.json` polling, export list.
+- `settings.rs` (round 6): `saves/settings.json`.
 - `game.rs`: state, sim loop, camera, map input.
 - `render.rs`: map, fallback tiles, overlays.
 - `keys.rs`: DF `interface.txt` bindings and key repeat.
@@ -291,7 +394,9 @@ screenshots under `target/`, never in git.
 - `script.rs`: scripted input.
 - `bench.rs`: headless benchmark.
 - `simthread.rs`: the sim worker thread (`SimHandle` derefs to `Sim` while the UI holds it).
-- `save.rs`: save games (bincode + zstd), save list, `savebench`.
+- `save.rs`: save games (bincode + zstd), save list, `savebench`; (round 6) tagged autosaves and
+  their rotation.
+- `ui/help.rs` (round 6): controls overview and first-time hints.
 - `ui/`: `topbar` (plus stocks, hostile counter), `toolbar` (data-driven button tables plus
   Dig/Stockpile submenus), `build` (build and zone menus, placement ghost, zone overlay),
   `building` (building sheet), `orders` (work orders), `labor` (labor grid), `panels` (unit

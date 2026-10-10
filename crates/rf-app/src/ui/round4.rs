@@ -285,13 +285,35 @@ pub fn draw_settings(g: &mut Game) {
     let s = g.ui.scale;
     let lh = g.ui.line_h();
     let (sw, sh) = (screen_width(), screen_height());
-    let (w, h) = ((460.0 * s).min(sw - 40.0), (300.0 * s).min(sh - 60.0));
+    let (w, h) = ((460.0 * s).min(sw - 40.0), (346.0 * s).min(sh - 60.0));
     let r = Rect::new((sw - w) / 2.0, (sh - h) / 2.0, w, h);
     panel(&mut g.ui, r);
     let pad = 16.0 * s;
     let (x, mut y) = (r.x + pad, r.y + pad);
     g.font.draw("Settings", x, y, 1.5 * s, col::TEXT_HI);
     y += 1.5 * GH * s + 14.0 * s;
+    // [round 6] Autosave interval (also on the title screen's settings page).
+    {
+        g.font.draw("Autosave", x, y + 5.0 * s, s, col::TEXT);
+        let bh = GH * s + 10.0 * s;
+        let label = crate::settings::autosave_label(g.autosave_days);
+        let br = Rect::new(x + 17.0 * 8.0 * s, y, 18.0 * 8.0 * s, bh);
+        if text_button(&mut g.ui, &g.font, br, &label, BtnState::Normal) {
+            let mut st = crate::settings::Settings { autosave_days: g.autosave_days, ..Default::default() };
+            st.cycle_autosave();
+            g.set_autosave_days(st.autosave_days);
+        }
+        y += bh + 4.0 * s;
+        let note = match g.autosave_next {
+            Some(d) => {
+                let left = d - crate::game::game_day(&g.sim.world.calendar);
+                format!("Next in {left} days; keeps the last {} autosaves.", g.settings.autosave_keep)
+            }
+            None => "No autosaves; save with F5 or the menu.".into(),
+        };
+        g.font.draw(&note, x, y, s, col::TEXT_DIM);
+        y += lh + 12.0 * s;
+    }
     // Population cap: DF d_init POPULATION_CAP; migrants stop arriving at the cap.
     let cap = g.sim.population_info().population_cap;
     g.font.draw("Population cap", x, y + 5.0 * s, s, col::TEXT);

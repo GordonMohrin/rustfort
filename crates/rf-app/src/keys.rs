@@ -252,6 +252,9 @@ impl Bindings {
         add("RF_SPEED_4", Trigger::Key { mods: 0, key: KeyCode::Key4 });
         // F5 quicksaves (DF binds F5 to a map hotkey, which Rustfort does not use).
         add("RF_QUICKSAVE", Trigger::Key { mods: 0, key: KeyCode::F5 });
+        // [round 6] F1 or '?' opens the controls overview.
+        add("RF_HELP", Trigger::Key { mods: 0, key: KeyCode::F1 });
+        add("RF_HELP", Trigger::Char('?'));
     }
 
     pub fn triggers(&self, name: &str) -> &[Trigger] {
@@ -279,9 +282,93 @@ impl Bindings {
         String::new()
     }
 
+    /// [round 6] Every trigger of a binding, for the help screen: `q, PageUp, Wheel down`.
+    pub fn describe(&self, name: &str) -> String {
+        let mut out: Vec<String> = Vec::new();
+        for t in self.triggers(name) {
+            let l = trigger_label(t);
+            if !out.contains(&l) {
+                out.push(l);
+            }
+        }
+        out.join(", ")
+    }
+
     /// Keys of a binding that move continuously while held (camera pan).
     pub fn held(&self, name: &str, input: &InputFrame) -> bool {
         self.triggers(name).iter().any(|t| matches!(t, Trigger::Key { mods: 0, key } if input.down.contains(key)))
+    }
+}
+
+/// [round 6] Readable key name: `KeyCode::Key1` -> `1`, `LeftBracket` -> `[`, `Escape` -> `Esc`.
+pub fn key_name(k: KeyCode) -> String {
+    use KeyCode as K;
+    let s = match k {
+        K::Escape => "Esc",
+        K::LeftBracket => "[",
+        K::RightBracket => "]",
+        K::Period => ".",
+        K::Comma => ",",
+        K::Minus => "-",
+        K::Equal => "=",
+        K::Slash => "/",
+        K::Backslash => "\\",
+        K::PageUp => "PgUp",
+        K::PageDown => "PgDn",
+        K::Up => "Up",
+        K::Down => "Down",
+        K::Left => "Left",
+        K::Right => "Right",
+        K::KpAdd => "Num+",
+        K::KpSubtract => "Num-",
+        K::KpEnter => "NumEnter",
+        _ => "",
+    };
+    if !s.is_empty() {
+        return s.to_string();
+    }
+    let d = format!("{k:?}");
+    if let Some(n) = d.strip_prefix("Key").filter(|n| n.len() == 1) {
+        return n.to_string();
+    }
+    if let Some(n) = d.strip_prefix("Kp").filter(|n| n.len() == 1) {
+        return format!("Num{n}");
+    }
+    if d.len() == 1 {
+        d.to_lowercase()
+    } else {
+        d
+    }
+}
+
+fn mods_prefix(mods: u8) -> String {
+    let mut s = String::new();
+    if mods & CTRL != 0 {
+        s.push_str("Ctrl+");
+    }
+    if mods & ALT != 0 {
+        s.push_str("Alt+");
+    }
+    if mods & SHIFT != 0 {
+        s.push_str("Shift+");
+    }
+    s
+}
+
+/// [round 6] Readable trigger: `Shift+e`, `<`, `Ctrl+wheel up`.
+pub fn trigger_label(t: &Trigger) -> String {
+    match t {
+        Trigger::Key { mods, key } => format!("{}{}", mods_prefix(*mods), key_name(*key)),
+        Trigger::Char(' ') => "Space".into(),
+        Trigger::Char(c) => c.to_string(),
+        Trigger::Wheel { mods, up } => {
+            let w = format!("{}wheel {}", mods_prefix(*mods), if *up { "up" } else { "down" });
+            let mut c = w.chars();
+            match c.next() {
+                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                None => w,
+            }
+        }
     }
 }
 
@@ -408,6 +495,20 @@ mod tests {
         assert!(b.triggers("ZOOM_IN").iter().any(|t| matches!(t, Trigger::Wheel { mods: CTRL, .. })), "{}", b.source);
         assert!(!b.triggers("D_PAUSE").is_empty());
         assert!(!b.triggers("CURSOR_UP").is_empty());
+    }
+
+    #[test]
+    fn readable_labels() {
+        assert_eq!(trigger_label(&Trigger::Key { mods: SHIFT, key: KeyCode::E }), "Shift+e");
+        assert_eq!(trigger_label(&Trigger::Key { mods: 0, key: KeyCode::Key1 }), "1");
+        assert_eq!(trigger_label(&Trigger::Key { mods: 0, key: KeyCode::LeftBracket }), "[");
+        assert_eq!(trigger_label(&Trigger::Wheel { mods: CTRL, up: true }), "Ctrl+wheel up");
+        assert_eq!(trigger_label(&Trigger::Wheel { mods: 0, up: false }), "Wheel down");
+        assert_eq!(trigger_label(&Trigger::Char(' ')), "Space");
+        let mut b = Bindings::defaults();
+        b.add_builtin();
+        assert_eq!(b.describe("CURSOR_UP_Z"), "q, Wheel down, PgUp");
+        assert_eq!(b.describe("RF_HELP"), "F1, ?");
     }
 
     #[test]
