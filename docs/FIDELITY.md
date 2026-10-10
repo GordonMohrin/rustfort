@@ -56,6 +56,7 @@ reported as a floor (`min_tier`). Once the exporter writes the engravings into
 | Meal stack size | sum of ingredient stacks | same (w:Kitchen) | OK |
 | Meal name | material of the last ingredient + biscuits/stew/roast | same (w:Kitchen) | OK |
 | Meal quality from cook skill | meals are made at quality 0 | each ingredient gets a quality from the cook's skill (w:Kitchen) | MISSING |
+| [validation] Craft quality from crafter skill | crafts are made at quality 0 | quality from the crafter's skill (w:Item quality); Gordon's DF crafts made in the r3-r6 windows average 2.4-2.9 with 25-46 masterworks (docs/VALIDATION.md) | MISSING (r8 validation) |
 | Cooking plants keeps no seeds | yes | yes (w:Kitchen) | OK |
 | Brewables are not cooked | default off, switchable | DF cooks them unless the kitchen settings forbid it; Gordon's rule | ESTIMATE (player setting) |
 | Seasonal crops | grow only in their raw seasons; destroyed when a season starts in which they cannot grow | same (w:Farming) | OK |
@@ -142,7 +143,7 @@ reported as a floor (`min_tier`). Once the exporter writes the engravings into
 | Wave size | 2 + rand(min(28, 4 + wealth / 25 000)) | from created wealth (w:Migrant) | ESTIMATE |
 | Wave chance | 3 in 4 per season | not given | ESTIMATE |
 | Dangerousness | deaths do not deter migrants | many recent deaths deter migrants (w:Migrant) | MISSING |
-| Pregnancy | married couples, 9 months, twins 1 in 50 | w:Pregnancy | ESTIMATE (rates) |
+| Pregnancy | married couples, 9 months, twins 1 in 50 | w:Pregnancy | ESTIMATE (rates); r8 validation: 6 births (2-7) in 2.18 years vs DF's 2, and 4 vs 0 in 1.32 years, so about 3x too high |
 | Children | baby until 1, adult at 13 (observed, raws say 12) | raws `CHILD:12`; the export shows 12.x-year-olds as children | OK (observed) |
 | Old age | MAXAGE 150-170 | raws | OK |
 | Burial | corpse to a free coffin in a tomb zone | w:Burial | OK |
@@ -271,7 +272,7 @@ Wiki pages checked: Combat, Material science, Attack, Armor, Wound, Blood, Pain,
 | Kill orders: pursue the unit wherever it is reachable; done when it dies | OK | If the target is unreachable the soldier waits (DF soldiers stand idle the same way). |
 | Soldiers engage hostiles in sight (20 tiles, 2 z-levels) | ESTIMATE + FIXED r6 | The range is an estimate; dormant hostiles are now included. |
 | Patrol routes | MISSING | Treated as Train. |
-| Training by sparring and demonstrations (sparring injuries, teachers) | MISSING | Training is flat experience every 100 ticks (ESTIMATE). |
+| Training by sparring and demonstrations (sparring injuries, teachers) | MISSING | Training is flat experience every 100 ticks (ESTIMATE). [validation] r8: with Gordon's routine (3 squads on constant training) DF gave 14.5k military XP per dwarf-year, mostly situational awareness 6.1k, melee 2.6k, discipline 1.7k, axe 1.8k; Rustfort 6.9k, but 0 awareness/discipline and 2.6-3.8x DF's dodging, armor and shield. |
 | Barracks: sleeping, training spot, equipment storage | MISSING | |
 | Squad ammunition settings (ammo per squad, combat/training flags) | MISSING | Not exported. Ammo is chosen by launcher class: bolts for crossbows, metal ammo first for combat. |
 | Uniforms: pick up missing pieces, `KIND:SUBTYPE@MATERIAL` entries | OK | "Replace clothing", "exact matches" and partial matches are not distinguished. |
@@ -286,7 +287,7 @@ Wiki pages checked: Combat, Material science, Attack, Armor, Wound, Blood, Pain,
 |---|---|---|
 | Sieges from a population of 80 | OK | Wiki Siege: "80 members". |
 | Checked at season changes, chance 1/3 | ESTIMATE | |
-| Siege size | FIXED r7 | Wiki Siege + Difficulty (Normal): a tier needs its population "and one of production or trade": population 20/50/80/110/140, created wealth 5k/25k/100k/200k/300k, exported wealth 500/2.5k/10k/20k/30k. Sieges from the Town tier: 10 regulars, City 40 (+5 monsters), Metropolis 120 (+40 monsters). Rustfort r7 uses these tiers.<br>ESTIMATE: created wealth = current item value; exported = goods sold this session. Monsters are not spawned yet. |
+| Siege size | FIXED r7 | Wiki Siege + Difficulty (Normal): a tier needs its population "and one of production or trade": population 20/50/80/110/140, created wealth 5k/25k/100k/200k/300k, exported wealth 500/2.5k/10k/20k/30k. Sieges from the Town tier: 10 regulars, City 40 (+5 monsters), Metropolis 120 (+40 monsters). Rustfort r7 uses these tiers.<br>ESTIMATE: created wealth = current item value; exported = goods sold this session. Monsters are not spawned yet.<br>**[validation] WRONG by observation (r8):** at 87 citizens and 3.2 M item wealth DF sent at least 137 goblins (r6 export, summer 280) and killed 73 of 87; Rustfort's "population and wealth" rule gives tier 3 = 10 regulars there. DF behaves like a tier reached by wealth alone. Also, items the sim makes keep `value` 0, so `fort_wealth()` ignores all new production. |
 | Sieges vs ambushes | MISSING | Wiki: 25 % of invasions are sieges on normal difficulty (50 % on hard); the rest are smaller ambushes. Rustfort only has sieges. |
 | Thieves and snatchers (kobold thieves, goblin snatchers) | MISSING | |
 | Goblins charge at once; humans sometimes camp at the map edge | OK for goblins / MISSING camps | Rustfort sieges are goblin sieges, which charge as on the wiki. |
@@ -351,11 +352,27 @@ Wiki pages checked: Combat, Material science, Attack, Armor, Wound, Blood, Pain,
 |---|---|---|
 | Cavern layers, discovery, breach, magma sea | ESTIMATE | Flood-fill detection; DF stores the layers directly. |
 | Cave wildlife from the save's subterranean creature raws | OK | Group sizes and rates are estimates. |
-| Forgotten beast arrival rate | ESTIMATE / likely too high | Rustfort: 1/4 per season, one at a time, once a cavern is discovered (5 in 2 years on the real fort). Wiki: "exactly one beast is spawned per each underground region", attracted by wealth. |
+| Forgotten beast arrival rate | ESTIMATE / too high (r8 validation) | Rustfort: 1/4 per season, one at a time, once a cavern is discovered (5 in 2 years on the real fort). Wiki: "exactly one beast is spawned per each underground region", attracted by wealth. [validation] Gordon's gamelog shows 0 forgotten beasts from autumn 275 to summer 280; Rustfort brings 1-5 per 2 years. |
 | Beasts never leave; `TRAPAVOID`; building destroyers | OK | |
 | Venom, breath, webs and syndromes | FIXED r6 (simplified) | No resistance or size dilution, no cure; the durations are estimates. |
 | Fire breath, dragonfire, secretions, contact syndromes on touch | MISSING | No temperature. |
 | **Cave-ins** | FIXED r7 | Wiki Cave-in: tiles not supported along the X, Y and Z axes fall (diagonals, bridges and ramps below give no support). Creatures directly underneath die; the dust knocks out and throws creatures nearby. Rustfort r7 (`caveins.rs`): after digging, channeling or deconstruction, a local flood fill (capped at 4096 tiles) looks for the map bottom or edge; unsupported chunks become open space, leave boulders and a floor below, kill creatures underneath, and the dust knocks out units within 2 tiles.<br>ESTIMATE: falling debris stops on floors; no dust throwing or dust thoughts. |
+
+## [validation] Rules checked against Gordon's history (round 8)
+
+Measured with `examples/validate.rs`, which replays real DF snapshots of the fort; numbers and
+method in `docs/VALIDATION.md`.
+
+| rule | Rustfort | DF (source) | class |
+|---|---|---|---|
+| XP per job | 30 for digging, crafting, cooking, smoothing, engraving; 20 for building | "Most civilian skills give 30 XP per use, plus 30 more if an item is produced that has quality levels"; stonecutting, smoothing, engraving and mining "only 10 XP per use" (w:Experience). DF's real mining gain (50 XP per dwarf-year) equals 782 dug tiles x 10 | WRONG |
+| Skill level cap | the rating stops at 20 (`add_xp`) | "no upper limit" (w:Experience); Gordon's export has ratings up to 29 (96-137 skills above 20) | WRONG |
+| Social and mental skill XP | none (conversations, teaching, reading give no XP) | DF: about 2 000 XP per dwarf-year (concentration, knowledge acquisition, teaching, organization, persuasion...) | MISSING |
+| Sieges vs fort deaths | 0-4 citizens die in 2.18 years | DF: 14 in 2 sieges (r4 -> r5), 73 in 1 siege (r5 -> r6) | WRONG (see Siege size) |
+| Tree growth | trees never grow | +65 trees in 2.18 years | MISSING |
+| Building destroyers vs workshops | workshops are not attacked | 17 of 31 workshops gone after the r6 siege | MISSING |
+| Caravans per year, strange moods, artifacts | 4 / 5 / 2-5 in 2.18 years | 4 / 5 / 5 | OK |
+| Stockpile fill | 25 % of pile tiles hold items (r4 -> r5) | 37-39 % | ESTIMATE (bin volume) |
 
 ## Performance and determinism (round 6, real fort, 2 years with `--standdown`)
 
