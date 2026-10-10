@@ -12,6 +12,9 @@ rayon = "1"
 serde.workspace = true # [saves10] module state in World::sim_state
 serde_json.workspace = true # [saves10]
 
+[features]
+prof = [] # [perf11] cycle counters for hot functions (`rf_sim::prof_report`), off by default
+
 [dev-dependencies]
 rf-import.workspace = true
 serde_json.workspace = true # [combat] siege example reads the round-3 raws

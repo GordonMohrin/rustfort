@@ -7,6 +7,105 @@ use crate::items::Cat;
 use crate::Sim;
 use std::collections::HashMap;
 
+/// [perf11] Cycle counters for hot functions: compiled in only with the `prof` feature
+/// (`cargo run --release -p rf-sim --features prof --example siegeperf`), otherwise every call
+/// is an empty inline function. Counts are inclusive (a nested counter is also in its caller).
+#[allow(dead_code)] // the names and the table size are only read with the `prof` feature
+pub(crate) mod prof {
+    pub const N: usize = 33;
+    pub const NAMES: [&str; N] = [
+        "think worker", "think other", "combat_think", "fighter_think", "soldier_think", "civilian_think", "find_target", "attack",
+        "strike", "threat_scan", "request_path", "decide", "sync_wounds", "solve_paths", "commit_paths", "pursue",
+        "ranged_pursue", "war_wreck_think", "destroyer_think", "raid_think", "try_haul", "haul_scan", "leave_think", "patient_think",
+        "uname", "armor_over", "combat_kill", "wielded", "flow_path", "strike log", "haul no item", "haul no dest",
+        "haul skipped",
+    ];
+    pub const HAUL_NO_ITEM: usize = 30;
+    pub const HAUL_NO_DEST: usize = 31;
+    pub const HAUL_SKIPPED: usize = 32;
+    pub const UNAME: usize = 24;
+    pub const ARMOR_OVER: usize = 25;
+    pub const COMBAT_KILL: usize = 26;
+    pub const WIELDED: usize = 27;
+    pub const FLOW_PATH: usize = 28;
+    pub const STRIKE_LOG: usize = 29;
+    pub const THINK_WORKER: usize = 0;
+    pub const THINK_OTHER: usize = 1;
+    pub const COMBAT_THINK: usize = 2;
+    pub const FIGHTER: usize = 3;
+    pub const SOLDIER: usize = 4;
+    pub const CIVILIAN: usize = 5;
+    pub const FIND_TARGET: usize = 6;
+    pub const ATTACK: usize = 7;
+    pub const STRIKE: usize = 8;
+    pub const THREAT_SCAN: usize = 9;
+    pub const REQUEST_PATH: usize = 10;
+    pub const DECIDE: usize = 11;
+    pub const SYNC_WOUNDS: usize = 12;
+    pub const SOLVE_PATHS: usize = 13;
+    pub const COMMIT_PATHS: usize = 14;
+    pub const PURSUE: usize = 15;
+    pub const RANGED_PURSUE: usize = 16;
+    pub const WRECK: usize = 17;
+    pub const DESTROYER: usize = 18;
+    pub const RAID_THINK: usize = 19;
+    pub const TRY_HAUL: usize = 20;
+    pub const HAUL_SCAN: usize = 21;
+    pub const LEAVE: usize = 22;
+    pub const PATIENT: usize = 23;
+
+    #[cfg(feature = "prof")]
+    mod imp {
+        use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+        #[allow(clippy::declare_interior_mutable_const)]
+        const Z: AtomicU64 = AtomicU64::new(0);
+        static CYC: [AtomicU64; super::N] = [Z; super::N];
+        static CNT: [AtomicU64; super::N] = [Z; super::N];
+        #[inline(always)]
+        pub fn t() -> u64 {
+            // SAFETY: rdtsc has no preconditions on x86_64.
+            unsafe { core::arch::x86_64::_rdtsc() }
+        }
+        #[inline(always)]
+        pub fn add(k: usize, t0: u64) {
+            CYC[k].fetch_add(t().wrapping_sub(t0), Relaxed);
+            CNT[k].fetch_add(1, Relaxed);
+        }
+        pub fn report() -> Vec<(&'static str, u64, u64)> {
+            (0..super::N).map(|k| (super::NAMES[k], CNT[k].swap(0, Relaxed), CYC[k].swap(0, Relaxed))).collect()
+        }
+    }
+    #[cfg(not(feature = "prof"))]
+    mod imp {
+        #[inline(always)]
+        pub fn t() -> u64 {
+            0
+        }
+        #[inline(always)]
+        pub fn add(_k: usize, _t0: u64) {}
+        pub fn report() -> Vec<(&'static str, u64, u64)> {
+            Vec::new()
+        }
+    }
+    pub use imp::{add, report, t};
+
+    /// Counts the cycles until it is dropped (`let _p = prof::Guard::new(prof::STRIKE);`).
+    pub struct Guard(#[allow(dead_code)] usize, #[allow(dead_code)] u64);
+    impl Guard {
+        #[inline(always)]
+        pub fn new(k: usize) -> Guard {
+            Guard(k, t())
+        }
+    }
+    #[cfg(feature = "prof")]
+    impl Drop for Guard {
+        #[inline(always)]
+        fn drop(&mut self) {
+            add(self.0, self.1);
+        }
+    }
+}
+
 const NO_IX: u32 = u32::MAX;
 /// Ids from 0 up to this bound live in the dense table, others (never seen in DF) in a map.
 const DENSE_MAX: i32 = 1 << 26;
@@ -79,6 +178,41 @@ impl std::ops::Index<&i32> for IdMap {
     }
 }
 
+/// [perf11] Haul categories that just failed in a walk component (no waiting item there, or no
+/// destination for the nearest one), skipped by every hauler there for a while.
+///
+/// At 487 citizens about 2 300 haul searches ran per 1000 ticks for 16-29 hauls; each scanned
+/// the whole waiting list (29k cycles) to find the same nothing. An entry dies after
+/// `HAUL_FAIL_TTL` ticks, when an item is added to the haul list (`epoch_haul`) or when the
+/// navigation grid changes (`Nav::version`). Freed pile space, released reservations and
+/// expired path blocks are only seen after the TTL, so a haul can start up to that much later
+/// (DF also queues stockpile hauls periodically, not every tick).
+#[derive(Clone, Default)]
+pub(crate) struct HaulFail {
+    v: Vec<(u32, u32, u64, u64, u64)>, // (component, category mask, until, epoch_haul, nav version)
+}
+
+pub(crate) const HAUL_FAIL_TTL: u64 = 200;
+
+impl HaulFail {
+    /// Categories to skip in component `c` right now.
+    pub(crate) fn mask(&mut self, c: u32, now: u64, epoch: u64, ver: u64) -> u32 {
+        self.v.retain(|e| e.2 > now && e.3 == epoch && e.4 == ver);
+        self.v.iter().find(|e| e.0 == c).map(|e| e.1).unwrap_or(0)
+    }
+
+    /// Remember that the categories in `mask` failed in component `c`.
+    pub(crate) fn add(&mut self, c: u32, mask: u32, now: u64, epoch: u64, ver: u64) {
+        if mask == 0 {
+            return;
+        }
+        match self.v.iter_mut().find(|e| e.0 == c && e.3 == epoch && e.4 == ver) {
+            Some(e) => e.1 |= mask,
+            None => self.v.push((c, mask, now + HAUL_FAIL_TTL, epoch, ver)),
+        }
+    }
+}
+
 /// [perf] Per `haul` entry: the item's category and its cached walk component.
 #[derive(Clone, Copy)]
 pub(crate) struct HaulCache {
@@ -108,6 +242,7 @@ impl Sim {
     /// None, so trying the categories in the order of their best (distance, id) gives exactly
     /// the same item as the repeated scans.
     pub(crate) fn haul_best_per_cat(&mut self, want: u32, up: (usize, usize, usize), c: u32, now: u64) -> [HaulBest; 17] {
+        let _p = prof::Guard::new(prof::HAUL_SCAN); // [perf11]
         let mut best = [NO_HAUL; 17];
         let (ux, uy, uz) = (up.0 as i32, up.1 as i32, up.2 as i32);
         let ver = self.nav.version;

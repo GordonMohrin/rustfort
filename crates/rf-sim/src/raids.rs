@@ -588,7 +588,9 @@ impl Sim {
             if ai.path_i < ai.path.len() && *ai.path.last().unwrap() == camp {
                 self.step(s, now);
             } else if self.combat.f[s].repath_at <= now {
-                self.request_path(s, Goals::one(camp), now);
+                if !self.flow_path(s, camp, 0, true, now) {
+                    self.request_path(s, Goals::one(camp), now); // [perf11] the whole siege shares one flow
+                }
             } else {
                 self.ai[s].wake = self.combat.f[s].repath_at;
             }

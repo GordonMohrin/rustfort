@@ -387,6 +387,11 @@ pub(crate) struct Fighter {
     pub wreck: i32,
     pub wreck_until: u64,
     pub wreck_at: u64,
+    /// [perf11] What `sync_wounds` last wrote into `Unit::wounds` behind the scars: (part,
+    /// layer, flags) per sim wound, the scar count then, and whether that mirror is valid.
+    pub wmirror: Vec<(u16, u16, u16)>,
+    pub wmirror_nsc: u32,
+    pub wmirror_ok: bool,
 }
 
 impl Default for Fighter {
@@ -433,6 +438,9 @@ impl Default for Fighter {
             wreck: -1,
             wreck_until: 0,
             wreck_at: 0,
+            wmirror: Vec::new(), // [perf11]
+            wmirror_nsc: 0,
+            wmirror_ok: false,
         }
     }
 }
@@ -523,6 +531,11 @@ pub(crate) struct Combat {
     pub hospitals: Vec<(i16, i16, i16, i16, i16)>,
     /// [military2] Units carrying another unit right now (cheap check in `move_to`).
     pub carriers: u32,
+    /// [perf11] Shared flows to goal tiles (charging sieges, camps), oldest first; tiles
+    /// settled and paths read off them since the start.
+    pub flows: Vec<crate::path::Flow>,
+    pub flow_nodes: u64,
+    pub flow_paths: u64,
 }
 
 impl Default for Combat {
@@ -544,11 +557,22 @@ impl Default for Combat {
             inv: crate::invasion::Invasions::new(),
             hospitals: Vec::new(),
             carriers: 0,
+            flows: Vec::new(), // [perf11]
+            flow_nodes: 0,
+            flow_paths: 0,
         }
     }
 }
 
 const LOG_MAX: usize = 2000;
+/// [perf11] Flows kept at once, their lifetime in ticks, and the most tiles one request may
+/// settle (A*'s node limit is 400k).
+const FLOW_MAX: usize = 6;
+const FLOW_TTL: u64 = 150;
+const FLOW_CAP: u32 = 250_000;
+/// [perf11] Straight distance from which a chaser starts a new flow (closer: A*, or a flow
+/// that already exists).
+const FLOW_NEW_MIN: i32 = 32;
 /// Body-part contact area = volume^(2/3) * CONTACT_K mm² (estimate).
 const CONTACT_K: f32 = 50.0;
 /// Sight radius of wild hostiles and monsters (estimate) and of fleeing civilians.
@@ -1283,6 +1307,7 @@ impl Sim {
 
     /// Display name for reports: the unit's name, else "the goblin" (with profession for invaders).
     pub(crate) fn uname(&self, s: usize) -> String {
+        let _p = crate::perf::prof::Guard::new(crate::perf::prof::UNAME); // [perf11]
         let u = &self.world.units[self.ai[s].uidx];
         if !u.name.is_empty() {
             return u.name.clone();
@@ -1322,6 +1347,7 @@ impl Sim {
 
     /// Wielded weapon: (item index, weapon template).
     pub(crate) fn wielded(&mut self, s: usize) -> Option<(usize, u16)> {
+        let _p = crate::perf::prof::Guard::new(crate::perf::prof::WIELDED); // [perf11]
         if s == self.def.trap_unit {
             return self.def.trap_weapon; // [defense] weapon traps, falling stones, upright spikes
         }
@@ -1355,6 +1381,7 @@ impl Sim {
 
     /// Armor (item index, layer order, coverage, layer size) worn over zone `z`, outermost first.
     fn armor_over(&self, s: usize, z: u16, out: &mut Vec<(usize, u8, i32)>) {
+        let _p = crate::perf::prof::Guard::new(crate::perf::prof::ARMOR_OVER); // [perf11]
         out.clear();
         let uidx = self.ai[s].uidx;
         for &id in &self.world.units[uidx].inventory {
@@ -1401,6 +1428,7 @@ impl Sim {
 
     /// One attack of slot `a` on slot `d` (adjacent). Returns true if `d` died.
     pub(crate) fn attack(&mut self, a: usize, d: usize, now: u64) -> bool {
+        let _p = crate::perf::prof::Guard::new(crate::perf::prof::ATTACK); // [perf11]
         if self.combat.f[a].hidden {
             self.raid_reveal(a, now); // [military2] an ambusher strikes: revealed
         }
@@ -1531,6 +1559,7 @@ impl Sim {
     /// [ranged] Resolve a blow that landed (melee or projectile): hit location, momentum, armor
     /// and tissue layers, wounds and death. Returns true if `d` died.
     pub(crate) fn strike(&mut self, a: usize, d: usize, now: u64, r: &mut Rng, b: Blow) -> bool {
+        let _p = crate::perf::prof::Guard::new(crate::perf::prof::STRIKE); // [perf11]
         let Blow { atk, armed, wmech, wsize, wquality, wdesc, skill: a_skill, an, dn, momentum } = b; // [ranged]
         // --- hit location
         let db = self.combat.f[d].body as usize;
@@ -1829,6 +1858,7 @@ impl Sim {
             }
         }
         // DF reports the deepest soft-tissue effect of each run, plus bones and organs.
+        let p_log = crate::perf::prof::Guard::new(crate::perf::prof::STRIKE_LOG); // [perf11]
         let mut shown: Vec<&str> = Vec::new();
         for (k, t) in results.iter().enumerate() {
             let soft_next = results.get(k + 1).map(|n| n.starts_with('~')).unwrap_or(false);
@@ -1840,6 +1870,7 @@ impl Sim {
         let res = if shown.is_empty() { "but it has no effect".to_string() } else { shown.join(" and ").replace("and into", "into").replace("and and", "and") };
         let end = if tail.is_empty() { "!".to_string() } else { tail };
         self.combat.log_line(format!("{} {} {} in the {}{}, {}{}", cap(&an), atk.verb3, dn, loc, with, res, if end == "!" { end } else { format!(",{end}") }.replace(",,", ",").replace(", and the severed", " and the severed")));
+        drop(p_log); // [perf11]
         if bruise_brain && died.is_none() {
             let until = now + 100 + r.below(200) as u64;
             self.knock_out(d, until, "has been knocked unconscious");
@@ -1995,6 +2026,66 @@ impl Sim {
 
     /// Mirror the sim's wounds into `Unit::wounds` / `blood` (for the UI, saves and exports).
     pub(crate) fn sync_wounds(&mut self, s: usize) {
+        let _p = crate::perf::prof::Guard::new(crate::perf::prof::SYNC_WOUNDS); // [perf11]
+        if self.sync_wounds_fast(s) {
+            return; // [perf11]
+        }
+        self.sync_wounds_full(s);
+        let f = &mut self.combat.f[s];
+        f.wmirror.clear();
+        f.wmirror.extend(f.wounds.iter().map(|w| (w.part, w.layer, w.flags)));
+        f.wmirror_nsc = f.scars.len() as u32;
+        f.wmirror_ok = f.body != u16::MAX;
+    }
+
+    /// [perf11] `sync_wounds` without rebuilding every entry: when `Unit::wounds` still holds
+    /// what the last sync wrote (scars, then one entry per sim wound), only the entries whose
+    /// (part, layer, flags) changed are rebuilt, new ones appended and the numbers copied. The
+    /// result is exactly the full rebuild's (an entry depends only on its wound), but a blow
+    /// no longer reallocates the strings of all 20-40 wounds of a badly hurt goblin (48k
+    /// cycles per blow in round 10). False if the mirror is not valid (first sync, after a
+    /// load, someone else edited `Unit::wounds`, scars changed): then the full rebuild runs.
+    fn sync_wounds_fast(&mut self, s: usize) -> bool {
+        let uidx = self.ai[s].uidx;
+        let f = &mut self.combat.f[s];
+        let nsc = f.scars.len();
+        let u = &mut self.world.units[uidx];
+        if !f.wmirror_ok || f.body == u16::MAX || f.wmirror_nsc as usize != nsc || u.wounds.len() != nsc + f.wmirror.len() {
+            return false;
+        }
+        let body = &self.combat.bodies[f.body as usize];
+        let old = f.wmirror.len();
+        for (k, w) in f.wounds.iter().enumerate() {
+            let key = (w.part, w.layer, w.flags);
+            if k < old && f.wmirror[k] == key {
+                let e = &mut u.wounds[nsc + k];
+                e.severity = w.sev;
+                e.pain = w.pain;
+                e.bleeding = w.bleed;
+                e.age = w.age;
+                continue;
+            }
+            let e = wound_entry(body, w);
+            if k < old {
+                u.wounds[nsc + k] = e;
+                f.wmirror[k] = key;
+            } else {
+                u.wounds.push(e);
+                f.wmirror.push(key);
+            }
+        }
+        let n = f.wounds.len();
+        if n < old {
+            u.wounds.truncate(nsc + n);
+            f.wmirror.truncate(n);
+        }
+        u.blood = f.blood;
+        u.blood_max = f.blood_max;
+        true
+    }
+
+    /// Rebuild `Unit::wounds` from the scars and all sim wounds (the round-10 `sync_wounds`).
+    fn sync_wounds_full(&mut self, s: usize) {
         let f = &self.combat.f[s];
         let b = f.body;
         let mut out = f.scars.clone();
@@ -2092,6 +2183,7 @@ impl Sim {
 
     /// Kill a unit in combat: drop its gear, leave a corpse, report.
     pub(crate) fn combat_kill(&mut self, s: usize, now: u64, why: &str) {
+        let _p = crate::perf::prof::Guard::new(crate::perf::prof::COMBAT_KILL); // [perf11]
         if self.ai[s].kind == Kind::Dead {
             return;
         }
@@ -2326,6 +2418,7 @@ impl Sim {
 
     /// Think step of a unit under combat control (`Task::Combat`).
     pub(crate) fn combat_think(&mut self, s: usize, now: u64) {
+        let _p = crate::perf::prof::Guard::new(crate::perf::prof::COMBAT_THINK); // [perf11]
         if s >= self.combat.f.len() {
             self.combat_sync_units();
         }
@@ -2346,16 +2439,30 @@ impl Sim {
             self.ai[s].wake = now + 600;
             return;
         }
+        use crate::perf::prof; // [perf11]
         match f.role {
-            Role::Hostile | Role::Fighter => self.fighter_think(s, now),
-            Role::Soldier => self.soldier_think(s, now),
+            Role::Hostile | Role::Fighter => {
+                let _p = prof::Guard::new(prof::FIGHTER);
+                self.fighter_think(s, now)
+            }
+            Role::Soldier => {
+                let _p = prof::Guard::new(prof::SOLDIER);
+                self.soldier_think(s, now)
+            }
             Role::Civilian => {
+                let _p = prof::Guard::new(prof::CIVILIAN);
                 if !self.war_flee_break(s, now) {
                     self.civilian_think(s, now);
                 }
             }
-            Role::Patient => self.patient_think(s, now),
-            Role::Leave => self.leave_think(s, now),
+            Role::Patient => {
+                let _p = prof::Guard::new(prof::PATIENT);
+                self.patient_think(s, now)
+            }
+            Role::Leave => {
+                let _p = prof::Guard::new(prof::LEAVE);
+                self.leave_think(s, now)
+            }
             Role::None => self.release(s, now),
         }
     }
@@ -2380,6 +2487,7 @@ impl Sim {
 
     /// Nearest enemy of a hostile in its walk component (invaders: anywhere; others: in sight).
     pub(crate) fn find_target(&self, s: usize, sight: Option<i32>) -> u32 {
+        let _p = crate::perf::prof::Guard::new(crate::perf::prof::FIND_TARGET); // [perf11]
         let pos = self.ai[s].pos as usize;
         let c = self.nav.comp_near(pos);
         if c == 0 {
@@ -2409,7 +2517,11 @@ impl Sim {
 
     /// Move towards target `t` and attack it when adjacent. False if the target is gone.
     pub(crate) fn pursue(&mut self, s: usize, now: u64) -> bool {
-        if let Some(shot) = self.ranged_pursue(s, now) {
+        let _p = crate::perf::prof::Guard::new(crate::perf::prof::PURSUE); // [perf11]
+        let p0 = crate::perf::prof::t(); // [perf11]
+        let shot = self.ranged_pursue(s, now);
+        crate::perf::prof::add(crate::perf::prof::RANGED_PURSUE, p0); // [perf11]
+        if let Some(shot) = shot {
             return shot; // [ranged] shoot from a distance instead of closing in
         }
         let t = self.combat.f[s].target;
@@ -2455,9 +2567,16 @@ impl Sim {
         // its end may be off by a quarter of the distance (re-planned on the way in, exact
         // within 12 tiles). Before, every step of a fleeing target re-planned every chaser.
         let d = ps.dist(pt);
-        let tol = if d > 12 { d / 4 } else { 1 };
+        // [perf11] The tolerance also grows with the walk still ahead: in a winding trap
+        // corridor the path is several times the straight distance (182 steps for 34 tiles on
+        // r5), and a target moving a few tiles changes such a path only at its end.
+        let rem = ai.path.len().saturating_sub(ai.path_i) as i32;
+        let tol = if d > 12 { d.max(rem) / 4 } else { 1 };
         let end_ok = ai.path_i < ai.path.len() && self.world.pos_of(*ai.path.last().unwrap() as usize).dist(pt) <= tol;
-        if end_ok && (self.combat.f[s].repath_at > now || ps.dist(pt) > 12) {
+        // [perf11] Close by, a path that still ends on or next to the target is followed: the
+        // 20-tick refresh re-planned it unchanged (3 800 of 4 000 goblin searches in the first
+        // 4 000 ticks of the r5 siege were such 2-50 node searches).
+        if end_ok {
             self.step(s, now);
         } else if !end_ok && self.combat.f[s].repath_at > now + 20 {
             // A recent path failure (see `combat_cancel`): wait before searching again.
@@ -2465,20 +2584,92 @@ impl Sim {
         } else {
             self.combat.f[s].repath_at = now + 20;
             let tt = self.ai[t].pos;
-            self.request_path(s, Goals::one(tt), now);
+            // [perf11] Far chasers share flows (a whole siege charging one dwarf); a new flow
+            // only pays off far away (a ball of radius d against one A* of a few hundred nodes).
+            if d <= 12 || !self.flow_path(s, tt, tol, d >= FLOW_NEW_MIN, now) {
+                self.request_path(s, Goals::one(tt), now);
+            }
         }
+        true
+    }
+
+    /// [perf11] Path of unit `s` to `goal` read off a shared flow: one whose goal lies within
+    /// `tol` tiles of `goal`, made less than `FLOW_TTL` ticks ago, or a new one from `goal`.
+    /// Like an A* result, the path is taken next tick. False (the caller asks A* instead) if
+    /// the unit or the goal is not on a walkable tile or the goal is farther than `FLOW_CAP`.
+    pub(crate) fn flow_path(&mut self, s: usize, goal: u32, tol: i32, create: bool, now: u64) -> bool {
+        let _p = crate::perf::prof::Guard::new(crate::perf::prof::FLOW_PATH);
+        let start = self.ai[s].pos;
+        if start == goal || !self.nav.walkable(start as usize) || !self.nav.walkable(goal as usize) {
+            return false;
+        }
+        let rb = self.nav.rebuilds;
+        self.combat.flows.retain(|f| now <= f.made + FLOW_TTL && f.rebuilds == rb);
+        let gp = self.world.pos_of(goal as usize);
+        let mut pick: Option<(i32, usize)> = None;
+        for (k, f) in self.combat.flows.iter().enumerate() {
+            let d = self.world.pos_of(f.goal as usize).dist(gp);
+            if d <= tol && pick.map_or(true, |(bd, _)| d < bd) {
+                pick = Some((d, k));
+            }
+        }
+        let k = match pick {
+            Some((_, k)) => k,
+            None if !create => return false,
+            None => {
+                if self.combat.flows.len() >= FLOW_MAX {
+                    let mut old = 0;
+                    for (k, f) in self.combat.flows.iter().enumerate() {
+                        if f.used < self.combat.flows[old].used {
+                            old = k;
+                        }
+                    }
+                    self.combat.flows.remove(old);
+                }
+                self.combat.flows.push(crate::path::Flow::new(goal, now, rb));
+                self.combat.flows.len() - 1
+            }
+        };
+        let nav = &self.nav;
+        let f = &mut self.combat.flows[k];
+        let before = f.expanded;
+        let ok = f.settle(nav, start, FLOW_CAP);
+        self.combat.flow_nodes += f.expanded - before;
+        if !ok {
+            if f.expanded >= FLOW_CAP as u64 {
+                self.combat.flows.remove(k); // too far or cut off: not worth keeping
+            }
+            return false;
+        }
+        f.used = now;
+        let ai = &mut self.ai[s];
+        if !f.path(start, &mut ai.path) {
+            ai.path.clear();
+            return false;
+        }
+        ai.path_i = 0;
+        ai.req = ai.req.wrapping_add(1);
+        ai.wake = now + 1;
+        self.combat.flow_paths += 1;
         true
     }
 
     /// Hostiles and retaliating creatures.
     fn fighter_think(&mut self, s: usize, now: u64) {
-        if self.combat.f[s].raid != 0 && self.raid_think(s, now) {
+        use crate::perf::prof; // [perf11]
+        let p0 = prof::t();
+        let camped = self.combat.f[s].raid != 0 && self.raid_think(s, now);
+        prof::add(prof::RAID_THINK, p0);
+        if camped {
             return; // [military2] siege camps, thieves, snatchers
         }
         if !self.caverns.powers.is_empty() && self.syndrome_breath(s, now) {
             return; // [audit-combat] forgotten beast breath and webs
         }
-        if self.war_wreck_think(s, now) {
+        let p0 = prof::t();
+        let wrecking = self.war_wreck_think(s, now);
+        prof::add(prof::WRECK, p0);
+        if wrecking {
             return; // [war9] building destroyers wreck workshops, furniture and doors nearby
         }
         if self.pursue(s, now) {
@@ -2491,7 +2682,10 @@ impl Sim {
         }
         // Hostile without target: look for one.
         let invader = self.combat.f[s].siege > 0 || self.world.units[self.ai[s].uidx].invader_civ >= 0;
-        if self.defense_destroyer_think(s, now, invader) {
+        let p0 = prof::t();
+        let smashing = self.defense_destroyer_think(s, now, invader);
+        prof::add(prof::DESTROYER, p0);
+        if smashing {
             return; // [defense] building destroyers smash locked doors in their way
         }
         if now < self.combat.f[s].dormant_until {
@@ -2517,7 +2711,20 @@ impl Sim {
 
     /// Wake fort units near active hostiles: on-duty soldiers engage, civilians flee.
     fn threat_scan(&mut self, now: u64) {
+        let _p = crate::perf::prof::Guard::new(crate::perf::prof::THREAT_SCAN); // [perf11]
         let hs = self.combat.hostiles.clone();
+        // [perf11] Fort workers' positions once per scan, sorted by x: a hostile only looks at
+        // the ones within SIGHT columns (the largest radius below), still in fort order.
+        let mut tpos = vec![(0usize, 0usize, 0usize); self.combat.fort.len()];
+        let mut byx: Vec<(usize, u32)> = Vec::with_capacity(self.combat.fort.len());
+        for (k, &t) in self.combat.fort.iter().enumerate() {
+            if self.ai[t as usize].kind == Kind::Worker {
+                tpos[k] = self.nav.xyz(self.ai[t as usize].pos as usize);
+                byx.push((tpos[k].0, k as u32));
+            }
+        }
+        byx.sort_unstable();
+        let mut near: Vec<u32> = Vec::new();
         for &h in &hs {
             let h = h as usize;
             // [defense] Helpless hostiles (paralyzed or knocked out, e.g. by a trap) are still
@@ -2538,12 +2745,15 @@ impl Sim {
             if hc == 0 {
                 continue;
             }
-            for k in 0..self.combat.fort.len() {
+            let lo = byx.partition_point(|e| e.0 + (SIGHT as usize) < hp.0);
+            let hi = byx.partition_point(|e| e.0 <= hp.0 + SIGHT as usize);
+            near.clear();
+            near.extend(byx[lo..hi].iter().map(|e| e.1));
+            near.sort_unstable();
+            for &k in &near {
+                let k = k as usize;
                 let t = self.combat.fort[k] as usize;
-                if self.ai[t].kind != Kind::Worker {
-                    continue;
-                }
-                let tp = self.nav.xyz(self.ai[t].pos as usize);
+                let tp = tpos[k];
                 let cheb = (hp.0 as i32 - tp.0 as i32).abs().max((hp.1 as i32 - tp.1 as i32).abs());
                 let dz = (hp.2 as i32 - tp.2 as i32).abs();
                 let f = &self.combat.f[t];
@@ -2862,6 +3072,27 @@ impl Sim {
 }
 
 /// Pain at which a creature passes out (estimate: 250 + WILLPOWER/10).
+/// [perf11] The `Unit::wounds` entry of one sim wound, exactly as the full `sync_wounds` plus
+/// `health_sync_names` write it (combat flag names, then treatment flag names).
+fn wound_entry(body: &BodyT, w: &WoundS) -> Wound {
+    let p = &body.parts[w.part as usize];
+    let mut flags: Vec<String> = wf::NAMES.iter().filter(|(bit, _)| w.flags & bit != 0).map(|(_, n)| n.to_string()).collect();
+    for (bit, name) in crate::health::hf::NAMES {
+        if w.flags & bit != 0 {
+            flags.push(name.to_string());
+        }
+    }
+    Wound {
+        body_part: p.token.clone(),
+        layer: if w.layer == u16::MAX { String::new() } else { body.layers[w.layer as usize].tissue.to_ascii_uppercase() },
+        flags,
+        severity: w.sev,
+        pain: w.pain,
+        bleeding: w.bleed,
+        age: w.age,
+    }
+}
+
 fn pain_threshold(willpower: i32) -> i32 {
     250 + willpower / 10
 }
@@ -2955,5 +3186,64 @@ mod tests {
         sim.combat.f[d].wounds.clear();
         sim.run_ticks(400);
         assert_eq!(sim.combat.f[d].role, Role::Soldier, "back on duty after healing");
+    }
+
+    #[test]
+    fn incremental_wound_mirror_matches_full_rebuild() {
+        // [perf11] A long brawl: after every few ticks `Unit::wounds` (kept up by the
+        // incremental `sync_wounds`) must equal a full rebuild, entry by entry.
+        let (mut sim, d, c, _sz) = surface_arena((30, 32), (31, 32));
+        sim.make_hostile(100);
+        let mut checked = 0;
+        for _ in 0..200 {
+            sim.run_ticks(5);
+            for s in [d, c] {
+                if !sim.combat.f[s].wmirror_ok {
+                    continue;
+                }
+                let fast = format!("{:?}", sim.world.units[sim.ai[s].uidx].wounds);
+                sim.sync_wounds_full(s);
+                let full = format!("{:?}", sim.world.units[sim.ai[s].uidx].wounds);
+                assert_eq!(fast, full, "slot {s} at tick {}", sim.ticks);
+                checked += 1;
+            }
+        }
+        assert!(sim.combat.stats.wounds > 0 && checked > 0, "the fight wounded someone ({} wounds, {checked} checks)", sim.combat.stats.wounds);
+    }
+
+    #[test]
+    fn flow_paths_are_as_cheap_as_astar() {
+        // [perf11] Paths read off a shared flow cost exactly what A* finds, for every start.
+        let w = rf_core::World::synthetic(64, 64, 20);
+        let sim = Sim::new(w, 1);
+        let walk: Vec<u32> = (0..sim.nav.flags.len() as u32).filter(|&i| sim.nav.walkable(i as usize)).collect();
+        assert!(walk.len() > 100);
+        let goal = walk[walk.len() / 2];
+        let mut flow = crate::path::Flow::new(goal, 0, sim.nav.rebuilds);
+        let mut astar = crate::path::AStar::new();
+        let (mut out, mut fout) = (Vec::new(), Vec::new());
+        let cost = |p: &[u32]| p.iter().map(|&t| sim.nav.cost(t as usize)).sum::<u32>();
+        let mut compared = 0;
+        for k in (0..walk.len()).step_by(walk.len() / 40) {
+            let start = walk[k];
+            if start == goal || sim.nav.comp_root(start as usize) != sim.nav.comp_root(goal as usize) {
+                continue;
+            }
+            assert!(astar.search(&sim.nav, start, &Goals::one(goal), 400_000, &mut out));
+            assert!(flow.settle(&sim.nav, start, 400_000), "settled");
+            assert!(flow.path(start, &mut fout));
+            assert_eq!(*fout.last().unwrap(), goal);
+            assert_eq!(cost(&fout), cost(&out), "same cost from {start}");
+            assert_eq!(flow.cost_from(start), Some(cost(&out)));
+            let mut prev = start;
+            for &t in &fout {
+                let mut buf = [0u32; crate::nav::MAX_NEIGHBORS];
+                let n = sim.nav.neighbors(prev as usize, &mut buf);
+                assert!(buf[..n].contains(&t), "each step is a legal move");
+                prev = t;
+            }
+            compared += 1;
+        }
+        assert!(compared >= 10);
     }
 }

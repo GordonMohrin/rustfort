@@ -148,6 +148,7 @@ fn main() {
             left -= n;
         }
         let warm_s = tw.elapsed().as_secs_f64();
+        let _ = rf_sim::prof_report(); // [perf11] profile only the measured ticks
         let s0 = sim.stats();
         let mut phases: Vec<(&'static str, f64)> = Vec::new();
         let mut done = 0u64;
@@ -199,6 +200,10 @@ fn main() {
         println!("      us/tick: {}", line.join("  "));
         let line: Vec<String> = per_k.iter().map(|(n, v)| format!("{n} {v:.1}")).collect();
         println!("      per 1k ticks: {}", line.join("  "));
+        // [perf11] With `--features prof`: inclusive cycles per function.
+        for (name, calls, cyc) in rf_sim::prof_report().iter().filter(|e| e.1 > 0) {
+            println!("      prof {name:<16} {calls:>9} calls  {:>9.2} kcyc/call  {:>9.2} kcyc/tick", *cyc as f64 / *calls as f64 / 1e3, *cyc as f64 / done as f64 / 1e3);
+        }
         rows.push(Row { extra, citizens, alive_end, tps, mcyc, phases, per_k });
     }
     println!();
