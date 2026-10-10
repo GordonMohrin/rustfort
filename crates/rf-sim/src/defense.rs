@@ -26,7 +26,8 @@
 //!   animals, merchants or visitors, and never by `TRAPAVOID` creatures (kobolds, ...).
 //!   - Cage trap (needs an empty cage loaded): the creature is caught in the cage and out of
 //!     the fight; the trap must be re-armed with a new cage. Re-arming cage and stone-fall
-//!     traps is a Mechanic job: an idle mechanic fetches a free cage (stone) and loads it.
+//!     traps is a Mechanic job: an idle mechanic fetches a free cage (stone) and loads it
+//!     (not while enemies are within 20 tiles of the trap).
 //!   - Stone-fall trap (needs a stone loaded): the stone falls on the creature and stays on the
 //!     ground; single use.
 //!   - Weapon trap: every weapon/trap component inside attacks (trap components `HITS` times,
@@ -1145,6 +1146,19 @@ impl Sim {
         (best.1 >= 0).then_some(best.1)
     }
 
+    /// A conscious hostile within `r` tiles (and 3 z-levels) of tile `t`.
+    fn hostile_near(&self, t: usize, r: i32, now: u64) -> bool {
+        let (x, y, z) = self.nav.xyz(t);
+        self.combat.hostiles.iter().any(|&h| {
+            let h = h as usize;
+            if self.ai[h].kind == Kind::Dead || !self.can_fight(h, now) {
+                return false;
+            }
+            let (hx, hy, hz) = self.nav.xyz(self.ai[h].pos as usize);
+            (hx as i32 - x as i32).abs().max((hy as i32 - y as i32).abs()) <= r && (hz as i32 - z as i32).abs() <= 3
+        })
+    }
+
     /// A mechanic takes a waiting re-arm job.
     fn try_reload_job(&mut self, s: usize, c: u32, now: u64) -> bool {
         if self.ai[s].labors & crate::labor::MECHANIC == 0 {
@@ -1158,6 +1172,12 @@ impl Sim {
             let Some(&mi) = self.def.by_id.get(&j.trap) else { continue };
             let goals = self.building_goals(j.trap);
             if !goals.as_slice().iter().any(|&t| self.nav.comp_root(t as usize) == c) {
+                continue;
+            }
+            // DF dwarves drop jobs near hostiles ("Interrupted by ..."): no re-arming while
+            // enemies are close to the trap.
+            if self.hostile_near(self.def.mechs[mi].tiles[0] as usize, SIGHT, now) {
+                self.def.reload_jobs[k].retry_at = now + 200;
                 continue;
             }
             let from = self.nav.xyz(self.ai[s].pos as usize);
