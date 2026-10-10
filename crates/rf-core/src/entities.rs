@@ -165,6 +165,8 @@ pub struct ItemFlags {
     pub artifact: bool,
     pub construction: bool,
     pub hidden: bool,
+    /// [construct] Designated for melting at a smelter (DF item flag `melt`).
+    pub melt: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -371,4 +373,38 @@ pub struct Plant {
     pub dead: bool,
     /// Growth/age in ticks (DF `grow_counter`).
     pub grow_counter: i32,
+}
+
+/// [construct] An engraving on a smoothed wall or floor (DF `world.engravings`). The tile keeps
+/// its smooth tiletype; the engraving lies on top and adds to the room's value.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Engraving {
+    pub pos: Pos,
+    /// 0 ordinary .. 5 masterful (DF item quality levels).
+    pub quality: u8,
+    /// Engraved floor (true) or wall (false).
+    pub floor: bool,
+    /// Material palette index of the engraved stone.
+    pub mat: u16,
+    /// Engraver's unit id, -1 if unknown.
+    pub engraver: i32,
+    /// Engraving skill rating of the engraver when it was made.
+    pub skill: i32,
+}
+
+/// [construct] A finished construction (DF `world.constructions`): what was there before and
+/// which item it was built from (DF 53 keeps the item in the world with `flags.construction`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Construction {
+    pub pos: Pos,
+    /// Building material item id, -1 if unknown.
+    pub item: i32,
+    /// DF item type of the material, e.g. `BLOCKS`, `BOULDER`, `WOOD`, `BAR`.
+    pub item_kind: String,
+    pub mat: u16,
+    /// Tiletype id and material of the tile before the construction was built.
+    pub orig_tt: u16,
+    pub orig_mat: u16,
 }

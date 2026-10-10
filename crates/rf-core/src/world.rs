@@ -114,6 +114,12 @@ pub struct World {
     /// Merchant caravans present when the export was made (DF `plotinfo.caravans`).
     #[serde(default)]
     pub caravans: Vec<Caravan>,
+    /// [construct] Engravings on smoothed tiles (DF `world.engravings`).
+    #[serde(default)]
+    pub engravings: Vec<Engraving>,
+    /// [construct] Finished constructions built in the sim (DF `world.constructions`).
+    #[serde(default)]
+    pub constructions: Vec<Construction>,
 }
 
 impl World {
