@@ -39,8 +39,11 @@ pub const MAGIC: &[u8; 8] = b"RFSAVE\x02\n";
 pub const MAGIC_V1: &[u8; 8] = b"RFSAVE\x01\n";
 /// [saves10] Current save format.
 pub const FORMAT: u32 = 2;
-/// [saves10] Rustfort version written into save headers.
-pub const RUSTFORT_VERSION: &str = "0.10.0";
+/// [saves10] Rustfort version written into save headers (the workspace version, e.g. `0.12.1`).
+/// Informational only: loading never checks it. What a file needs is decided by the magic's
+/// format number ([`FORMAT`]), which changes only when the layout does; MessagePack with named
+/// fields keeps older and newer format-2 saves readable.
+pub const RUSTFORT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const EXT: &str = "rfsave";
 /// zstd level: 3 is zstd's default (fast, good ratio).
 const LEVEL: i32 = 3;

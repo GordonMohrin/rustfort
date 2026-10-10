@@ -1,3 +1,7 @@
 * text=auto eol=lf
+# Windows batch files are checked out with CRLF (cmd.exe can misparse LF-only batch files,
+# e.g. GOTO/CALL labels); the repository stores them with LF like everything else.
+*.cmd text eol=crlf
+*.bat text eol=crlf
 *.png binary
 *.bin binary

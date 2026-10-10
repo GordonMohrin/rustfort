@@ -6,10 +6,12 @@
 *.dfexport
 *.sav
 *.png.cache
-# local config (DF install path etc.)
-/rustfort.toml
+# Screenshots (screenshot tests, --screenshot runs); only the README's pictures are tracked
+*.png
+!/docs/screenshots/*.png
 *.bak
 .claude/
+# Saves, settings (saves/settings.json: DF folder, UI scale, ...) and crash logs are local
 /saves/
 saves/
 *.rfsave

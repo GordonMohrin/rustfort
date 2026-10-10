@@ -67,8 +67,15 @@ const _: () = {
 
 impl SimHandle {
     pub fn new(sim: Sim, threaded: bool) -> SimHandle {
-        let worker = if threaded { spawn_worker() } else { None };
+        let worker = if threaded { spawn_worker(None) } else { None };
         SimHandle { sim: Some(Box::new(sim)), worker, crashed: None }
+    }
+
+    /// Threaded, with the worker's crash-rescue saves going to `dir` instead of
+    /// `save::save_dir()` (tests: keeps them out of the source tree, no env vars needed).
+    #[cfg(test)]
+    pub fn with_rescue_dir(sim: Sim, dir: std::path::PathBuf) -> SimHandle {
+        SimHandle { sim: Some(Box::new(sim)), worker: spawn_worker(Some(dir)), crashed: None }
     }
 
     /// Ticks run on a worker thread.
@@ -188,7 +195,8 @@ impl Drop for SimHandle {
     }
 }
 
-fn spawn_worker() -> Option<Worker> {
+/// `rescue_dir`: where a crashing tick's rescue save goes; `None` = `save::save_dir()`.
+fn spawn_worker(rescue_dir: Option<std::path::PathBuf>) -> Option<Worker> {
     let (tx, wrx) = channel::<Msg>();
     let (wtx, rx) = channel::<Back>();
     let give_back = Arc::new(AtomicBool::new(false));
@@ -211,7 +219,7 @@ fn spawn_worker() -> Option<Worker> {
                     // [app10] A panicking tick hands the sim back with the message (the UI shows the
                     // crash dialog); [chaos10] an automatic rescue save of the world is written first.
                     if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| sim.run_ticks(n as u32))) {
-                        let dir = crate::save::save_dir();
+                        let dir = rescue_dir.clone().unwrap_or_else(crate::save::save_dir);
                         match crate::save::save_world_tagged(&sim.world, sim.seed, &dir, "crash") {
                             Ok(info) => eprintln!("rustfort: the simulation crashed; rescue save written to {}", info.path.display()),
                             Err(err) => eprintln!("rustfort: the simulation crashed; rescue save failed: {err}"),
@@ -287,7 +295,8 @@ mod tests {
 
     /// [app10] A panicking tick (here: a unit index the sim does not know any more, forced by
     /// emptying the unit list behind its back) comes back as a crash instead of killing the
-    /// worker; the handle keeps the sim and refuses to tick it again.
+    /// worker; the handle keeps the sim and refuses to tick it again. The worker's rescue save
+    /// goes to a temp folder of this test (not `saves/` in the crate folder).
     #[test]
     fn a_panicking_tick_is_caught_on_both_paths() {
         let broken = || {
@@ -296,9 +305,14 @@ mod tests {
             s.world.units.clear();
             s
         };
-        let mut thr = SimHandle::new(broken(), true);
+        let rescue = std::env::temp_dir().join(format!("rustfort-crash-rescue-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&rescue);
+        let mut thr = SimHandle::with_rescue_dir(broken(), rescue.clone());
         thr.release(200);
         thr.finish();
+        let rescued = std::fs::read_dir(&rescue).map(|d| d.flatten().filter(|e| e.path().extension().is_some_and(|x| x == crate::save::EXT)).count()).unwrap_or(0);
+        let _ = std::fs::remove_dir_all(&rescue);
+        assert_eq!(rescued, usize::from(thr.crash().is_some()), "one rescue save per crash, in the test's folder");
         let mut inline = SimHandle::new(broken(), false);
         let ok = inline.run_guarded(200);
         // The synthetic world must actually panic for this test to mean anything.

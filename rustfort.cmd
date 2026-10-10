@@ -7,7 +7,9 @@ rem Dwarf Fortress is found automatically; otherwise choose its folder in Settin
 rem RUSTFORT_DF_DIR.
 setlocal
 cd /d "%~dp0"
+rem cargo builds into CARGO_TARGET_DIR when that is set, else into target\ here.
 set "EXE=target\release\rustfort.exe"
+if defined CARGO_TARGET_DIR set "EXE=%CARGO_TARGET_DIR%\release\rustfort.exe"
 where cargo >nul 2>nul || set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
 where cargo >nul 2>nul && (
   echo Building Rustfort - only changed parts are compiled ...

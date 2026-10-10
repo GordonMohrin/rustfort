@@ -743,9 +743,10 @@ impl Sim {
                 }
             }
             if !p.plants.is_empty() {
+                // The built-in test fort (`World::synthetic`) has no export at all.
+                let what = if self.world.meta.source == "synthetic" { "built-in test fort" } else { "no plant raws in the export" };
                 p.notes.push(format!(
-                    "no plant raws in the export: {} plant species derived from the material palette (PLANT:X:DRINK = brewable, PLANT:X:SEED = seeds)",
-                    added
+                    "{what}: {added} plant species derived from the material palette (PLANT:X:DRINK = brewable, PLANT:X:SEED = seeds)"
                 ));
             }
         }

@@ -1,8 +1,13 @@
-//! [metal12] Reactions from the save's raws plus DF's hard-coded ashery, glass and kiln jobs.
+//! [metal12] Smelter, kiln, kitchen and soap reactions plus DF's hard-coded ashery and glass
+//! jobs, from a compiled-in table (`REACTIONS`): game-mechanics facts (reagents and products)
+//! as documented on the DF wiki, cross-checked against the installed raws by the test
+//! `reaction_table_matches_raws`. The table is not read from the save or the DF install at
+//! runtime; material properties such as the reaction class FLUX come from the fort's material
+//! palette.
 //!
-//! # DF rules implemented (vanilla raws `reaction_smelter.txt`, `reaction_other.txt`; wiki:
-//! Smelter, Alloy, Steel, Pig iron, Flux, Coke, Kiln, Pottery, Glass furnace, Ashery, Lye,
-//! Potash, Pearlash, Soap maker's workshop, Tallow, Magma forge)
+//! # DF rules implemented (wiki: Smelter, Alloy, Steel, Pig iron, Flux, Coke, Kiln, Pottery,
+//! Glass furnace, Ashery, Lye, Potash, Pearlash, Soap maker's workshop, Tallow, Magma forge; the
+//! reaction keys are those of DF's `reaction_smelter.txt` and `reaction_other.txt`)
 //! - **Coke**: 1 bituminous coal boulder -> 9 coke, 1 lignite -> 5 coke (smelter, fuel).
 //! - **Alloys from bars** (smelter, fuel; reagent 150 = 1 bar): bronze 1 tin + 1 copper -> 2,
 //!   brass 1 zinc + 1 copper -> 2, electrum 1 silver + 1 gold -> 2, billon 1 silver + 1 copper
@@ -104,7 +109,8 @@ pub(crate) struct Reaction {
 
 use Rg::*;
 
-/// The reactions (vanilla raws; checked against the install by `reaction_table_matches_raws`).
+/// The reactions: game-mechanics facts (reagents and products) as documented on the DF wiki,
+/// cross-checked against the installed raws by the test `reaction_table_matches_raws`.
 pub(crate) const REACTIONS: &[Reaction] = &[
     Reaction { key: "BITUMINOUS_COAL_TO_COKE", reagents: &[Stone("COAL_BITUMINOUS")], product: Pr::Bars("COAL:COKE", 9) },
     Reaction { key: "LIGNITE_TO_COKE", reagents: &[Stone("LIGNITE")], product: Pr::Bars("COAL:COKE", 5) },
@@ -565,8 +571,9 @@ impl Sim {
 mod tests {
     use super::*;
 
-    /// The table is a transcription of the vanilla raws: check it against the DF install when
-    /// it is there (`RUSTFORT_DF_DIR` or the default Steam path); skipped otherwise.
+    /// Cross-check the smelter rows of the table (wiki facts) against the installed raws, when a
+    /// DF install is there (`RUSTFORT_DF_DIR`, else Steam's default install folder); skipped
+    /// otherwise.
     #[test]
     fn reaction_table_matches_raws() {
         let dir = std::env::var("RUSTFORT_DF_DIR").unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\Dwarf Fortress".into());

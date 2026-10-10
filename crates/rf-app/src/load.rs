@@ -11,6 +11,10 @@ pub const DF_NOT_FOUND_HINT: &str = "Dwarf Fortress not found: set its folder in
 /// Shown in the game log when no fort export exists yet (first start).
 pub const NO_EXPORT_HINT: &str = "No imported fort yet: this is the built-in test fort. Use Import from Dwarf Fortress.";
 
+/// End of the load warnings that started the built-in test fort instead of an export (the
+/// title screen cuts it off: it shows the error and starts nothing).
+pub const TEST_FORT_SUFFIX: &str = "; started the built-in test fort";
+
 /// Put [`DF_NOT_FOUND_HINT`] in front of the load warnings when DF is not found (play only;
 /// the game log shows the start of the line).
 pub fn add_df_hint(l: &mut Loaded) {
@@ -25,10 +29,11 @@ pub fn add_df_hint(l: &mut Loaded) {
 
 pub struct Loaded {
     pub world: World,
-    /// Human-readable label for the title bar, e.g. `Trussroads (Tileshtulon) - export`.
+    /// Human-readable label for the title bar, e.g. `Trussroads (Tileshtulon) - <world> - 192x192x150`.
     pub label: String,
     pub report: Option<rf_import::ImportReport>,
-    /// Why we fell back to the synthetic world, if we did.
+    /// A note for the game log (and `bench`): why the built-in test fort was started instead of
+    /// an export, or how a save was loaded (converted, from its backup).
     pub warning: Option<String>,
     /// [round 6] A fresh start (export or synthetic, not a save): the settings' population cap
     /// and invasion defaults apply.
@@ -99,13 +104,20 @@ pub fn load_world(export: Option<&Path>, synthetic: bool, size: (u16, u16, u16))
     if synthetic {
         return synth(None);
     }
+    // The lookup of `rf_import::find_export`: --export DIR, else RUSTFORT_EXPORT, else the
+    // newest complete export under export/. A RUSTFORT_EXPORT without an export is skipped
+    // there; say so instead of silently using another fort.
+    let env_export = std::env::var_os("RUSTFORT_EXPORT").filter(|v| !v.is_empty()).map(std::path::PathBuf::from);
+    let bad_env = env_export.filter(|p| export.is_none() && !p.join("manifest.json").exists());
     let Some(dir) = rf_import::find_export(export) else {
-        let w = match export {
-            Some(p) => Some(format!("no export found at {} (no manifest.json); started the built-in test fort", p.display())),
-            None => Some(NO_EXPORT_HINT.to_string()),
+        let w = match (export, &bad_env) {
+            (Some(p), _) => format!("no export found at {} (no manifest.json){TEST_FORT_SUFFIX}", p.display()),
+            (None, Some(p)) => format!("no export at RUSTFORT_EXPORT={} (no manifest.json) and none under export/{TEST_FORT_SUFFIX}", p.display()),
+            (None, None) => NO_EXPORT_HINT.to_string(),
         };
-        return synth(w);
+        return synth(Some(w));
     };
+    let env_note = bad_env.map(|p| format!("no export at RUSTFORT_EXPORT={} (no manifest.json); using the newest export, {}", p.display(), dir.display()));
     match rf_import::load_export(&dir) {
         Ok((mut world, report)) => {
             if world.meta.source.is_empty() {
@@ -121,9 +133,9 @@ pub fn load_world(export: Option<&Path>, synthetic: bool, size: (u16, u16, u16))
                 "{}{} - {} - {}x{}x{}",
                 world.meta.fort_name, native, world.meta.world_name, world.dims.x, world.dims.y, world.dims.z
             );
-            Loaded { world, label, report: Some(report), warning: None, new_game: true, gfx: None, seed: 0 }
+            Loaded { world, label, report: Some(report), warning: env_note, new_game: true, gfx: None, seed: 0 }
         }
-        Err(e) => synth(Some(format!("import of {} failed: {e}; started the built-in test fort", dir.display()))),
+        Err(e) => synth(Some(format!("import of {} failed: {e}{TEST_FORT_SUFFIX}", dir.display()))),
     }
 }
 

@@ -1,6 +1,9 @@
-//! DF thought captions (`df.unit_thought_type` caption attribute from DFHack's df-structures),
-//! the circumstance part of DF's thought sentences, e.g. `Talked` = "talking with a [relation]".
-//! Placeholders in brackets are filled in by `Sim::describe_emotion`.
+//! DF's thought captions, taken from DFHack's df-structures (df.unit_thought_type caption
+//! attribute, zlib license; see THIRD-PARTY-NOTICES.md). The texts originate from Dwarf
+//! Fortress (Bay 12 Games).
+//!
+//! They are the circumstance part of DF's thought sentences, e.g. `Talked` = "talking with a
+//! [relation]". Placeholders in brackets are filled in by `Sim::describe_emotion`.
 
 pub const CAPTIONS: &[(&str, &str)] = &[
     ("Conflict", "while in conflict"),

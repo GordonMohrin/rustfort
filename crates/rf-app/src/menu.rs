@@ -136,7 +136,9 @@ fn spawn_load(t: Target, size: (u16, u16, u16), seed: u64, first_save: bool) -> 
             Target::Export(d) => {
                 let l = crate::load::load_world(Some(d), false, size);
                 if l.report.is_none() {
-                    return Err(l.warning.unwrap_or_else(|| format!("could not import {}", d.display())));
+                    // The title screen shows the error and starts nothing (no test fort).
+                    let e = l.warning.map(|w| w.trim_end_matches(crate::load::TEST_FORT_SUFFIX).to_string());
+                    return Err(e.unwrap_or_else(|| format!("could not import {}", d.display())));
                 }
                 l
             }
@@ -849,16 +851,21 @@ impl Menu {
             self.dir_text.clone()
         };
         let maxc = ((fr.w - 10.0 * s) / (GW * s)) as usize;
-        let tail: String = {
+        // While typing, the end with the caret stays visible; otherwise a long path loses its
+        // middle, so "(auto)", the drive and the DF folder name all show.
+        let fit: String = if self.editing_dir {
             let n = shown.chars().count();
-            if n > maxc {
-                shown.chars().skip(n - maxc).collect()
+            let room = maxc.saturating_sub(1);
+            if n > room {
+                shown.chars().skip(n - room).collect()
             } else {
                 shown.clone()
             }
+        } else {
+            clip_middle(&shown, maxc)
         };
         let caret = if self.editing_dir && (get_time() * 2.0) as i64 % 2 == 0 { "_" } else { "" };
-        self.font.draw(&format!("{tail}{caret}"), fr.x + 5.0 * s, fr.y + 5.0 * s, s, if self.dir_text.is_empty() && !self.editing_dir { col::TEXT_DIM } else { col::TEXT });
+        self.font.draw(&format!("{fit}{caret}"), fr.x + 5.0 * s, fr.y + 5.0 * s, s, if self.dir_text.is_empty() && !self.editing_dir { col::TEXT_DIM } else { col::TEXT });
         if self.ui.clicked(fr) {
             self.editing_dir = true;
         } else if self.ui.lpressed && !self.ui.hovered(fr) {
@@ -881,17 +888,18 @@ impl Menu {
         };
         self.font.draw(st, vx, y, s, sc);
         y += lh;
-        // Which install is in use right now, and where that came from (rf_gfx::df_dir_status).
+        // Which install is in use right now, where that came from (rf_gfx::df_dir_status) and
+        // its full path (wrapped at a folder when it is long).
         let maxc_use = ((c.x + c.w - vx) / (GW * s)) as usize;
         let saved_field = !self.settings.df_dir.trim().is_empty();
         let use_line = match (&in_use, src) {
             (Some(d), "RUSTFORT_DF_DIR") => format!("Source: RUSTFORT_DF_DIR = {} (wins over this field)", crate::importer::plain(d).display()),
-            (Some(_), "settings") => "Source: settings (this field)".to_string(),
-            (Some(d), src) if saved_field => format!("Source: {src}, {} (the folder in this field has no data/vanilla)", crate::importer::plain(d).display()),
-            (Some(_), src) => format!("Source: {src}"),
+            (Some(d), "settings") => format!("Source: settings (this field) - {}", crate::importer::plain(d).display()),
+            (Some(d), src) if saved_field => format!("Source: {src} (the folder in this field has no data/vanilla) - {}", crate::importer::plain(d).display()),
+            (Some(d), src) => format!("Source: {src} - {}", crate::importer::plain(d).display()),
             (None, _) => "Source: not found (checked RUSTFORT_DF_DIR, this field, Steam and the default paths)".to_string(),
         };
-        for l in wrap(&use_line, maxc_use) {
+        for l in wrap_path(&use_line, maxc_use) {
             self.font.draw(&l, vx, y, s, if in_use.is_some() { col::TEXT } else { col::TEXT_BAD });
             y += lh;
         }
@@ -998,6 +1006,68 @@ pub fn wrap(t: &str, n: usize) -> Vec<String> {
         out.push(cur);
     }
     out
+}
+
+/// Like [`wrap`], but a line may also end after a path separator, so a long path can break
+/// after a folder (`...\steamapps\` / `common\Dwarf Fortress`), not only at a space.
+pub fn wrap_path(t: &str, n: usize) -> Vec<String> {
+    let n = n.max(10);
+    // Pieces that end with a break opportunity: "Source: ", "C:\", "Program ", ...
+    let mut pieces: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    for ch in t.chars() {
+        cur.push(ch);
+        if matches!(ch, ' ' | '\\' | '/') {
+            pieces.push(std::mem::take(&mut cur));
+        }
+    }
+    if !cur.is_empty() {
+        pieces.push(cur);
+    }
+    let mut out = Vec::new();
+    let mut line = String::new();
+    for p in pieces {
+        if !line.is_empty() && line.chars().count() + p.trim_end().chars().count() > n {
+            out.push(line.trim_end().to_string());
+            line.clear();
+        }
+        line.push_str(&p);
+        while line.trim_end().chars().count() > n {
+            let head: String = line.chars().take(n).collect();
+            line = line.chars().skip(n).collect();
+            out.push(head);
+        }
+    }
+    if !line.trim_end().is_empty() || out.is_empty() {
+        out.push(line.trim_end().to_string());
+    }
+    out
+}
+
+/// `s` cut to at most `n` characters by replacing its middle with `...`; the end is kept
+/// longer and starts at a path separator when one is near, e.g.
+/// `(auto) C:\Program Files...\common\Dwarf Fortress`.
+pub fn clip_middle(s: &str, n: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let len = chars.len();
+    if len <= n {
+        return s.to_string();
+    }
+    if n < 8 {
+        return clip(s, n);
+    }
+    let keep = n - 3;
+    let tail_n = keep * 3 / 5;
+    let mut tail_start = len - tail_n;
+    if let Some(i) = chars[tail_start..].iter().position(|&c| c == '\\' || c == '/') {
+        if i < tail_n / 2 {
+            tail_start += i;
+        }
+    }
+    let head_n = keep - (len - tail_start);
+    let head: String = chars[..head_n].iter().collect();
+    let tail: String = chars[tail_start..].iter().collect();
+    format!("{head}...{tail}")
 }
 
 /// The title screen loop. Returns the world to play and the frame count so far, or `None`
@@ -1114,5 +1184,19 @@ mod tests {
         let w = wrap(&long, 10);
         assert_eq!(w.len(), 3);
         assert!(w.iter().all(|l| l.chars().count() <= 10));
+    }
+
+    #[test]
+    fn long_paths_wrap_at_folders_and_lose_their_middle() {
+        let p = r"(auto) C:\Program Files (x86)\Steam\steamapps\common\Dwarf Fortress";
+        let w = wrap_path(&format!("Source: Steam - {}", &p[7..]), 40);
+        assert_eq!(w, vec![r"Source: Steam - C:\Program Files (x86)\", r"Steam\steamapps\common\Dwarf Fortress"]);
+        assert_eq!(wrap_path("short", 40), vec!["short"]);
+        assert!(wrap_path(&"y".repeat(25), 10).iter().all(|l| l.chars().count() <= 10));
+        let c = clip_middle(p, 48);
+        assert_eq!(c.chars().count(), 48);
+        assert!(c.starts_with(r"(auto) C:\") && c.ends_with(r"\common\Dwarf Fortress") && c.contains("..."), "{c}");
+        assert_eq!(clip_middle(p, 200), p);
+        assert_eq!(clip_middle("abcdefghij", 5).chars().count(), 5);
     }
 }

@@ -453,7 +453,7 @@ dependencies = [
 
 [[package]]
 name = "rf-app"
-version = "0.1.0"
+version = "0.12.1"
 dependencies = [
  "bincode",
  "crc32fast",
@@ -473,14 +473,14 @@ dependencies = [
 
 [[package]]
 name = "rf-core"
-version = "0.1.0"
+version = "0.12.1"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "rf-gfx"
-version = "0.1.0"
+version = "0.12.1"
 dependencies = [
  "image 0.25.10",
  "rf-core",
@@ -491,7 +491,7 @@ dependencies = [
 
 [[package]]
 name = "rf-import"
-version = "0.1.0"
+version = "0.12.1"
 dependencies = [
  "rf-core",
  "serde",
@@ -500,7 +500,7 @@ dependencies = [
 
 [[package]]
 name = "rf-raws"
-version = "0.1.0"
+version = "0.12.1"
 dependencies = [
  "rf-core",
  "windows",
@@ -508,14 +508,14 @@ dependencies = [
 
 [[package]]
 name = "rf-save-v09"
-version = "0.1.0"
+version = "0.12.1"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "rf-sim"
-version = "0.1.0"
+version = "0.12.1"
 dependencies = [
  "bincode",
  "rayon",
