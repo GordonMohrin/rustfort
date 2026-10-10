@@ -52,7 +52,7 @@ use crate::Sim;
 use rf_core::{BuildingJob, Item, ItemFlags, MaterialInfo, NO_MAT};
 use std::collections::HashMap;
 mod saves10; // [saves10] save/load of melt fractions and counters
-pub(crate) mod reactions; // [metal12] raw reactions (alloys, steel, coke, kiln, ashery, soap)
+pub(crate) mod reactions; // [metal12] reaction table (alloys, steel, coke, kiln, ashery, soap)
 
 pub const F_CHARCOAL: u8 = 1;
 pub const F_ASH: u8 = 2;
@@ -74,7 +74,8 @@ pub const F_ENGRAVE: u8 = 17;
 pub const F_WOOD_ITEM: u8 = 18;
 /// [audit-eco] "Melt a metal object" at a smelter (wiki "Melt item").
 pub const F_MELT: u8 = 19;
-/// [metal12] A reaction of `reactions::REACTIONS` (raw reactions and hard-coded ashery/glass jobs).
+/// [metal12] A reaction of `reactions::REACTIONS` (DF's raw-defined reactions and its hard-coded
+/// ashery/glass jobs, as game-mechanics facts).
 pub const F_REACT: u8 = 20;
 
 /// [metal12] The plain workshop whose jobs a magma workshop runs (wiki: magma smelter, magma

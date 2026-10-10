@@ -261,10 +261,9 @@ Expected: `True`. The build itself ends with a line starting with `Finished` and
 If the environment variable `CARGO_TARGET_DIR` is set (check with `echo $env:CARGO_TARGET_DIR`),
 Cargo builds into that folder instead, and the program is
 `%CARGO_TARGET_DIR%\release\rustfort.exe` (check with
-`Test-Path "$env:CARGO_TARGET_DIR\release\rustfort.exe"`). `rustfort.cmd` only looks in
-`target\release`. In that case start the program from the Rustfort folder with
-`& "$env:CARGO_TARGET_DIR\release\rustfort.exe"`, or clear the variable for this terminal
-session (`Remove-Item Env:CARGO_TARGET_DIR`) and build again.
+`Test-Path "$env:CARGO_TARGET_DIR\release\rustfort.exe"`). `rustfort.cmd` looks there by
+itself; to start the program directly, use `& "$env:CARGO_TARGET_DIR\release\rustfort.exe"`
+from the Rustfort folder.
 
 **If it fails:** see [Troubleshooting](#troubleshooting). The most common cause is
 `link.exe not found` (step 3 is missing).
@@ -334,8 +333,9 @@ what it found:
 - "Dwarf Fortress not found (graphics, font and import need it)."
 - "No Dwarf Fortress there (no data/vanilla folder)."
 
-A second line names the folder in use and where it came from, e.g. "Source: Steam" or
-"Source: RUSTFORT_DF_DIR = <path> (wins over this field)".
+A second line names where the folder came from and shows its full path, e.g.
+"Source: Steam - <path>" or "Source: RUSTFORT_DF_DIR = <path> (wins over this field)". Long
+paths are shortened in the middle inside the field itself.
 
 **Back** (or Esc) saves the settings to `saves\settings.json`.
 
