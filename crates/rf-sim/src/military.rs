@@ -10,6 +10,10 @@
 //!   spot and holds it, Train trains in place (skill experience every 100 ticks). They engage
 //!   every hostile that comes within sight (20 tiles) on their own. They still drink, eat and
 //!   sleep (off duty for that moment).
+//! - Soldiers also spot **lurking** (dormant) hostiles in sight (round 6). **Wounded** soldiers
+//!   (broken bones, heavy damage, wounds the doctors can treat) go to bed like other patients
+//!   when no able enemy is within 3 tiles, and return to duty once healed; resting soldiers are
+//!   not pulled out of bed by hostiles in sight.
 //! - **Civilians** flee from hostiles within 12 tiles; when cornered they fight back. With a
 //!   civilian alert they go to the alert burrow and stay there.
 //!
@@ -133,7 +137,11 @@ impl Sim {
         let role = self.combat.f[s].role;
         if role == Role::None {
             let f = &self.combat.f[s];
-            let new = if f.duty != Duty::None {
+            // Wounded soldiers rest like everybody else until healed or treated (wiki Health
+            // care: injured dwarves "go (or are brought) to recuperate"), then resume duty.
+            let new = if f.duty != Duty::None && self.needs_rest(s) && !self.fight_nearby(s) {
+                Role::Patient
+            } else if f.duty != Duty::None {
                 Role::Soldier
             } else if self.combat.mil.alert.is_some() && !self.combat.mil.alert_list.is_empty() {
                 Role::Civilian
@@ -199,6 +207,14 @@ impl Sim {
         if self.needs_break(s) {
             self.ai[s].task = Task::Idle;
             self.decide(s, now);
+            return;
+        }
+        // Wounded and no enemy at hand: go to bed (a Kill order still waits for recovery).
+        if self.needs_rest(s) && !self.fight_nearby(s) {
+            self.combat.f[s].role = Role::Patient;
+            self.combat.f[s].target = NONE;
+            self.combat.stats.soldiers_rested += 1;
+            self.patient_think(s, now);
             return;
         }
         if let Duty::Kill(uid) = duty {

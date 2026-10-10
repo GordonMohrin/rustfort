@@ -161,6 +161,10 @@ fn main() {
         cs.invaders_left
     );
     println!("defense: {st:?}");
+    println!("combat: {:?}", sim.combat_stats()); // [audit-combat]
+    for b in sim.cavern_report().beasts {
+        println!("  beast {} power {:?} killed {:?}", b.name, b.power, b.killed);
+    }
     println!("deaths by cause: {deaths:?}");
     println!("warnings: {warnings:?}");
     let log = sim.combat_log();

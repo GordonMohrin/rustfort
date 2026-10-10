@@ -89,6 +89,7 @@ mod rng;
 pub mod moods; // [moods]
 pub mod health; // [moods]
 pub mod caverns; // [moods]
+mod syndrome; // [audit-combat] forgotten beast venom, breath and webs
 pub use caverns::{BeastRecord, CavernLayer, CavernReport}; // [moods]
 pub use health::{HealthInfo, HealthReport}; // [moods]
 pub use moods::{MoodKind, MoodRecord}; // [moods]

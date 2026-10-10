@@ -17,6 +17,7 @@
 //!   situational awareness), a building destroyer that avoids traps (`[TRAPAVOID]`), that hunts
 //!   the fort wherever it can walk. It never leaves. Announcement in DF's style:
 //!   "The Forgotten Beast X has come! A great four-legged creature made of granite. ...".
+//! - Special attacks (venom, breath, webs) and their syndromes: see `syndrome.rs` (round 6).
 //!
 //! # Estimates (not on the wiki)
 //! - Cavern detection: regions of at least 1 500 such tiles; regions overlapping in z are
@@ -86,6 +87,8 @@ pub struct BeastRecord {
     pub arrived: u64,
     pub layer: String,
     pub killed: Option<u64>,
+    /// [audit-combat] Special attack, e.g. "deadly dust (paralysis)"; empty for none.
+    pub power: String,
 }
 
 /// Report for tests, benches and the UI.
@@ -110,6 +113,9 @@ pub(crate) struct Caverns {
     pub beast_slots: Vec<u32>,
     pub off: bool,
     beast_n: u32,
+    /// [audit-combat] (beast slot, special attack) and units dying of respiratory failure.
+    pub powers: Vec<(u32, crate::syndrome::BeastPower)>,
+    pub doomed: Vec<(u32, u64)>,
 }
 
 impl Sim {
@@ -117,6 +123,9 @@ impl Sim {
     pub(crate) fn caverns_tick(&mut self, now: u64) {
         if self.caverns.off {
             return;
+        }
+        if now % 100 == 11 && !self.caverns.doomed.is_empty() {
+            self.syndrome_tick(now); // [audit-combat]
         }
         if !self.caverns.detected {
             self.caverns.detected = true;
@@ -395,6 +404,8 @@ impl Sim {
             return;
         }
         self.caverns.beast_slots.retain(|&s| (s as usize) < self.ai.len() && self.ai[s as usize].kind != Kind::Dead);
+        let ai = &self.ai;
+        self.caverns.powers.retain(|p| (p.0 as usize) < ai.len() && ai[p.0 as usize].kind != Kind::Dead); // [audit-combat]
         if !self.caverns.beast_slots.is_empty() {
             return;
         }
@@ -514,7 +525,14 @@ impl Sim {
         };
         let feature = ["It has a long tail", "It has large horns", "It has a pair of wings", "It has a stout tail", "It has a long, twisted beak", "It has a gaunt appearance"][r.below(6) as usize];
         let made = if mat_name.is_empty() { String::new() } else { format!(" made of {mat_name}") };
-        let desc = format!("A {adj} {shape}{made}. {feature}.");
+        // [audit-combat] Special attack (own RNG stream: the beast itself stays as before).
+        let mut rp = Rng::for_unit(self.seed, 10, now, 0x5D0 + self.caverns.beast_n as u64);
+        let power = crate::syndrome::roll_power(&mut rp, quad);
+        let beware = power.as_ref().map(|p| format!(" {}", Sim::beware_text(p))).unwrap_or_default();
+        if let Some(p) = power {
+            self.caverns.powers.push((s as u32, p));
+        }
+        let desc = format!("A {adj} {shape}{made}. {feature}.{beware}");
         let text = format!("The Forgotten Beast {name} has come! {desc}");
         let p = self.world.pos_of(tile as usize);
         self.announce(now, text.clone(), Some(p), AnnouncementKind::Warning);
@@ -528,6 +546,7 @@ impl Sim {
             arrived: now,
             layer: label,
             killed: None,
+            power: self.beast_power_label(s).unwrap_or_default(),
         });
         Some(id)
     }
