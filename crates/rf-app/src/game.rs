@@ -1745,7 +1745,7 @@ fn initial_camera(w: &World) -> Camera {
 
 /// The game loop. [round 6] Returns how it ended and the (possibly changed) settings;
 /// `start_frame` continues the frame count of the title screen (scripted screenshot runs).
-pub async fn run(args: Args, loaded: Loaded, settings: crate::settings::Settings, start_frame: u32) -> (Exit, crate::settings::Settings) {
+pub async fn run(args: Args, loaded: Loaded, settings: crate::settings::Settings, start_frame: u32) -> (Exit, crate::settings::Settings, u32) {
     let mut g = Game::new(&args, loaded, settings);
     let mut frame: u32 = start_frame;
     let mut deadline = Instant::now();
@@ -1762,7 +1762,7 @@ pub async fn run(args: Args, loaded: Loaded, settings: crate::settings::Settings
             Ok(sc) => Some(sc),
             Err(e) => {
                 eprintln!("{e}");
-                return (Exit::Quit, g.settings.clone());
+                return (Exit::Quit, g.settings.clone(), frame);
             }
         },
         (None, Some(m)) => crate::script::Script::parse("", Some(m)).ok(),
@@ -1870,7 +1870,7 @@ pub async fn run(args: Args, loaded: Loaded, settings: crate::settings::Settings
         next_frame().await;
     };
     let settings = g.settings.clone();
-    (exit, settings)
+    (exit, settings, frame)
 }
 
 /// [round 6] `shots/a.png` + frame 300 -> `shots/a-f300.png`.

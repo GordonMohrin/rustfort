@@ -106,7 +106,7 @@ fn describe(t: &Target) -> String {
     match t {
         Target::Save(s) => {
             let auto = if crate::save::is_autosave(&s.path) { "autosave" } else { "saved" };
-            format!("{}, {} ({auto} {})", s.header.fort, s.header.date, crate::save::fmt_unix(s.header.saved_unix))
+            format!("{}, {} ({auto} {})", s.header.fort, s.header.date, crate::save::fmt_unix(s.header.saved_unix).trim_end_matches(" UTC"))
         }
         Target::Export(d) => match rf_import::load_manifest(d) {
             Ok(m) => format!("{}, year {} (DF export {})", m.fort_name, m.year, d.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default()),
@@ -367,7 +367,8 @@ impl Menu {
         let bx = px + 16.0 * s;
         let mut by = py + 12.0 * s;
         let ct = self.continue_target.clone();
-        let cont = text_button(&mut self.ui, &self.font, Rect::new(bx, by, bw, bh), "Continue", if ct.is_some() { BtnState::Normal } else { BtnState::Disabled });
+        let enter = self.input.fired.contains(&KeyCode::Enter) || self.input.fired.contains(&KeyCode::KpEnter);
+        let cont = text_button(&mut self.ui, &self.font, Rect::new(bx, by, bw, bh), "Continue", if ct.is_some() { BtnState::Normal } else { BtnState::Disabled }) || enter;
         by += bh + 3.0 * s;
         if let Some(t) = &ct {
             let d = clip(&describe(t), (bw / (GW * s)) as usize);
@@ -988,6 +989,8 @@ pub async fn app_main(mut args: Args, mut settings: Settings, mut initial: Optio
             None => {
                 let (r, st) = run_menu(&args, settings, frame).await;
                 settings = st;
+                // `--menu-page` (and `import:go`) only for the first title screen.
+                args.menu_page = None;
                 match r {
                     Some((l, f)) => {
                         frame = f;
@@ -1004,14 +1007,19 @@ pub async fn app_main(mut args: Args, mut settings: Settings, mut initial: Optio
         if !args.gfps_cli {
             args.gfps = settings.gfps;
         }
-        let (exit, st) = crate::game::run(args.clone(), loaded, settings, frame).await;
+        let (exit, st, f) = crate::game::run(args.clone(), loaded, settings, frame).await;
         settings = st;
-        if exit == Exit::Quit || args.screenshot.is_some() {
+        if exit == Exit::Quit {
             return;
         }
-        // Back to the title screen; a fresh frame count (scripts are for the first run only).
-        args.script = None;
-        frame = 0;
+        if args.screenshot.is_some() {
+            // Scripted runs go on through the title screen with the same frame count.
+            frame = f;
+        } else {
+            // Back to the title screen; a fresh frame count (scripts are for the first run only).
+            args.script = None;
+            frame = 0;
+        }
     }
 }
 

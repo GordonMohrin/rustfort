@@ -4,8 +4,9 @@
 |---|---|
 | `rustfort-export.lua` | Exports the loaded fort into `export/<fort>/` (format: `docs/EXPORT_FORMAT.md`). Read-only. |
 | `rustfort-verify.lua` | Spot-checks an export against the live game: sampled tiles, 3 citizens, counts, work orders, workshop job counts, farm crops, mods; since round 4 also door/bridge/lever/trap states and links, noble positions, entity relations, settings. Read-only. |
+| `rustfort-probe.lua` | (round 6) Prints one JSON line about the loaded game (map loaded, fortress mode, fort and world names, year, citizens, paused, DFHack version) for Rustfort's "Import from Dwarf Fortress" dialog. Read-only, takes about 0.1 s. |
 
-Both scripts are for DF 53.16 with DFHack 53.16-r2.
+The scripts are for DF 53.16 with DFHack 53.16-r2. Rustfort's title screen runs the probe and the exporter itself ("Import from Dwarf Fortress", see `crates/rf-app/README.md`); the commands below are for running them by hand.
 
 ## Safety
 
