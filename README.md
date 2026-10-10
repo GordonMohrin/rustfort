@@ -17,6 +17,8 @@ real game, and the simulation is deterministic. It stays fast with hundreds of d
 itself slows down sharply. The game window looks and plays like Steam DF: Premium sprites from
 your install, the mouse-driven interface, and your own key bindings.
 
+![Rustfort running the reference fort: dining hall, stockpiles and workshops on one z-level](docs/screenshots/fort.png)
+
 ## Install with an AI assistant
 
 Paste this into a coding agent (Claude Code, Codex, Cursor, ...) on the computer where Dwarf
@@ -67,10 +69,23 @@ when it fails, and has a best-effort Linux section.
 The exporter only reads from DF. It never pauses the game or writes to it, and a large fort
 takes about a minute. Each import goes to its own folder, `export/<fort>-<timestamp>/`, and
 **Continue** finds it afterwards. Without an import, Rustfort can start a small synthetic test
-fort (**New synthetic fort (dev)**). To export by hand, see [docs/INSTALL.md](docs/INSTALL.md) and
+fort (**Built-in test fort**). To export by hand, see [docs/INSTALL.md](docs/INSTALL.md) and
 [tools/dfhack/README.md](tools/dfhack/README.md).
 
 The DFHack scripts were developed against DF 53.16 with DFHack 53.16-r2.
+
+## Screenshots
+
+| | |
+|---|---|
+| ![Unit sheet with the dwarf's layered portrait, needs, stress and top skills](docs/screenshots/unit-sheet.png) | ![Military side panel: squads, defense burrow button, members with their worn equipment](docs/screenshots/military.png) |
+| Unit sheet with the portrait, needs, stress and skills | Military side panel with the "Everyone into the burrow!" button and each member's equipment |
+| ![A goblin siege with 140 hostiles at the reference fort's gate](docs/screenshots/siege.png) | ![The reference fort's main level at a lower zoom](docs/screenshots/fort.png) |
+| The siege that ended the reference fort in DF, continued in Rustfort | The main level of the reference fort |
+
+The screenshots show Dwarf Fortress's Premium graphics, which Rustfort reads from the player's
+own installation at runtime. The graphics belong to Bay 12 Games and Kitfox Games and are not
+part of this repository's license.
 
 ## Features
 
@@ -122,17 +137,34 @@ mode, Legends or deep world history.
 
 ## Performance
 
-| scenario (headless, 6-core desktop CPU) | speed |
-|---|---|
-| 2 game years of the reference fort (87 citizens, 192x192x150 tiles), `bench --ticks 806400 --standdown` | about 8 s, about 100,000 ticks/s |
-| the same map with 487 citizens | about 38,000 ticks/s |
-| real DF at 1x speed | 100 ticks/s (with a raised FPS cap, DF reached about 100-220 ticks/s on the reference fort) |
+Rustfort against Dwarf Fortress on **the same fort and the same PC** (6-core Ryzen 5 5600X,
+Windows 11). DF numbers are from DF 53.16 (Steam) with DFHack, measured while the reference fort
+was played; Rustfort numbers are from v0.12 on that fort's DFHack exports. One tick is one DF
+simulation step; a game year is 403,200 ticks. DF at "normal" speed is capped at 100 ticks/s.
+
+| scenario | Dwarf Fortress | Rustfort | faster by |
+|---|---|---|---|
+| everyday fort life: about 90 citizens, about 330 units, 17,000 items, 192x192x150 tiles | about **170** ticks/s (FPS cap raised to 500) | about **100,000** ticks/s headless; **66,000-90,000** ticks/s in the game window at "max" | about 400-600x |
+| the siege that ended the fort: about 140 goblins, 330-390 active units | about **29** ticks/s (DF's FPS counter: 4-60) | about **51,000** ticks/s headless | about 1,700x |
+| a forced 133-goblin siege, heaviest fighting (472 units) | not measured | **15,000-33,000** ticks/s headless | |
+| the same fort with 400 extra citizens (487 citizens, 748 units) | not measured | about **38,000** ticks/s headless | |
+| one game year of everyday fort life | about **40 minutes** | about **4 seconds** headless, about 5-6 s in the game window | |
+
+How it was measured:
+
+- DF: the calendar advance per wall-clock second while the game ran (see
+  [docs/VALIDATION.md](docs/VALIDATION.md) and [tools/dfhack/README.md](tools/dfhack/README.md)).
+  DFHack and the player's automation scripts were running, as in normal play.
+- Rustfort headless: `rustfort.exe bench --ticks 806400 --standdown` (2 game years in about 8 s)
+  and `bench --export <siege export> --ticks 40320`; the 487-citizen row is
+  `cargo run -p rf-sim --release --example scale -- --extra 400`, the forced siege
+  `--example siegeperf -- --standdown`.
+- Rustfort in the game window: `--speed max` with the Premium graphics drawn at 60-75 FPS; the
+  simulation runs on its own thread. The lower figure includes the pauses for pop-up
+  announcements.
 
 The *reference fort* is the DF fort used to develop and validate Rustfort: Trussroads (native
 name Tileshtulon) in the world Zilirróth. Its exports are not distributed.
-
-In the game window the simulation runs on its own thread. At "max" speed it reaches about
-60,000 ticks/s on the reference fort while drawing at 60 FPS.
 
 ## Controls
 

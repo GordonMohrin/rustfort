@@ -228,27 +228,35 @@ the window's close button).
 
 On the title screen:
 
-- If Rustfort found Dwarf Fortress, you see DF's own title art and logo, "RUSTFORT", and the
-  buttons **Continue**, **Load game**, **Import from Dwarf Fortress**, **New synthetic fort
-  (dev)**, **Settings** and **Quit**.
-- **Continue** is greyed out on the first start. It becomes active once you have a save or a
-  fort export.
+- If Rustfort found Dwarf Fortress, you see DF's title background art from your install, the
+  "RUSTFORT" title, and the buttons **Continue**, **Load game**, **Import from Dwarf Fortress**,
+  **Built-in test fort**, **Settings** and **Quit**.
+- **Continue** is greyed out on the first start, with the hint "No imported fort yet: start DF
+  with DFHack, load your fort, then choose Import from Dwarf Fortress. Or try the built-in test
+  fort." It becomes active once you have a save or a fort export.
 - If Rustfort did **not** find Dwarf Fortress, the title screen says **"Dwarf Fortress not
-  found"** and points you to Settings or `RUSTFORT_DF_DIR`. It is a plain text screen without
-  DF's art, because the graphics, the font and the raws all come from the DF folder.
+  found"** with the line "Set its folder in Settings, or in the RUSTFORT_DF_DIR environment
+  variable. A Steam install is found automatically." The footer says "DF: not found - see
+  Settings". It is a plain text screen without DF's art, because the graphics, the font and the
+  raws all come from the DF folder.
 
-To set the DF folder, open **Settings**. The *DF folder* field takes a click, typing, or Ctrl+V
-to paste. **Default** goes back to automatic detection. A line under the field says what it
-found:
+To set the DF folder, open **Settings**. The *Dwarf Fortress folder* field takes a click,
+typing, or Ctrl+V to paste; while it is empty it shows the detected folder as "(auto) <path>".
+**Auto** clears the field and goes back to automatic detection. A line under the field says
+what it found:
 
 - "Found Dwarf Fortress and DFHack."
 - "Found Dwarf Fortress, but no DFHack (needed for the import)."
-- "No Dwarf Fortress there (graphics, font and import need it)."
+- "Dwarf Fortress not found (graphics, font and import need it)."
+- "No Dwarf Fortress there (no data/vanilla folder)."
+
+A second line names the folder in use and where it came from, e.g. "Source: Steam" or
+"Source: RUSTFORT_DF_DIR = <path> (wins over this field)".
 
 **Back** (or Esc) saves the settings to `saves\settings.json`.
 
-To look around without your own fort, choose **New synthetic fort (dev)**: a small generated
-test fort. The headless tools (`rustfort.exe bench` and the examples) fall back to the same
+To look around without your own fort, choose **Built-in test fort**: a small generated test
+fort. The headless tools (`rustfort.exe bench` and the examples) fall back to the same
 test fort when they find no fort export, and they say so.
 
 In the game: **Space** pauses and resumes, **1**-**4** set the speed, the **mouse wheel** changes

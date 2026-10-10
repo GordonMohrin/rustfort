@@ -1,6 +1,6 @@
 //! [round 6] The title screen, like DF's: Continue, Load game, Import from Dwarf Fortress,
 //! Built-in test fort, Settings, Quit. It uses DF's own title art from the install
-//! (`data/art/title_background.png`, `df_logo.png`) when it is there; without a DF install it
+//! (`data/art/title_background.png`; DF's logo is not drawn) when it is there; without a DF install it
 //! is text only and says "Dwarf Fortress not found".
 //!
 //! `app_main` runs the title screen and the game in turn: "Save and return to title" in the
@@ -60,7 +60,6 @@ pub struct Menu {
     input: InputFrame,
     binds: Bindings,
     bg: Option<Texture2D>,
-    logo: Option<Texture2D>,
     art_dir: PathBuf,
     pub page: Page,
     saves: Vec<SaveInfo>,
@@ -166,7 +165,6 @@ impl Menu {
             input: InputFrame::default(),
             binds: Bindings::load(&df),
             bg: load_tex(&art.join("title_background.png")),
-            logo: load_tex(&art.join("df_logo.png")),
             art_dir: art,
             page: Page::Title,
             saves: Vec::new(),
@@ -251,7 +249,6 @@ impl Menu {
             self.font = Font::load(&rf_gfx::df_dir());
             self.binds = Bindings::load(&rf_gfx::df_dir());
             self.bg = load_tex(&art.join("title_background.png"));
-            self.logo = load_tex(&art.join("df_logo.png"));
             self.art_dir = art;
         }
     }
@@ -347,27 +344,22 @@ impl Menu {
         }
     }
 
-    /// Logo and the "Rustfort" line; returns the y below them.
-    fn draw_logo(&mut self, top: f32, max_w: f32) -> f32 {
+    /// The "Rustfort" title and its tagline; returns the y below them. DF's own logo is not
+    /// drawn: Rustfort is a fan re-implementation, not Dwarf Fortress itself.
+    fn draw_logo(&mut self, top: f32, _max_w: f32) -> f32 {
         let s = self.scale();
         let sw = screen_width();
-        let mut y = top;
-        if let Some(t) = &self.logo {
-            let w = max_w.min(t.width() * s * 0.8);
-            let h = w * t.height() / t.width();
-            draw_texture_ex(t, (sw - w) / 2.0, y, WHITE, DrawTextureParams { dest_size: Some(vec2(w, h)), ..Default::default() });
-            y += h + 4.0 * s;
-        } else {
-            let t = "DWARF FORTRESS";
-            self.font.draw_shadow(t, (sw - self.font.width(t, 4.0 * s)) / 2.0, y, 4.0 * s, col::TEXT_HI);
-            y += 4.0 * GH * s + 10.0 * s;
-        }
-        let sub = "R U S T F O R T";
-        let k = 2.5 * s;
-        self.font.draw_shadow(sub, (sw - self.font.width(sub, k)) / 2.0, y, k, Color::from_rgba(235, 200, 120, 255));
-        y += GH * k + 6.0 * s;
+        let mut y = top + 24.0 * s;
+        let title = "R U S T F O R T";
+        let k = 6.0 * s;
+        self.font.draw_shadow(title, (sw - self.font.width(title, k)) / 2.0, y, k, Color::from_rgba(235, 200, 120, 255));
+        y += GH * k + 14.0 * s;
         let tag = "your fortress, continued - fast";
-        self.font.draw_shadow(tag, (sw - self.font.width(tag, s)) / 2.0, y, s, Color::from_rgba(200, 190, 170, 255));
+        let k = 1.5 * s;
+        self.font.draw_shadow(tag, (sw - self.font.width(tag, k)) / 2.0, y, k, Color::from_rgba(220, 210, 190, 255));
+        y += GH * k + 6.0 * s;
+        let note = "a fan-made re-implementation of Dwarf Fortress, not affiliated with Bay 12 Games or Kitfox Games";
+        self.font.draw_shadow(note, (sw - self.font.width(note, s)) / 2.0, y, s, Color::from_rgba(180, 170, 150, 255));
         y + GH * s + 18.0 * s
     }
 

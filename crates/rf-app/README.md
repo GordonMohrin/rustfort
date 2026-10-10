@@ -29,7 +29,7 @@ Flatpak path), else common default paths; a folder counts when it has `data/vani
 DF install the app does not fail: the title screen says "Dwarf Fortress not found" and points
 to Settings or `RUSTFORT_DF_DIR` (as plain text, without DF's art and font). From the install
 the app reads, at runtime only:
-- `data/art/title_background.png` and `df_logo.png` for the title screen;
+- `data/art/title_background.png` for the title screen (DF's logo is not drawn);
 - `data/art/curses_640x300.png`, the 8x12 CP437 font of the Steam UI;
 - keybindings, from `%APPDATA%\Bay 12 Games\Dwarf Fortress\prefs\interface.txt`, then
   `<install>\prefs\interface.txt`, then `data\init\interface.txt`;
@@ -48,13 +48,13 @@ and text logo without them), "RUSTFORT" below, and a column of buttons:
   `[auto]`) and *DF exports* (every `export/*/manifest.json`: fort, year, when exported,
   folder). A click loads it.
 - **Import from Dwarf Fortress** (`importer.rs`): see below.
-- **New synthetic fort (dev)**: `World::synthetic` with `--size` (default 96x96x40).
+- **Built-in test fort**: `World::synthetic` with `--size` (default 96x96x40).
 - **Settings**: interface size (50-300 %), frame cap (used without vsync), vsync (next start),
   autosave interval (off / week / month / season / year) and how many autosaves to keep,
   population cap and invasions for new imports ("From the save", or a value: applied when a
   fresh export or synthetic fort starts, never to a loaded save), the DF folder (a text field:
-  click, type or Ctrl+V, "Default" = automatic detection; it says whether DF and DFHack are
-  there), and "Show them again" for the first-time hints. Back (or Esc) writes the file.
+  click, type or Ctrl+V, "Auto" = automatic detection; it says whether DF and DFHack are
+  there and where the folder came from: `rf_raws::df_dir_status()`), and "Show them again" for the first-time hints. Back (or Esc) writes the file.
 - **Quit**.
 
 Loading runs in a thread (world, then the Premium graphics), with a progress bar on the title

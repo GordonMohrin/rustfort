@@ -1160,7 +1160,7 @@ mod tests {
         g.prepare(&w);
         let mut out = Vec::new();
         g.terrain(&w, fl, &mut out);
-        // Gordon's style C ("Maeander"): procedural overlays on generated pages.
+        // Engraving style C ("Maeander", picked in playtesting): procedural overlays on generated pages.
         let base = |p: u16| g.pages[p as usize].token.split('#').next().unwrap().to_string();
         let is_eng = |p: u16| base(p).starts_with("RUSTFORT_ENGRAVING_");
         assert!(out.iter().any(|s| is_eng(s.page)), "procedural engraving overlay on the floor expected: {out:?}");

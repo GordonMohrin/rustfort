@@ -22,6 +22,14 @@ No simulation changes; the 2-year bench on r5 keeps its state hash.
   case>` and prints where.
 - **Documentation for new users:** English README, [docs/INSTALL.md](docs/INSTALL.md) (also
   for AI coding agents), [CONTRIBUTING.md](CONTRIBUTING.md), licensed MIT OR Apache-2.0.
+- **Title screen:** "RUSTFORT" with the note that it is a fan re-implementation, not affiliated
+  with Bay 12 Games or Kitfox Games; DF's own logo is no longer drawn (the background art still
+  comes from the DF install). "New synthetic fort (dev)" is now **Built-in test fort**.
+- **README:** screenshots and a speed comparison with DF on the same fort and PC (everyday life
+  about 170 ticks/s in DF vs about 100,000 headless and 66,000-90,000 in the game window; the
+  final siege 29 vs about 51,000).
+- **Personal references removed** from code comments, tests and docs (the reference fort is
+  just "the reference fort" now).
 
 ## v0.12.0 (2026-10-10): minecarts and hauling routes, metallurgy and craft chains, siege engines, climbing invaders
 
