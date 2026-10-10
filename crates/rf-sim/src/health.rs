@@ -314,6 +314,12 @@ impl Sim {
         self.combat.f.get(s).map(|f| matches!(f.sub, Sub::Resting(_))).unwrap_or(false)
     }
 
+    /// Can be treated now: resting (in bed or on the floor) or lying unconscious where it fell
+    /// (no "Recover wounded" carrying yet, so doctors treat such patients on the spot).
+    fn in_care(&self, s: usize) -> bool {
+        self.resting_in_bed(s) || self.combat.f.get(s).map(|f| f.uncon_until > self.ticks).unwrap_or(false)
+    }
+
     /// Cannot walk: a broken bone in a leg or foot, or unconscious.
     pub(crate) fn health_bedridden(&self, s: usize) -> bool {
         let Some(f) = self.combat.f.get(s) else { return false };
@@ -441,7 +447,7 @@ impl Sim {
                     continue;
                 }
             }
-            if citizen && self.resting_in_bed(s) {
+            if citizen && self.in_care(s) {
                 if let Some(t) = self.next_treat(s, true) {
                     want.push((s32, t));
                 }
@@ -454,7 +460,7 @@ impl Sim {
             let p = j.patient as usize;
             let still = want.iter().any(|&(s, t)| s == j.patient && t == j.treat);
             let alive = p < self.ai.len() && self.ai[p].kind != Kind::Dead;
-            if alive && (still || j.doctor != NONE && self.resting_in_bed(p)) {
+            if alive && (still || j.doctor != NONE && self.in_care(p)) {
                 k += 1;
                 continue;
             }

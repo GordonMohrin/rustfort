@@ -12,20 +12,24 @@
 //!   sea; no vermin, no civilized races, no demons, no aquatic-only castes). Large predators
 //!   (`LARGE_PREDATOR`) arrive hostile and attack what they see; the others wander.
 //! - **Forgotten beasts** come out of the caverns once one is discovered: a procedurally made
-//!   megabeast (quadruped or humanoid body, a material from flesh to rock, gem or metal),
+//!   megabeast (quadruped or humanoid body, flesh or a shell of rock, gem or metal),
 //!   DF's natural skills (6 in wrestling, biting, grasping/stance strikes, melee, dodging,
 //!   situational awareness), a building destroyer that avoids traps (`[TRAPAVOID]`), that hunts
 //!   the fort wherever it can walk. It never leaves. Announcement in DF's style:
 //!   "The Forgotten Beast X has come! A great four-legged creature made of granite. ...".
 //!
 //! # Estimates (not on the wiki)
-//! - Cavern detection: regions of at least 1 500 such tiles; magma sea if over 10 % magma.
+//! - Cavern detection: regions of at least 1 500 such tiles; regions overlapping in z are
+//!   one layer; a layer with a region over 10 % magma is the magma sea.
 //! - Wildlife: checked at each season start; a discovered layer below 25 living wild
 //!   creatures gets a group with chance 2/3; group size 1-2 for predators, 2-5 otherwise.
 //! - Forgotten beasts: checked at each season start once a cavern is discovered, chance 1/4,
 //!   one at a time (DF: one per underground region, attracted by wealth and noise).
-//!   Body size 1-5 million cm³, strength/toughness 1 500-2 500; a beast "made of" rock, gem or
-//!   metal gets that material's mechanics on all tissues and does not bleed or feel pain.
+//!   Body size 1-5 million cm³, strength/toughness 1 500-2 500. A beast "made of" rock, gem or
+//!   metal gets that material on the outermost tissue layer of every body part (no bleeding or
+//!   pain there); the inner tissues stay flesh. With the material on all tissues the sim's wound
+//!   model could not kill it at all (no bleeding, head too big to sever), and 77 soldiers
+//!   fought it until they died of thirst.
 
 use crate::rng::Rng;
 use crate::{AnnouncementKind, Kind, Sim};
@@ -226,6 +230,31 @@ impl Sim {
             found.push(CavernLayer { id: 0, z_min: zmin, z_max: zmax, tiles: size, revealed, magma: magma * 10 > size, breached: false, spawn });
         }
         found.sort_by_key(|l| (std::cmp::Reverse(l.z_max), l.z_min));
+        // Regions whose z ranges overlap or touch are one layer (a cavern is split by pillars
+        // and fungus forests into several flood-fill regions); open space next to the magma sea
+        // belongs to it.
+        let mut merged: Vec<CavernLayer> = Vec::new();
+        for l in found.drain(..) {
+            match merged.iter_mut().find(|m| l.z_max + 1 >= m.z_min && l.z_min <= m.z_max + 1) {
+                Some(m) => {
+                    m.z_min = m.z_min.min(l.z_min);
+                    m.z_max = m.z_max.max(l.z_max);
+                    m.tiles += l.tiles;
+                    m.revealed += l.revealed;
+                    m.magma |= l.magma;
+                    m.spawn.extend(l.spawn);
+                }
+                None => merged.push(l),
+            }
+        }
+        for m in merged.iter_mut() {
+            m.spawn.sort_unstable();
+            if m.spawn.len() > MAX_SPAWN_TILES {
+                let step = m.spawn.len() as f64 / MAX_SPAWN_TILES as f64;
+                m.spawn = (0..MAX_SPAWN_TILES).map(|k| m.spawn[(k as f64 * step) as usize]).collect();
+            }
+        }
+        let mut found = merged;
         let mut k = 0u8;
         for l in found.iter_mut() {
             if !l.magma {
@@ -456,13 +485,16 @@ impl Sim {
             let mech = self.mech_of_mat(mat);
             let b = self.combat.f[s].body as usize;
             if let Some(body) = self.combat.bodies.get_mut(b) {
-                for l in body.layers.iter_mut() {
-                    l.mech = mech;
-                    l.vascular = 0;
-                    l.pain = 0;
-                    l.arteries = false;
+                // The outermost tissue of every part is the beast's material (see the estimates).
+                let firsts: Vec<usize> = body.parts.iter().filter(|p| p.nl > 0).map(|p| p.l0 as usize).collect();
+                for l0 in firsts {
+                    if let Some(l) = body.layers.get_mut(l0) {
+                        l.mech = mech;
+                        l.vascular = 0;
+                        l.pain = 0;
+                        l.arteries = false;
+                    }
                 }
-                body.nopain = true;
             }
         }
         self.caverns.beast_slots.push(s as u32);
