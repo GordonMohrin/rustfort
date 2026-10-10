@@ -1,5 +1,42 @@
 # Rustfort: progress
 
+## v0.5.0 (2026-10-10): fast at high population, constructions, moods, health, caverns
+
+**New since 0.4:**
+- **Performance at high population** on your real map, with N cloned citizens (`examples/scale.rs`), behavior bit-identical (same state hashes):
+
+  | citizens | before | after |
+  |---|---|---|
+  | 88 | 48k | 82k ticks/s |
+  | 188 | 32k | 57k ticks/s |
+  | 488 | 14k | 32-35k ticks/s |
+
+  The gains come from a single-pass haul search, a dense item id table, cached walk components, a bucket-queue A* with packed nodes, and exact magic division.
+
+  Real DF manages about 150-220 ticks/s on this fort. **Rustfort at 488 dwarves is still about 150x faster.**
+- **Constructions:**
+  - wall, floor, ramp, stairs, fortification and track from blocks, boulders or logs, with DF placement and support rules; deconstruction
+  - smoothing, engraving (quality by skill), carving fortifications and tracks
+  - traffic designations feeding A*; item forbid, claim and dump with garbage dump zones
+- **Strange moods:** wiki trigger and lottery, fey/secretive/possessed/fell/macabre, workshop claim, material demands, artifacts (named, valuable, skill to Legendary), insanity on failure.
+- **Health care:** diagnosis, suturing, bone setting, surgery and dressing by doctors with supplies; infections.
+- **Caverns** are detected (3 layers plus the magma sea on your map), with seasonal cave wildlife and **forgotten beasts** arriving from breached caverns.
+- **UI:**
+  - Build > Constructions with blueprint preview
+  - Smooth, Traffic and Items tools with DF overlays and markers; per-item forbid/dump
+  - Mood tab and treatment status
+  - raised bridges drawn raised; caged creatures drawn inside their cages
+  - a playtest pass with about 10 visual fixes
+- **Fix:** soldiers leave a fight when thirst or hunger reach the cancel threshold.
+- **Result:** 2 years on the r4 fort with `--standdown`: 88 -> 90 citizens, 1 siege and 5 forgotten beasts beaten, about 70k ticks/s.
+
+**Known gaps (next):**
+- No melt jobs; carve-fortification/track designations are not saved; engravings are not drawn and not counted in room value yet.
+- No cave-ins; no syndromes or breath attacks on beasts.
+- No recover-wounded carrying, hospital stocking, or casts/traction.
+- A* still dominates at low population (HPA* would change paths, so the state hash would change).
+- Production census still does full scans every 100 ticks.
+
 ## v0.4.0 (2026-10-10): defenses, ranged combat, society, fluids
 
 **New since 0.3:**

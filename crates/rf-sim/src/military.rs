@@ -182,6 +182,17 @@ impl Sim {
             self.release(s, now);
             return;
         }
+        // A soldier leaves even an ongoing fight once thirst/hunger reach DF's job-cancel
+        // thresholds; otherwise an unkillable foe makes the whole squad die of thirst.
+        let critical = {
+            let ai = &self.ai[s];
+            ai.thirst >= crate::needs::THIRST_CANCEL || ai.hunger >= crate::needs::HUNGER_CANCEL
+        };
+        if critical && self.needs_break(s) {
+            self.ai[s].task = Task::Idle;
+            self.decide(s, now);
+            return;
+        }
         if self.pursue(s, now) {
             return;
         }
