@@ -41,8 +41,13 @@
 //!   zone's owner. Sleeping in the own bedroom -> `BedroomQuality` by room value; in a bed
 //!   outside any room -> `LackBedroom`; without a bed -> `SleptFloor` / `SleptRoughFloor` /
 //!   `SleptGrass` / `SleptDirt` / `SleptRocks` / `SleptIce` by the ground.
-//! - **Room value tiers** (wiki "Room"): 1 modest, 100 ordinary, 250 decent, 500 fine,
-//!   1 000 great, 1 500 grand, 2 500 royal (below 1: meager).
+//! - **Room value tiers** (wiki "Room", "Bedroom"): 0 meager, 100 modest, 250 (plain)
+//!   quarters / dining room, 500 decent, 1 000 fine, 1 500 great, 2 500 grand, 10 000 royal.
+//! - **Room value** (wiki "Room", "Engraving"): the furniture inside the zone plus the value of
+//!   its floor tiles and of the walls bordering it. A tile is worth origin multiplier x material
+//!   value plus its engraving (10 x material value x quality multiplier 1/2/3/4/5/12); floors:
+//!   rough 1, smooth 4, constructed 7; walls: rough 1, smooth 5, constructed 9. Smoothing,
+//!   engraving and constructions re-value the rooms (at most once per social pass).
 //! - **Other thoughts**: good meals/drinks by quality, `SameFood`/`SameBooze`, `AteRotten`,
 //!   `LackWell` (water from a natural source), `Thirsty`/`Hungry`/`Drowsy` and worse,
 //!   `SatisfiedAtWork`, `ImproveSkill`, `Talked`, `Prayer`, `AdmireBuilding` /
@@ -419,6 +424,8 @@ pub(crate) struct Room {
     kind: RoomKind,
     owner: i32,
     value: i32,
+    /// Furniture part of `value` (the rest is floor, walls and engravings).
+    furn_value: i32,
     min_tier: i32,
     x1: i16,
     y1: i16,
@@ -444,7 +451,7 @@ impl Room {
     /// reported for this room (`min_tier`, from exported thoughts: DF's room value also counts
     /// engravings, which the export does not have).
     fn tier(&self) -> i32 {
-        const T: [i32; 7] = [1, 100, 250, 500, 1000, 1500, 2500];
+        const T: [i32; 7] = [100, 250, 500, 1000, 1500, 2500, 10_000];
         (T.iter().filter(|&&t| self.value >= t).count() as i32).max(self.min_tier)
     }
 }
@@ -555,6 +562,8 @@ pub(crate) struct Social {
     zone_kind: Vec<RoomKind>,
     zone_key: (usize, usize),
     known_buildings: usize,
+    /// `Sim::detail_epoch` the room values were computed at.
+    known_detail: u64,
     last_month: i32,
     months: Vec<MonthStress>,
     counts: BTreeMap<&'static str, u64>,
@@ -677,6 +686,7 @@ impl Sim {
                         kind,
                         owner: b.owner,
                         value: 0,
+                        furn_value: 0,
                         min_tier: 0,
                         x1: b.x1,
                         y1: b.y1,
@@ -711,7 +721,7 @@ impl Sim {
             let mut room = NONE;
             for (k, r) in sc.rooms.iter_mut().enumerate() {
                 if r.contains(b.center) {
-                    r.value += v;
+                    r.furn_value += v;
                     if room == NONE || r.kind == RoomKind::Bedroom || r.kind == RoomKind::Dining {
                         room = k as u32;
                     }
@@ -719,6 +729,8 @@ impl Sim {
             }
             sc.furn.push(Furn { pos: b.center, bid: b.id, quality: q, room, kind });
         }
+        self.social_revalue_rooms();
+        let sc = &mut self.social;
         // Room levels DF reported (thought severity = tier - 2, i.e. 0 = ordinary): an owner's
         // last BedroomQuality for its bedroom, the most common DiningQuality for dining rooms.
         let mut dining: BTreeMap<i32, u32> = BTreeMap::new();
@@ -765,6 +777,87 @@ impl Sim {
         for s in &mut sc.psy {
             s.seat = NONE;
         }
+    }
+
+    /// Room value = furniture + floor tiles + bordering walls + engravings (wiki "Room",
+    /// "Engraving"). Called after a rebuild and when smoothing/engraving/constructions changed
+    /// tiles.
+    pub(crate) fn social_revalue_rooms(&mut self) {
+        self.social.known_detail = self.detail_epoch();
+        let mut rooms = std::mem::take(&mut self.social.rooms);
+        let mut walls: Vec<u32> = Vec::new();
+        for r in &mut rooms {
+            let mut v = r.furn_value;
+            walls.clear();
+            for y in r.y1..=r.y2 {
+                for x in r.x1..=r.x2 {
+                    let p = Pos::new(x, y, r.z);
+                    if !r.contains(p) {
+                        continue;
+                    }
+                    let Some(i) = self.world.idx(p) else { continue };
+                    v += self.room_tile_value(i);
+                    for (dx, dy) in [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)] {
+                        let q = Pos::new(x + dx, y + dy, r.z);
+                        if r.contains(q) {
+                            continue;
+                        }
+                        if let Some(j) = self.world.idx(q) {
+                            if matches!(self.world.shape(q), Shape::Wall | Shape::Fortification) {
+                                walls.push(j as u32);
+                            }
+                        }
+                    }
+                }
+            }
+            walls.sort_unstable();
+            walls.dedup();
+            for &j in &walls {
+                v += self.room_tile_value(j as usize);
+            }
+            r.value = v;
+        }
+        self.social.rooms = rooms;
+    }
+
+    /// Value of one floor or wall tile for room value (wiki "Engraving": origin multiplier x
+    /// material value + engraving bonus).
+    fn room_tile_value(&self, i: usize) -> i32 {
+        let t = self.world.tiles[i];
+        let info = self.world.tiletypes.get(t.tt);
+        let built = info.material == TtMaterial::Construction;
+        let smooth = info.special == TtSpecial::Smooth || info.special == TtSpecial::Track;
+        let mult = match info.shape {
+            Shape::Floor => {
+                if built {
+                    7
+                } else if smooth {
+                    4
+                } else {
+                    1
+                }
+            }
+            Shape::Wall | Shape::Fortification => {
+                if built {
+                    9
+                } else if smooth {
+                    5
+                } else {
+                    1
+                }
+            }
+            _ => return 0,
+        };
+        let mv = self.world.material(t.mat).map(|m| m.value).unwrap_or(0).max(0);
+        let engr = self.engraving_at(self.world.pos_of(i)).map(|e| self.engraving_value(e)).unwrap_or(0);
+        mult * mv + engr
+    }
+
+    /// Value of a civzone as the social simulation sees it (furniture, tiles, engravings), or
+    /// `None` if the zone is not a room kind (bedroom, dining hall, meeting area, ...).
+    pub fn room_value(&self, zone_id: i32) -> Option<i32> {
+        let b = self.world.buildings.iter().find(|b| b.id == zone_id && b.kind == "Civzone")?;
+        self.social.rooms.iter().find(|r| r.x1 == b.x1 && r.y1 == b.y1 && r.x2 == b.x2 && r.y2 == b.y2 && r.z == b.z).map(|r| r.value)
     }
 
     /// Make sure every unit slot has social state (new units, first call).
@@ -1156,6 +1249,8 @@ impl Sim {
         }
         if self.world.buildings.len() != self.social.known_buildings {
             self.social_rebuild_rooms();
+        } else if self.detail_epoch() != self.social.known_detail {
+            self.social_revalue_rooms();
         }
         self.social_ensure();
         let phase = (now / SOCIAL_PERIOD) % WHEEL;

@@ -317,6 +317,8 @@ impl Sim {
                 self.world.tiles[i].flags &= !mask;
             }
         }
+        // Room values count engravings, which are indexed only now.
+        self.social_revalue_rooms();
     }
 
     fn cx_ensure(&mut self, s: usize) {
@@ -1650,6 +1652,13 @@ impl Sim {
     pub fn engraving_value(&self, e: &Engraving) -> i32 {
         let mv = self.world.material(e.mat).map(|m| m.value).unwrap_or(1).max(1);
         10 * mv * QUALITY_MULT[e.quality.min(5) as usize]
+    }
+
+    /// Changes with every finished construction, removal, smoothing, engraving or carving
+    /// (room values are recomputed when it moves).
+    pub(crate) fn detail_epoch(&self) -> u64 {
+        let st = &self.cx.stats;
+        st.built + st.removed + st.smoothed + st.engraved + st.fortifications + st.tracks
     }
 
     /// Engraving at a tile, if any.
