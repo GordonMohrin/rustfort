@@ -288,6 +288,11 @@ pub const RECIPES: &[Recipe] = &[
     r!("MakeCheese", "", "CHEESE", "", "", "Make cheese", "Farmers", labor::MAKE_CHEESE, "CHEESEMAKING", Input::Ind(crate::animals::F_CHEESE), 300, 1, "cheese"),
     r!("SpinThread", "", "THREAD", "", "", "Spin thread", "Farmers", labor::SPINNER, "SPINNING", Input::Ind(crate::animals::F_SPIN), 300, 1, "thread"),
     r!("PrepareRawFish", "", "FISH", "", "", "Prepare raw fish", "Fishery", labor::CLEAN_FISH, "PROCESSFISH", Input::Ind(crate::animals::F_CLEAN_FISH), 200, 1, "fish"),
+    // [siege12] Siege workshop: engine parts and ballista arrows from wood (wiki Siege workshop).
+    r!("ConstructBallistaParts", "", "BALLISTAPARTS", "", "wood", "Construct ballista parts", "Siege", labor::SIEGECRAFT, "SIEGECRAFT", Input::Log, 500, 1, "ballista parts"),
+    r!("ConstructCatapultParts", "", "CATAPULTPARTS", "", "wood", "Construct catapult parts", "Siege", labor::SIEGECRAFT, "SIEGECRAFT", Input::Log, 500, 1, "catapult parts"),
+    r!("ConstructBoltThrowerParts", "", "BOLT_THROWER_PARTS", "", "wood", "Construct bolt thrower parts", "Siege", labor::SIEGECRAFT, "SIEGECRAFT", Input::Log, 500, 1, "bolt thrower parts"),
+    r!("AssembleSiegeAmmo", "", "SIEGEAMMO", "ITEM_SIEGEAMMO_BALLISTA", "wood", "Make wooden ballista arrow", "Siege", labor::SIEGECRAFT, "SIEGECRAFT", Input::Log, 400, 5, "ballista arrow"),
 ];
 
 /// Job kinds counted in the report (`jobs_done`): recipes first, then these.
@@ -504,6 +509,7 @@ fn part_of(part: &str) -> u8 {
 
 fn furniture_kind(kind: &str) -> bool {
     matches!(kind, "BED" | "TABLE" | "CHAIR" | "DOOR" | "CABINET" | "BOX" | "COFFIN" | "ARMORSTAND" | "WEAPONRACK" | "STATUE" | "SLAB")
+        || matches!(kind, "BALLISTAPARTS" | "CATAPULTPARTS" | "BOLT_THROWER_PARTS") // [siege12] siege engine parts
 }
 
 /// Building kind -> furniture item kind it is built from.
@@ -1068,6 +1074,12 @@ impl Sim {
             }
             "FarmPlot" => (vec![], labor::PLANT),
             "Well" => (vec![(pc::BLOCKS, ""), (pc::BUCKET, ""), (pc::CHAIN, ""), (pc::MECHANISM, "")], labor::MASON),
+            // [siege12] siege engines from their parts (wiki Siege engine), built by siege engineers.
+            "SiegeEngine" => match b.subtype.as_str() {
+                "Catapult" => (vec![(pc::FURNITURE, "CATAPULTPARTS"); 3], labor::SIEGECRAFT),
+                "BoltThrower" => (vec![(pc::FURNITURE, "BOLT_THROWER_PARTS"), (pc::MECHANISM, ""), (pc::CHAIN, "")], labor::SIEGECRAFT),
+                _ => (vec![(pc::FURNITURE, "BALLISTAPARTS"); 3], labor::SIEGECRAFT),
+            },
             k => match furniture_item_for(k) {
                 Some(item) => (vec![(pc::FURNITURE, item)], labor::HAUL_FURNITURE),
                 None => return None,
@@ -1930,7 +1942,10 @@ impl Sim {
                     });
                 }
                 pc::BOULDER => self.find_items(site, c, now, 1, &mut found, |sim, i| matches!(sim.imeta[i].pc, pc::BOULDER | pc::BLOCKS)),
-                pc::FURNITURE => self.find_items(site, c, now, 1, &mut found, |sim, i| sim.imeta[i].pc == pc::FURNITURE && sim.world.items[i].kind == kind),
+                pc::FURNITURE => {
+                    let taken = wj.items; // [siege12] several parts of one kind (3 ballista parts)
+                    self.find_items(site, c, now, 1, &mut found, |sim, i| sim.imeta[i].pc == pc::FURNITURE && sim.world.items[i].kind == kind && !taken[..k].contains(&sim.world.items[i].id))
+                }
                 cl => self.find_items(site, c, now, 1, &mut found, |sim, i| sim.imeta[i].pc == cl),
             }
             match found.first() {

@@ -430,6 +430,8 @@ enum Task {
     PullLever(i32),
     /// [gaps10] Walk to a screw pump (building id) and work it by hand.
     OperatePump(i32),
+    /// [siege12] Siege operator at engine (building id): fetch ammo, load, fire.
+    SiegeOperate(i32),
     /// [defense] Re-arm trap `.0` with cage/stone item `.1` (fetch, carry, load).
     LoadTrap(i32, i32),
     GoJob(u32),
@@ -1178,6 +1180,7 @@ impl Sim {
             (Kind::Dead, _) => ("Dead", None),
             (_, Task::PullLever(b)) => ("Pull the Lever", self.world.building(b).map(|b| b.center)), // [defense]
             (_, Task::OperatePump(b)) => ("Operate Pump", self.world.building(b).map(|b| b.center)), // [gaps10]
+            (_, Task::SiegeOperate(b)) => (self.engines_caption(b), self.world.building(b).map(|b| b.center)), // [siege12]
             (_, Task::LoadTrap(b, _)) => (self.defense_reload_caption(b), self.world.building(b).map(|b| b.center)), // [defense]
             (_, Task::Idle) | (_, Task::Wander) => ("No Job", None),
             (_, Task::GoJob(j)) | (_, Task::Job(j)) => {
@@ -1853,6 +1856,9 @@ impl Sim {
         if self.power_try_job(s, now) {
             return; // [gaps10] Operate pump by hand
         }
+        if self.engines_try_job(s, now) {
+            return; // [siege12] load and fire siege engines
+        }
         if restricted && self.alert_burial(s, now) {
             return; // [military2] burial inside the alert burrow
         }
@@ -1948,6 +1954,7 @@ impl Sim {
         match task {
             Task::PullLever(b) => self.defense_arrive_lever(s, b, now), // [defense]
             Task::OperatePump(b) => self.power_arrive_pump(s, b, now), // [gaps10]
+            Task::SiegeOperate(b) => self.engines_arrive(s, b, now), // [siege12]
             Task::LoadTrap(b, it) => self.defense_arrive_reload(s, b, it, now), // [defense]
             Task::Wander | Task::Idle => {
                 self.ai[s].task = Task::Idle;
@@ -2102,6 +2109,7 @@ impl Sim {
         match task {
             Task::PullLever(b) => self.defense_cancel_lever(s, b), // [defense]
             Task::OperatePump(b) => self.power_cancel_pump(s, b), // [gaps10]
+            Task::SiegeOperate(b) => self.engines_cancel(s, b), // [siege12]
             Task::LoadTrap(b, it) => self.defense_cancel_reload(s, b, it), // [defense]
             Task::GoJob(j) | Task::Job(j) => {
                 if self.jobs[j as usize].claimed == s as u32 {

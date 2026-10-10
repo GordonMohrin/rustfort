@@ -133,6 +133,7 @@ fn main() {
         sim.state_hash()
     );
     println!("  us/tick: {}", line.join("  "));
+    println!("  climbing: {:?}", sim.climb_stats()); // [siege12]
     // [perf11] With `--features prof`: inclusive cycles per function (per call and per tick).
     let prof = rf_sim::prof_report();
     if !prof.is_empty() {

@@ -1319,8 +1319,8 @@ impl Sim {
         if !self.combat.hostiles.is_empty() {
             self.climb_tick(now); // [siege12] climbing net, climbers losing their hold
         }
-        if !self.combat.engines.list.is_empty() {
-            self.engines_tick(now); // [siege12] siege engines
+        if now % 100 == 37 {
+            self.engines_tick(now); // [siege12] register built siege engines
         }
     }
 

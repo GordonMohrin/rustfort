@@ -63,6 +63,8 @@ pub struct ClimbStats {
     pub net_roots: u64,
     /// Highest level climbers reached above their start (debug).
     pub max_height: u64,
+    /// Wall-clock seconds spent building climbing nets (debug; not part of the state hash).
+    pub net_secs: f64,
 }
 
 /// Climbing state of the sim (inside `combat::Combat`).
@@ -90,10 +92,12 @@ impl Sim {
         let net = &c.net;
         let stale = !net.built || net.rebuilds != self.nav.rebuilds || (net.version != self.nav.version && now >= net.built_at + NET_PERIOD);
         if stale {
+            let t0 = std::time::Instant::now();
             let g = ClimbGraph { nav: &self.nav, tiles: &self.world.tiles, cls: &self.combat.climb.cls };
             let mut net = std::mem::take(&mut self.combat.climb.net);
             net.build(&g, now);
             let st = &mut self.combat.climb.stats;
+            st.net_secs += t0.elapsed().as_secs_f64();
             st.net_builds += 1;
             st.net_holds = net.holds;
             st.net_roots = net.groups.len() as u64;
