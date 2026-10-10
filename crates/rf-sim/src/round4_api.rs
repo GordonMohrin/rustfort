@@ -118,6 +118,7 @@ impl Sim {
 
     /// Number of tiles with liquid and how many are currently flowing (for the UI/bench).
     pub fn liquid_stats(&self) -> (usize, usize) {
-        (self.world.tiles.iter().filter(|t| t.liquid_depth() > 0).count(), 0)
+        let r = self.fluid_report(); // [fluids]
+        (r.liquid_tiles, r.flowing) // [fluids]
     }
 }
