@@ -182,7 +182,7 @@ impl Sim {
             if self.world.items[i].kind != "FOOD" {
                 continue;
             }
-            let q = crate::construct::roll_quality(rating, &mut r).min(5);
+            let q = crate::skills::quality_roll(rating, &mut r).min(5); // [skills9] same roll as crafts (DF meals average ~1.3)
             let it = &mut self.world.items[i];
             it.quality = q;
             // Ingredient value 2 per unit (estimate for unrecorded values) x quality multiplier.

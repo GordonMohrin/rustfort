@@ -957,6 +957,8 @@ impl Sim {
     /// keeping per-building state.
     pub(crate) fn rebuild_prod_index(&mut self) {
         let mut old_shops: HashMap<i32, Shop> = self.prod.shops.drain(..).map(|s| (s.bid, s)).collect();
+        // Farm indices change below: pending farm work must be rebuilt before it is used again.
+        self.prod.farm_work.clear();
         let mut old_farms: HashMap<i32, Farm> = self.prod.farms.drain(..).map(|f| (f.bid, f)).collect();
         let mut old_cons: HashMap<i32, Cons> = self.prod.cons.drain(..).map(|c| (c.bid, c)).collect();
         let mut wells_new = Vec::new();
@@ -1664,7 +1666,7 @@ impl Sim {
         }
         if labors & labor::PLANT != 0 {
             for (wi, &(fi, k)) in self.prod.farm_work.iter().enumerate() {
-                let t = &self.prod.farms[fi as usize].tiles[k as usize];
+                let Some(t) = self.prod.farms.get(fi as usize).and_then(|f| f.tiles.get(k as usize)) else { continue };
                 if t.claimed || t.blocked_until > now || self.alert_blocks(s, t.tile as usize) {
                     continue; // [r7] civilian alert
                 }

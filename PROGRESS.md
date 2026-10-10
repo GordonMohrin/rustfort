@@ -1,5 +1,47 @@
 # Rustfort: progress
 
+## v0.9.0 (2026-10-10): calibrated against Gordon's real history
+
+**Gordon's real DF fort has fallen.** At r7 (year 280) DF reports game_over, lost to goblin civ 39. Its five sieges brought 34, 58, 143, 101 and 148 units. In Rustfort the fort lives on from r5 (year 279, 87 citizens).
+
+**New since 0.8:**
+- **War calibration** from DF's own data (`plotinfo.invasions`, entity `siege_tier`, the save's difficulty settings):
+  - the invasion tier is chosen by population, created wealth or exported wealth; your fort is at the Metropolis tier
+  - siege strength grows per consecutive siege up to the unit cap 140 (the 5th siege brings 133 creatures, DF had 136 + 7 mounts)
+  - master troops and iron armor at the observed rates, cave-crawler mounts, trolls, hidden ambush squads with sieges
+  - building destroyers wreck workshops, doors and furniture
+  - **forgotten beasts follow DF's irritation rules** (0 in 3.5 years, as in DF)
+  - fixed: stuck leaving invaders; fleeing civilians can drink and eat again
+  - validation: r5 -> r6 now median 26 citizens lost (DF 73, before 1); r4 -> r5 median 7 (DF 14)
+- **Skills calibration:**
+  - XP per job per the wiki, no level cap
+  - military XP 15.8k per dwarf-year (DF 14.5k) with situational awareness, discipline and fighting at DF's shares
+  - **social and mental XP** 1.9k (DF 2.0k)
+  - item quality from skill (crafts mean 1.8, DF 2.6), meals included; births 3 (DF 2)
+  - grief replays strong memories (8 stressed citizens, 12 with DF's real deaths replayed; DF 17)
+  - **tree growth** (+70 trees, DF +65)
+- **Performance:**
+  - landmark (ALT) A* heuristic with exact path costs: A* nodes on r5 dropped 8-10x
+  - **87 citizens about 70k ticks/s, 487 citizens about 33k ticks/s** (v0.8: 19k / 11k)
+  - the root cause was construction fetches across about 10 z-levels; a determinism stress tool was added
+- **Exporter r7:**
+  - the off-map tame animals are departed caravan animals, now marked inactive
+  - squad ammo, per-position uniforms and patrol waypoints
+  - DF wealth counters and the invasion history
+  - stockpile_options.json (29,735 leaves) feeds the stockpile editor
+- **UI:**
+  - DF announcement settings (box/pause/center/log per event, defaults from your announcements.txt) with a box queue
+  - petitions badge and screen; raid alerts
+  - squad Equipment/Ammunition/Patrol tabs (uniform editor, ammo, patrol routes drawn on the map, barracks)
+  - combat reports grouped per fight; DF skill names with XP bars
+- **Fix:** farm work could index a rebuilt farm list (crash) once destroyers wrecked buildings.
+- **Result:** 2 years headless with `--standdown` (prompt stand-down and re-alert) on r5, seeds 1-3: 86-90 of 87 citizens alive, with 168-256 deaths that are mostly invaders, at about 64-83k ticks/s. With slower reactions (the fort example checks monthly) the fort falls, as Gordon's real one did.
+
+**Known gaps:**
+- Uniform materials are not filtered (type only).
+- Petitions and raid state are not saved; invaders do not dig.
+- Mounts do not carry riders; standalone thieves and snatchers are more frequent than in Gordon's history.
+
 ## v0.8.0 (2026-10-10): animals, locations/justice/lifestyle, raids, new screens, validation against real DF
 
 **New since 0.7:**

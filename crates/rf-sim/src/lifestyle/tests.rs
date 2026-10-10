@@ -71,8 +71,10 @@ fn meal_quality_follows_the_cooks_skill() {
     sim.world.items[i].stack = 3;
     sim.lifestyle_meal_cooked(s, first, 10);
     let it = &sim.world.items[i];
-    assert_eq!(it.quality, 5, "legendary cook: masterwork");
-    assert_eq!(it.value, 2 * 3 * 12);
+    // Calibrated roll (skills9): a legendary cook makes at least exceptional meals; masterworks
+    // are capped at about 1 in 3 like DF's observed meal quality.
+    assert!(it.quality >= 3, "legendary cook: exceptional or better, got {}", it.quality);
+    assert!(it.value >= 2 * 3 * 3, "value scales with quality");
     // A cook without the skill makes ordinary meals.
     let s2 = slot(&sim, 2);
     let mut qs = Vec::new();
@@ -82,8 +84,11 @@ fn meal_quality_follows_the_cooks_skill() {
         sim.lifestyle_meal_cooked(s2, first, 100 + k);
         qs.push(sim.world.items[sim.item_idx[&id] as usize].quality);
     }
-    assert!(qs.iter().all(|&q| q == 0), "{qs:?}");
-    assert_eq!(sim.lifestyle_report().meal_quality[0], 20);
+    // Calibrated roll: an unskilled cook mostly makes ordinary meals, a few better ones.
+    let ordinary = qs.iter().filter(|&&q| q == 0).count();
+    let mean = qs.iter().map(|&q| q as f32).sum::<f32>() / qs.len() as f32;
+    assert!(ordinary >= 6 && mean < 1.5, "{qs:?}");
+    assert_eq!(sim.lifestyle_report().meal_quality[0], ordinary as u64);
 }
 
 #[test]
