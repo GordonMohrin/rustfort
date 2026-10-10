@@ -8,7 +8,7 @@
 
 The scripts are for DF 53.16 with DFHack 53.16-r2. They need DFHack, a free separate app on Steam that installs into the DF folder. Rustfort's title screen runs the probe and the exporter itself ("Import from Dwarf Fortress", see `crates/rf-app/README.md`): DF must be running with a fort loaded, and the export goes to `export/<fort>-<date>/` in Rustfort's working directory. The commands below are for running the scripts by hand.
 
-In the commands, `<DF folder>` is your Dwarf Fortress install (on Steam usually `C:\Program Files (x86)\Steam\steamapps\common\Dwarf Fortress`) and `<repo>` is your Rustfort checkout.
+In the commands, `<DF folder>` is your Dwarf Fortress install (on Steam usually `C:\Program Files (x86)\Steam\steamapps\common\Dwarf Fortress`; step 1 of `docs/INSTALL.md` has a PowerShell line that finds it in every Steam library) and `<repo>` is your Rustfort checkout.
 
 ## Safety
 
@@ -39,7 +39,7 @@ rustfort-export: exporting Trussroads (Tileshtulon) into <folder> - manifest.jso
 {"ok":true,"started":true,"fort":"Trussroads","fort_native":"Tileshtulon","out":"<folder>","budget_ms":25}
 ```
 
-To play an export you made by hand, put its folder under `<repo>\export\` (the app starts the newest export there), or start `rustfort play --export <folder>`, or set `RUSTFORT_EXPORT=<folder>`.
+To play an export you made by hand, put its folder under `<repo>\export\` and pick it on the title screen under **Load game** > *DF exports* (**Continue** picks it only while there is no save yet and it is the newest export, because any save comes first), or start `rustfort play --export <folder>`. `RUSTFORT_EXPORT=<folder>` applies to `rustfort bench` and `savebench` and to `play` runs started directly into a fort (such as screenshot runs) without `--export`; the title screen's **Continue** uses it only when there is no save and no export under `<repo>\export\`.
 
 The same from Git Bash, waiting until the export is done (`progress.json` is rewritten about once per second):
 

@@ -6,10 +6,14 @@ A fast, faithful re-implementation of Dwarf Fortress fortress mode in Rust that 
 
 > **Legal note.** Rustfort is an unofficial fan project. It is not affiliated with or endorsed by
 > Bay 12 Games or Kitfox Games. You need your own copy of Dwarf Fortress: the Steam edition,
-> v50 or newer, which includes the Premium graphics. This repository contains no Dwarf Fortress
-> code, graphics or raws. Rustfort reads everything it needs from your installation at runtime.
-> Dwarf Fortress is a trademark of Bay 12 Games. The name is used here only to say which game
-> Rustfort works with.
+> v50 or newer, which includes the Premium graphics. Rustfort contains no Dwarf Fortress code.
+> Apart from the README screenshots in `docs/screenshots`, which show DF's Premium graphics
+> (c) Bay 12 Games / Kitfox Games, a table of DF's thought captions taken from DFHack's
+> df-structures, and a few small tables of game facts (token names and numbers), this
+> repository contains no Dwarf Fortress files or data: graphics, fonts and raws are read from
+> your installation at runtime. [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) has the
+> details. Dwarf Fortress is a trademark of Bay 12 Games. The name is used here only to say
+> which game Rustfort works with.
 
 Rustfort copies a fort from your running Dwarf Fortress through a read-only DFHack script and
 then simulates it on its own. The rules come from the Dwarf Fortress Wiki and from observing the
@@ -25,11 +29,11 @@ Paste this into a coding agent (Claude Code, Codex, Cursor, ...) on the computer
 Fortress is installed:
 
 ```text
-Install and start Rustfort (https://github.com/GordonMohrin/rustfort) on this computer.
-Follow docs/INSTALL.md from that repository step by step and check each step as it describes.
-Ask me before you install any software or change any settings.
-Never modify my Dwarf Fortress installation or my DF saves.
-At the end, start Rustfort normally and report what worked and what did not.
+Install and start Rustfort on this computer. Read
+https://github.com/GordonMohrin/rustfort/blob/HEAD/docs/INSTALL.md (start with its "Notes for AI agents")
+and follow it step by step, doing each step's check. Ask me before you install any software or
+change any settings, and never modify my Dwarf Fortress installation or my DF saves.
+At the end, start Rustfort as the guide describes and report what worked and what did not.
 ```
 
 ## Install manually
@@ -46,18 +50,18 @@ winget install --id Rustlang.Rustup -e
 Then build and start Rustfort:
 
 ```powershell
-rustup default stable-msvc
+rustup default stable-msvc          # only if `rustup show active-toolchain` names no -msvc toolchain (docs/INSTALL.md, step 4)
 git clone https://github.com/GordonMohrin/rustfort.git
 cd rustfort
 cargo build --release -p rf-app     # the first build takes several minutes
 target\release\rustfort.exe
 ```
 
-Later you can just run `rustfort.cmd` in the repository folder. It rebuilds what changed and
-then starts the game. Rustfort finds a Steam install of Dwarf Fortress by itself. You can also
-set the folder in the title screen's Settings or with the `RUSTFORT_DF_DIR` environment
-variable. [docs/INSTALL.md](docs/INSTALL.md) explains every step, how to check it and what to do
-when it fails, and has a best-effort Linux section.
+Later you can just run `.\rustfort.cmd` in the repository folder (or double-click it). It
+rebuilds what changed and then starts the game. Rustfort finds a Steam install of Dwarf
+Fortress by itself. You can also set the folder in the title screen's Settings or with the
+`RUSTFORT_DF_DIR` environment variable. [docs/INSTALL.md](docs/INSTALL.md) explains every step,
+how to check it and what to do when it fails, and has a best-effort Linux section.
 
 ## Play your own fort
 
@@ -80,12 +84,13 @@ The DFHack scripts were developed against DF 53.16 with DFHack 53.16-r2.
 |---|---|
 | ![Unit sheet with the dwarf's layered portrait, needs, stress and top skills](docs/screenshots/unit-sheet.png) | ![Military side panel: squads, defense burrow button, members with their worn equipment](docs/screenshots/military.png) |
 | Unit sheet with the portrait, needs, stress and skills | Military side panel with the "Everyone into the burrow!" button and each member's equipment |
-| ![A goblin siege with 140 hostiles at the reference fort's gate](docs/screenshots/siege.png) | ![The reference fort's main level at a lower zoom](docs/screenshots/fort.png) |
-| The siege that ended the reference fort in DF, continued in Rustfort | The main level of the reference fort |
+| ![A goblin siege with 140 hostiles at the reference fort's gate](docs/screenshots/siege.png) | ![A ballista's sheet with its facing, ammunition and target, and its line of fire on the map](docs/screenshots/ballista.png) |
+| The siege that ended the reference fort in DF, continued in Rustfort | A ballista's sheet and its line of fire. The reference fort has no siege engines: this one was placed through the build API for the picture |
 
 The screenshots show Dwarf Fortress's Premium graphics, which Rustfort reads from the player's
-own installation at runtime. The graphics belong to Bay 12 Games and Kitfox Games and are not
-part of this repository's license.
+own installation at runtime. The graphics belong to Bay 12 Games and Kitfox Games. These images
+are the only DF imagery in the repository, and they are not covered by its license (see
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)).
 
 ## Features
 
@@ -137,31 +142,39 @@ mode, Legends or deep world history.
 
 ## Performance
 
-Rustfort against Dwarf Fortress on **the same fort and the same PC** (6-core Ryzen 5 5600X,
+Rustfort against Dwarf Fortress on **the same fort and the same PC** (a 6-core desktop CPU,
 Windows 11). DF numbers are from DF 53.16 (Steam) with DFHack, measured while the reference fort
 was played; Rustfort numbers are from v0.12 on that fort's DFHack exports. One tick is one DF
-simulation step; a game year is 403,200 ticks. DF at "normal" speed is capped at 100 ticks/s.
+simulation step; a game year is 403,200 ticks. DF's default FPS cap is 100 simulated frames/s.
+
+DF's calendar and DF's simulation are not always the same speed: the player used DFHack's
+`timestream` tool, which advances the calendar by more than one tick per simulated frame (about
+3.7 during the final siege), so DF's calendar speed can overstate its real simulation rate.
+Every Rustfort tick is a full simulation step.
 
 | scenario | Dwarf Fortress | Rustfort | faster by |
 |---|---|---|---|
-| everyday fort life: about 90 citizens, about 330 units, 17,000 items, 192x192x150 tiles | about **170** ticks/s (FPS cap raised to 500) | about **100,000** ticks/s headless; **66,000-90,000** ticks/s in the game window at "max" | about 400-600x |
-| the siege that ended the fort: about 140 goblins, 330-390 active units | about **29** ticks/s (DF's FPS counter: 4-60) | about **51,000** ticks/s headless | about 1,700x |
-| a forced 133-goblin siege, heaviest fighting (472 units) | not measured | **15,000-33,000** ticks/s headless | |
+| everyday fort life: about 90 citizens, 320-340 units, 14,000-17,000 items, 192x192x150 tiles | about **170** calendar ticks/s (FPS cap raised to 500) | about **100,000** ticks/s headless; in the game window at "max" **66,400** ticks/s on average, 88,000-90,000 while running, at 73-75 FPS | about 400-600x (calendar) |
+| the siege that ended the fort: about 140 goblins, 330-390 active units | about **107** calendar ticks/s (29 simulated frames/s; DF's FPS counter 4-60) | about **51,000** ticks/s headless | about 480x calendar / about 1,750x frames |
+| a forced 133-goblin siege (472 units) | not measured | **14,700** ticks/s headless in the first 2,000 ticks (the heaviest fighting), 33,100 in the next 2,000, 41,600 on average over 20,000 | |
 | the same fort with 400 extra citizens (487 citizens, 748 units) | not measured | about **38,000** ticks/s headless | |
-| one game year of everyday fort life | about **40 minutes** | about **4 seconds** headless, about 5-6 s in the game window | |
+| one game year of everyday fort life | about **40 minutes** (at 170 calendar ticks/s) | about **4 seconds** headless, about 4.5-6 s in the game window | |
 
 How it was measured:
 
-- DF: the calendar advance per wall-clock second while the game ran (see
-  [docs/VALIDATION.md](docs/VALIDATION.md) and [tools/dfhack/README.md](tools/dfhack/README.md)).
-  DFHack and the player's automation scripts were running, as in normal play.
-- Rustfort headless: `rustfort.exe bench --ticks 806400 --standdown` (2 game years in about 8 s)
-  and `bench --export <siege export> --ticks 40320`; the 487-citizen row is
-  `cargo run -p rf-sim --release --example scale -- --extra 400`, the forced siege
-  `--example siegeperf -- --standdown`.
-- Rustfort in the game window: `--speed max` with the Premium graphics drawn at 60-75 FPS; the
-  simulation runs on its own thread. The lower figure includes the pauses for pop-up
-  announcements.
+- DF, everyday: the calendar advance per wall-clock second while the game ran (91 citizens,
+  320 units, about 14,400 items; [tools/dfhack/README.md](tools/dfhack/README.md)). DF, siege:
+  the calendar and DF's frame counter over 72 s with 393 active units: 7,701 ticks but only
+  2,077 simulated frames ([docs/VALIDATION.md](docs/VALIDATION.md)). DFHack and the player's
+  automation scripts were running, as in normal play.
+- Rustfort headless: `rustfort.exe bench --ticks 806400 --standdown` on the main export r5
+  (87 citizens, 338 units, 17,390 items; 2 game years in 7.86 s) and
+  `bench --export <siege export> --ticks 40320` on r6 (334 units: 15 citizens, 140 hostiles);
+  the 487-citizen row is `cargo run -p rf-sim --release --example scale -- --extra 400`, the
+  forced siege `--example siegeperf -- --standdown`.
+- Rustfort in the game window: `--speed max` with the Premium graphics drawn at 73-75 FPS; the
+  simulation runs on its own thread. The 66,400 ticks/s average covers 1.8 M ticks and includes
+  the pauses for pop-up announcements.
 
 The *reference fort* is the DF fort used to develop and validate Rustfort: Trussroads (native
 name Tileshtulon) in the world Zilirróth. Its exports are not distributed.
@@ -184,9 +197,15 @@ cargo run -p rf-sim --release --example chaos -- --seeds 1-8 --years 2          
 cargo run -p rf-sim --release --example saveload -- --n 20000 --m 20000                         # save/load continuation
 ```
 
-Without `--export DIR` these tools pick a fort the same way the game does: `RUSTFORT_EXPORT`,
-then the newest export in `export/`, else the built-in synthetic fort. `validate` always takes
-two exports of the same fort ([docs/VALIDATION.md](docs/VALIDATION.md)).
+Which fort they use: `--export DIR` if given, else the export named by `RUSTFORT_EXPORT`, else
+the newest complete export in `export/`. If there is none, `rustfort.exe bench` and `savebench`
+(and `play` runs that skip the title screen, such as screenshot runs) use the built-in test
+fort and say so. The rf-sim examples search the same way but stop with "no export found (use
+--export <dir> or RUSTFORT_EXPORT)" instead; `chaos` also takes `--synthetic`. `validate`
+always takes two exports of the same fort ([docs/VALIDATION.md](docs/VALIDATION.md)). The title
+screen's **Continue** is different: it loads the newest save, else the newest export in
+`export/`, else the one named by `RUSTFORT_EXPORT`; every other export is in **Load game** >
+*DF exports*.
 
 ## Project layout
 
@@ -219,12 +238,16 @@ crash log) and `export/` (fort exports). Both are gitignored.
 - [crates/rf-gfx/README.md](crates/rf-gfx/README.md): how the Premium sprites are chosen
 - [tools/dfhack/README.md](tools/dfhack/README.md): the DFHack exporter
 - [CONTRIBUTING.md](CONTRIBUTING.md): how to contribute
+- [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md): third-party material in the repository and
+  what binary distributions must include
 
 ## Contributing
 
 Bug reports and pull requests are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) first.
 The most important rules are clean-room work (the wiki and observation, never decompiling), no
-DF files in the repository, and an unchanged state hash with one thread and many.
+DF files or copied DF text in the repository beyond the credited exceptions in
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), and an unchanged state hash with one thread
+and many.
 
 ## License
 
@@ -237,13 +260,23 @@ at your option. Unless you explicitly state otherwise, any contribution intentio
 for inclusion in the work by you, as defined in the Apache-2.0 license, shall be dual licensed
 as above, without any additional terms or conditions.
 
-The license covers Rustfort's own code and documentation only. Dwarf Fortress, its data,
-graphics and raws are not covered by it and are not part of this repository.
+The license covers Rustfort's own code and documentation only. It does not cover:
+
+- the screenshots `docs/screenshots/*.png`, which show DF's Premium graphics (c) Bay 12 Games /
+  Kitfox Games;
+- the DF thought captions in `crates/rf-sim/src/social/captions.rs`, taken from DFHack's
+  df-structures under the zlib license;
+- Dwarf Fortress itself (its code, graphics, fonts and raws), which is not part of this
+  repository.
+
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) has the notices, and what a binary
+distribution of `rustfort.exe` must include.
 
 ## Acknowledgements
 
 - **Bay 12 Games** (Tarn and Zach Adams) for Dwarf Fortress.
 - **Kitfox Games** for publishing the Steam edition with its Premium graphics.
-- **The DFHack team** for DFHack, which makes the read-only export possible.
+- **The DFHack team** for DFHack, which makes the read-only export possible, and for
+  df-structures, the source of the DF thought captions Rustfort uses.
 - **The Dwarf Fortress Wiki** and its editors. Its documentation of DF's rules is the
   clean-room specification of this project.

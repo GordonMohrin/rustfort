@@ -10,13 +10,24 @@ them are strict.
    (the v50 pages), the raws of your own installation, and behavior you observe in the running
    game (read-only, for example through DFHack). Do not decompile, disassemble or otherwise
    reverse-engineer the Dwarf Fortress executable, and do not paste code or data taken from it.
+   Do not copy DF's text (descriptions, messages, captions) into the code either. The one
+   existing exception is the table of DF thought captions in
+   `crates/rf-sim/src/social/captions.rs`, taken from DFHack's df-structures (zlib license) and
+   credited in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md); do not add new copied DF
+   text. Small compiled-in tables of game facts (token names and numbers, such as reactions,
+   default materials, armor or ores) are fine; name their source (wiki page or raws) in a
+   comment.
 2. **No DF files in the repository.** Do not commit raws, graphics, fonts, sounds or any other
    file from a DF installation, not even a single sprite sheet or raw file for a test.
    Rustfort reads them from the user's install at runtime (`rf_raws::df_dir()`).
 3. **No exports, saves or screenshots.** Fort exports (`export/`), saves (`saves/`,
    `*.rfsave`), crash logs and screenshots stay out of git. `.gitignore` covers the usual places.
    Keep screenshots under `target/`. Tests that need a real fort read it from `RUSTFORT_EXPORT`
-   and skip when there is none.
+   and skip when there is none. The one exception is the set of curated README screenshots in
+   `docs/screenshots/`: they are chosen by the maintainers only, show DF's Premium graphics
+   (Bay 12 Games / Kitfox Games) and are excluded from the project's license
+   ([THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)). Pull requests do not add or change them;
+   attach screenshots to the issue or pull request instead.
 4. **Determinism.** The simulation must give the same state hash with one thread and with many:
 
    ```powershell
