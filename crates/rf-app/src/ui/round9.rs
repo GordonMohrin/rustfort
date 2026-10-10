@@ -79,6 +79,8 @@ pub const ANN_TYPES: &[AnnType] = &[
     at("MOOD", "Strange mood", "Strange mood", &["STRANGE_MOOD"], fl(false, false, false, true)),
     at("MOOD_CLAIM", "Mood: workshop claimed", "Strange mood", &["MOOD_BUILDING_CLAIMED", "ARTIFACT_BEGUN"], fl(false, false, false, true)),
     at("ARTIFACT", "Artifact created", "Artifact", &["MADE_ARTIFACT"], fl(true, false, false, true)),
+    // [calib11-social] "has created a masterpiece ...!": a log line in DF, not a box
+    at("MASTERPIECE", "Masterpiece made", "Masterpiece", &["MASTERPIECE_CRAFTED", "COOKED_MASTERPIECE"], fl(false, false, false, true)),
     at("BIRTH", "Birth, growing up", "Birth", &["BIRTH_CITIZEN"], fl(false, false, false, true)),
     at("ANIMALS", "Animals: hatched, tamed, adopted", "Animals", &["BIRTH_ANIMAL"], fl(false, false, false, true)),
     at("TANTRUM", "Tantrum, breakdown, insanity", "Breakdown", &["CITIZEN_TANTRUM", "BERSERK_CITIZEN"], fl(false, false, false, true)),
@@ -131,6 +133,8 @@ pub fn classify(text: &str, kind: AnnouncementKind) -> usize {
         "MIGRANTS"
     } else if has(&["caravan", "merchants"]) {
         "CARAVAN"
+    } else if has(&["a masterpiece"]) {
+        "MASTERPIECE" // [calib11-social] before "has created" (artifacts pop up)
     } else if has(&["has created"]) {
         "ARTIFACT"
     } else if has(&["has claimed a", "mysterious construction"]) {
@@ -2137,6 +2141,7 @@ mod tests {
         assert_eq!(ANN_TYPES[classify("A caravan from Kogan has arrived.", i)].id, "CARAVAN");
         assert_eq!(ANN_TYPES[classify("Urist is taken by a fey mood!", w)].id, "MOOD");
         assert_eq!(ANN_TYPES[classify("Urist has created Ablelgoden, a steel axe!", i)].id, "ARTIFACT");
+        assert_eq!(ANN_TYPES[classify("Urist has created a masterpiece iron crown!", i)].id, "MASTERPIECE"); // [calib11-social]
         assert_eq!(ANN_TYPES[classify("Urist cancels Dig: Could not find path.", AnnouncementKind::Job)].id, "JOB");
         assert_eq!(ANN_TYPES[classify("The goblins are retreating!", i)].id, "INVASION_END");
         assert_eq!(ANN_TYPES[classify("Saved the game.", i)].id, "OTHER");

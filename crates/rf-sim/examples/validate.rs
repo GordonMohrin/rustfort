@@ -213,10 +213,19 @@ fn measure(a: &World, b: &World, years: f64, value: &dyn Fn(&Item) -> f64) -> Me
                 put(&mut m, "quality.new_masterwork", if it.quality == 5 { 1.0 } else { 0.0 });
                 put(&mut m, "quality.new_exceptional_or_better", if it.quality >= 4 && it.quality <= 5 { 1.0 } else { 0.0 });
                 put(&mut m, "quality.new_sum", it.quality.min(5) as f64);
+                if it.quality == 5 {
+                    put(&mut m, &format!("qmw.{}", it.kind), 1.0); // [calib11-social] masterworks by kind
+                }
             }
             if g == "craft" {
                 put(&mut m, "quality.craft_new_masterwork", if it.quality == 5 { 1.0 } else { 0.0 });
                 put(&mut m, "quality.craft_new_sum", it.quality.min(5) as f64);
+            }
+            if g == "meal" {
+                // [calib11-social] prepared meals (per item, like the durable goods)
+                put(&mut m, "quality.meal_new_items", 1.0);
+                put(&mut m, "quality.meal_new_masterwork", if it.quality == 5 { 1.0 } else { 0.0 });
+                put(&mut m, "quality.meal_new_sum", it.quality.min(5) as f64);
             }
             put(&mut m, &format!("new.{g}"), it.stack.max(1) as f64);
             put(&mut m, &format!("newkind.{}", it.kind), it.stack.max(1) as f64);
@@ -235,6 +244,11 @@ fn measure(a: &World, b: &World, years: f64, value: &dyn Fn(&Item) -> f64) -> Me
     if let Some(q) = m.remove("quality.craft_new_sum") {
         let n = m.get("new.craft").copied().unwrap_or(0.0);
         m.insert("quality.craft_new_mean".into(), q / n.max(1.0));
+    }
+    if let Some(q) = m.remove("quality.meal_new_sum") {
+        // [calib11-social]
+        let n = m.get("quality.meal_new_items").copied().unwrap_or(0.0);
+        m.insert("quality.meal_new_mean".into(), q / n.max(1.0));
     }
     put(&mut m, "wealth.items", wealth);
     put(&mut m, "wealth.new_items", wealth_new);
@@ -391,6 +405,7 @@ fn run_seed(start: &World, ticks: u64, seed: u64, opt: &Opts, years: f64) -> Run
     let mut alerted = false;
     let mut deaths: BTreeMap<String, usize> = BTreeMap::new();
     let mut death_citizens = 0usize;
+    let mut masterpieces = 0usize; // [calib11-social]
     let t0 = Instant::now();
     let mut done = 0u64;
     while done < ticks {
@@ -451,6 +466,9 @@ fn run_seed(start: &World, ticks: u64, seed: u64, opt: &Opts, years: f64) -> Run
             }
         }
         for a in sim.drain_announcements() {
+            if a.text.contains("has created a masterpiece") {
+                masterpieces += 1; // [calib11-social] same line the gamelog census counts
+            }
             if a.kind == AnnouncementKind::Death {
                 let cause = a.text.split(" has ").nth(1).unwrap_or(&a.text).trim_end_matches('.').to_string();
                 *deaths.entry(cause).or_default() += 1;
@@ -506,6 +524,18 @@ fn run_seed(start: &World, ticks: u64, seed: u64, opt: &Opts, years: f64) -> Run
     m.insert("ev.depressions".into(), (sr.depressions + sr.oblivious) as f64);
     m.insert("ev.beasts".into(), sim.cavern_report().beasts.len() as f64);
     m.insert("ev.trades".into(), tr.trades.len() as f64);
+    m.insert("ev.masterpieces".into(), masterpieces as f64); // [calib11-social]
+    if std::env::var_os("VALIDATE_STRESS").is_some() {
+        // [calib11-social] where the stress came from (applied stress per thought)
+        let mut t = format!("seed {seed} stress by thought (sum k / events):");
+        let n = sr.stress_by_thought.len();
+        for (i, (k, v, c)) in sr.stress_by_thought.iter().enumerate() {
+            if i < 14 || i + 6 >= n {
+                t.push_str(&format!(" {k} {}k/{c};", v / 1000));
+            }
+        }
+        eprintln!("{t}");
+    }
     m.insert("perf.ticks_per_s".into(), ticks as f64 / secs.max(1e-9));
     for (label, n) in sim.production_report().jobs_done {
         *m.entry(format!("simjob.{label}")).or_insert(0.0) += n as f64;
@@ -645,7 +675,7 @@ fn main() {
         keys.extend(o.metrics.keys().cloned());
     }
     let order = [
-        "start.", "pop.", "ev.", "stress.", "xp.", "stock.", "new.", "quality.", "wealth.", "bld.", "tile.", "pile.", "newkind.", "xpskill.",
+        "start.", "pop.", "ev.", "stress.", "xp.", "stock.", "new.", "quality.", "qmw.", "wealth.", "bld.", "tile.", "pile.", "newkind.", "xpskill.",
         "simjob.", "simmade.", "perf.",
     ];
     let mut rows: Vec<(String, f64, f64, Vec<f64>, &'static str, f64)> = Vec::new();
@@ -657,6 +687,9 @@ fn main() {
             // Skip per-kind rows that are tiny on both sides.
             if (pre == "newkind." || pre == "xpskill." || pre == "simjob." || pre == "simmade.") && !(r.abs() >= 20.0) && s.iter().all(|v| v.abs() < 20.0) {
                 continue;
+            }
+            if pre == "qmw." && !(r.abs() >= 3.0) && s.iter().all(|v| v.abs() < 3.0) {
+                continue; // [calib11-social]
             }
             let (v, ratio) = if k.starts_with("start.") { ("-", f64::NAN) } else { verdict(r, &s) };
             let s = if k.starts_with("start.") { vec![f64::NAN; s.len()] } else { s };

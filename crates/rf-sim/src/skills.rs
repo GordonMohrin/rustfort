@@ -135,6 +135,7 @@ impl Sim {
         if !skill.is_empty() {
             let rating = self.social_rating(s, self.world.units[self.ai[s].uidx].skill(skill));
             let mut r = Rng::for_unit(self.seed, s, now, 0x9A11);
+            let mut masterworks: Vec<i32> = Vec::new(); // [calib11-social]
             for id in first..self.next_item_id {
                 let Some(&i) = self.item_idx.get(&id) else { continue };
                 let it = &mut self.world.items[i as usize];
@@ -149,6 +150,12 @@ impl Sim {
                 }
                 it.quality = q;
                 self.skills.made[q as usize] += 1;
+                if q == 5 {
+                    masterworks.push(id); // [calib11-social]
+                }
+            }
+            for id in masterworks {
+                self.skills_masterpiece(s, id, now); // [calib11-social]
             }
         }
         let base = if skill == "MASONRY" && (first..self.next_item_id).any(|id| self.item_idx.get(&id).map(|&i| self.world.items[i as usize].kind == "BLOCKS").unwrap_or(false)) {
@@ -159,6 +166,28 @@ impl Sim {
         if !skill.is_empty() {
             self.add_xp(s, skill, base + if quality { XP_QUALITY } else { 0 });
         }
+    }
+
+    /// [calib11-social] Slot `s` just made the masterwork item `id` (wiki Item quality: each
+    /// masterwork is a historical event): DF's announcement "<name> has created a masterpiece
+    /// <item>!" (MASTERPIECE_CRAFTED, the line Gordon's gamelog shows for crafts, cloth,
+    /// furniture, ammo and meals) and the maker's `MakeMasterwork` thought ("after producing a
+    /// masterwork"; strength an estimate like the other thoughts).
+    pub(crate) fn skills_masterpiece(&mut self, s: usize, id: i32, now: u64) {
+        let Some(&i) = self.item_idx.get(&id) else { return };
+        let it = &self.world.items[i as usize];
+        let mut what = it.desc.trim_matches(|c: char| "\u{2261}\u{263c}+*-\u{ab}\u{bb}".contains(c)).trim().to_string();
+        if what.is_empty() {
+            what = it.kind.to_lowercase().replace('_', " ");
+        }
+        if it.stack > 1 {
+            what = format!("{what} [{}]", it.stack);
+        }
+        let pos = it.pos;
+        let name = self.world.units[self.ai[s].uidx].name.clone();
+        self.skills.masterpieces += 1;
+        self.announce(now, format!("{name} has created a masterpiece {what}!"), Some(pos), crate::AnnouncementKind::Info);
+        self.feel(s, "MakeMasterwork", crate::social::Class::Pos, 150, -1, 0, now);
     }
 
     /// [skills9] A repeating work order starts a new period: the manager approves it again.
@@ -302,6 +331,8 @@ pub struct SkillsReport {
     pub approvals: u64,
     /// Bad memories relived (`social_recall`).
     pub recalls: u64,
+    /// [calib11-social] Masterworks made (each announced as "has created a masterpiece").
+    pub masterpieces: u64,
 }
 
 #[cfg(test)]

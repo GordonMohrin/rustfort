@@ -176,6 +176,7 @@ impl Sim {
         }
         let rating = self.social_rating(s, self.world.units[self.ai[s].uidx].skill("COOK"));
         let mut r = Rng::for_unit(self.seed, s, now, 0xC00C);
+        let mut masterworks: Vec<i32> = Vec::new(); // [calib11-social]
         for id in first..self.next_item_id {
             let Some(&i) = self.item_idx.get(&id) else { continue };
             let i = i as usize;
@@ -189,6 +190,12 @@ impl Sim {
             let base = if it.value > 0 { it.value } else { 2 * it.stack.max(1) };
             it.value = base * crate::trade::quality_mult(q) as i32;
             self.life.rep.meal_quality[q as usize] += 1;
+            if q == 5 {
+                masterworks.push(id); // [calib11-social]
+            }
+        }
+        for id in masterworks {
+            self.skills_masterpiece(s, id, now); // [calib11-social] "has created a masterpiece <meal>!"
         }
     }
 
