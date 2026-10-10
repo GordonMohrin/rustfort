@@ -900,7 +900,8 @@ impl Sim {
         }
         // Races found in deep water / magma on load live there.
         for u in &w.units {
-            if u.flags.dead {
+            // Citizens caught in a flood on load do not make their race aquatic.
+            if u.flags.dead || u.is_worker() || w.citizens().any(|c| c.race == u.race) {
                 continue;
             }
             if let Some(i) = w.idx(u.pos) {
