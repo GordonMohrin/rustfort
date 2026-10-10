@@ -5,6 +5,7 @@
 //! runs afterwards knows whether the mouse is over the UI (`UiCtx::over_ui`).
 
 pub mod alerts;
+pub mod animals; // [app8]
 pub mod build;
 pub mod building;
 pub mod burrows;
@@ -12,17 +13,22 @@ pub mod devices; // [round 4]
 pub mod help; // [round 6]
 pub mod labor;
 pub mod military;
+pub mod minimap; // [app8]
 pub mod nobles; // [round 4]
 pub mod orders;
 pub mod overlay;
 pub mod panels;
+pub mod places; // [app8]
 pub mod psyche;
 pub mod reports;
 pub mod round4; // [round 4]
 pub mod round5; // [round 5]
+pub mod round8; // [app8]
+pub mod stockpile_ed; // [app8]
 pub mod toolbar;
 pub mod topbar;
 pub mod trade; // [round 4]
+pub mod workdetails; // [app8]
 
 use crate::font::{Font, GH, GW};
 use crate::render::MapRenderer;

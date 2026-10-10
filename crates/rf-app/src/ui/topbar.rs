@@ -130,6 +130,17 @@ pub fn draw_topbar(g: &mut Game) {
         let k = g.binds.describe("RF_HELP");
         g.ui.tooltip = Some((format!("Controls and keys ({k})"), vec2(hr.x - 160.0 * s, h + 26.0 * s)));
     }
+    // [app8] Minimap toggle left of '?'.
+    let mr = Rect::new(hr.x - hw - 4.0 * s, by, hw, bh);
+    if text_button(&mut g.ui, &g.font, mr, "▓", if g.r8.minimap { BtnState::Active } else { BtnState::Normal }) {
+        g.r8.minimap = !g.r8.minimap;
+        g.settings.minimap = g.r8.minimap;
+        g.persist_settings();
+    }
+    if g.ui.hovered(mr) {
+        g.ui.tooltip = Some(("Minimap of this level".into(), vec2(mr.x - 120.0 * s, h + 26.0 * s)));
+    }
+    let hr = mr;
     let rx = hr.x - 12.0 * s - zw;
     g.font.draw(&ztxt, rx, ty, s, col::TEXT_HI);
     let mut px = rx - pw - 22.0 * s;

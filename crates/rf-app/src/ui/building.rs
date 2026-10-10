@@ -329,6 +329,23 @@ pub fn building_sheet(g: &mut Game, id: i32, r: Rect) {
             y += ALL_STOCK_CATEGORIES.len().div_ceil(2) as f32 * (lh + 2.0 * s);
             let n = g.sim.world.items.iter().filter(|it| b.contains(it.pos) && it.flags.on_ground).count();
             g.font.draw(&format!("{n} items stored"), x, y + 4.0 * s, s, col::TEXT_DIM);
+            // [app8] DF Steam's detailed settings, containers and links.
+            y += lh + 8.0 * s;
+            let sp = b.stockpile.clone().unwrap_or_default();
+            let info = format!(
+                "Bins {}, barrels {}, wheelbarrows {}; gives to {}, takes from {}{}",
+                sp.max_bins,
+                sp.max_barrels,
+                sp.max_wheelbarrows,
+                sp.give_to.len(),
+                sp.take_from.len(),
+                if sp.filters.is_empty() { String::new() } else { format!("; {} filters", sp.filters.len()) }
+            );
+            g.font.draw(&clip(&info, maxc), x, y, s, col::TEXT_DIM);
+            y += lh + 4.0 * s;
+            if text_button(&mut g.ui, &g.font, Rect::new(x, y, 24.0 * 8.0 * s, GH * s + 8.0 * s), "Settings, links...", BtnState::Normal) {
+                super::round8::open_pile(g, b.id);
+            }
         }
         _ => {
             // [round 4] Doors, levers, bridges, traps; the trade depot.
