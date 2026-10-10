@@ -123,9 +123,10 @@ fn capacity(cl: u8) -> i32 {
     }
 }
 
-/// Perishable item kinds (wiki "Rot").
+/// Perishable item kinds (wiki "Rot"). [animals] Eggs do not rot (wiki "Nest box": "Eggs do
+/// not appear to go rotten and can be collected and cooked after two or more seasons").
 pub(crate) fn perishable(kind: &str) -> bool {
-    matches!(kind, "MEAT" | "FISH" | "FISH_RAW" | "FOOD" | "CHEESE" | "EGG" | "PLANT" | "PLANT_GROWTH")
+    matches!(kind, "MEAT" | "FISH" | "FISH_RAW" | "FOOD" | "CHEESE" | "PLANT" | "PLANT_GROWTH")
 }
 
 /// A storage container standing on a stockpile tile.

@@ -127,6 +127,9 @@ fn main() {
         let mut sim = Sim::new(world, seed);
         let new_s = t_new.elapsed().as_secs_f64();
         sim.set_invasions(flag("--invasions"));
+        if flag("--no-animals") {
+            sim.set_animals_enabled(false); // [animals] for before/after comparisons
+        }
         if let Some(t) = get("--par-threshold").and_then(|s| s.parse().ok()) {
             sim.set_parallel_threshold(t); // results must not depend on it (determinism check)
         }

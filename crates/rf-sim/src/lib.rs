@@ -93,6 +93,8 @@ pub mod health; // [moods]
 pub mod caverns; // [moods]
 pub mod caveins; // [r7] cave-ins after digging and deconstruction
 mod syndrome; // [audit-combat] forgotten beast venom, breath and webs
+pub mod animals; // [animals] livestock, pets, training, hunting, fishing
+pub use animals::AnimalReport; // [animals]
 pub use caverns::{BeastRecord, CavernLayer, CavernReport}; // [moods]
 pub use health::{HealthInfo, HealthReport}; // [moods]
 pub use moods::{MoodKind, MoodRecord}; // [moods]
@@ -176,12 +178,18 @@ pub mod labor {
     pub const ENGRAVER: u64 = 1 << 36;
     pub const SHEARER: u64 = 1 << 37;
     pub const SPINNER: u64 = 1 << 38;
+    // [animals] high bits to stay clear of other additions.
+    pub const MILK: u64 = 1 << 50;
+    pub const MAKE_CHEESE: u64 = 1 << 51;
+    pub const HUNT: u64 = 1 << 52;
+    pub const FISH: u64 = 1 << 53;
+    pub const ANIMALTRAIN: u64 = 1 << 54;
     pub const ANY_INDUSTRY: u64 = BURN_WOOD | SMELT | FORGE_WEAPON | FORGE_ARMOR | FORGE_FURNITURE | METAL_CRAFT | GLASSMAKER | BUTCHER | TANNER
         | LEATHER | WEAVER | CLOTHESMAKER | CLEAN_FISH | BONE_CARVE | ENGRAVER | SHEARER | SPINNER | WOOD_CRAFT | MECHANIC | MILLER | PROCESS_PLANT;
     pub const ANY_HAUL: u64 = HAUL_STONE | HAUL_WOOD | HAUL_FOOD | HAUL_ITEM | HAUL_REFUSE | HAUL_FURNITURE | HAUL_BODY | HAUL_ANIMALS;
     pub const ANY_JOB: u64 = MINE | CUTWOOD | HERBALISM;
     /// Labors that can take workshop, farm or construction jobs.
-    pub const ANY_PROD: u64 = BREW | COOK | PLANT | CARPENTER | MASON | STONE_CRAFT | HAUL_FURNITURE | ANY_INDUSTRY; // [industry]
+    pub const ANY_PROD: u64 = BREW | COOK | PLANT | CARPENTER | MASON | STONE_CRAFT | HAUL_FURNITURE | ANY_INDUSTRY | MILK | MAKE_CHEESE; // [industry] [animals]
 
     pub fn from_df(s: &str) -> u64 {
         match s {
@@ -225,6 +233,11 @@ pub mod labor {
             "ENGRAVER" | "STONE_ENGRAVER" => ENGRAVER,
             "SHEARER" => SHEARER,
             "SPINNER" => SPINNER,
+            "MILK" => MILK, // [animals]
+            "MAKE_CHEESE" => MAKE_CHEESE, // [animals]
+            "HUNT" => HUNT, // [animals]
+            "FISH" => FISH, // [animals]
+            "ANIMALTRAIN" => ANIMALTRAIN, // [animals]
             _ => 0,
         }
     }
@@ -404,6 +417,8 @@ enum Task {
     Mood,
     /// [moods] Doctor or caretaker treating a patient (see `health`).
     Care,
+    /// [animals] Leading, slaughtering or training an animal, hunting, fishing (see `animals`).
+    Animal,
 }
 
 struct UnitAi {
@@ -581,6 +596,8 @@ pub struct Sim {
     moods: moods::Moods,
     health: health::Health,
     caverns: caverns::Caverns,
+    /// [animals] Livestock, pets, training, hunting and fishing (see `animals`).
+    animals: animals::Animals,
 }
 
 #[inline]
@@ -688,6 +705,7 @@ impl Sim {
             moods: moods::Moods::default(), // [moods]
             health: health::Health::default(), // [moods]
             caverns: caverns::Caverns::default(), // [moods]
+            animals: animals::Animals::default(), // [animals]
         };
         sim.init_plants();
         sim.init_units();
@@ -703,6 +721,7 @@ impl Sim {
         sim.init_construct(); // [construct]
         sim.init_moods(); // [moods]
         sim.init_health(); // [moods]
+        sim.init_animals(); // [animals]
         sim.rebuild_food_lists();
         sim.rebuild_haul();
         sim
@@ -1057,6 +1076,7 @@ impl Sim {
             (_, Task::Construct(j)) => self.construct_caption(j), // [construct]
             (_, Task::Mood) => self.mood_caption(s), // [moods]
             (_, Task::Care) => self.care_caption(s), // [moods]
+            (_, Task::Animal) => self.animal_caption(s), // [animals]
         };
         UnitStatus {
             activity: activity.into(),
@@ -1115,6 +1135,7 @@ impl Sim {
         self.moods_hash(&mut mix); // [moods]
         self.health_hash(&mut mix); // [moods]
         self.caverns_hash(&mut mix); // [moods]
+        self.animals_hash(&mut mix); // [animals]
         h
     }
 
@@ -1236,6 +1257,7 @@ impl Sim {
         }
         self.health_tick(now); // [moods]
         self.caverns_tick(now); // [moods]
+        self.animals_tick(now); // [animals]
         let t0 = Instant::now();
         self.phase[9] += (t0 - tq).as_secs_f64(); // [perf]
         for s in 0..self.ai.len() {
@@ -1458,6 +1480,8 @@ impl Sim {
                     self.combat_think(s, now);
                 } else if self.trade_owns(s) {
                     self.trade_think(s, now); // [society] merchants and pack animals
+                } else if self.animals_owns(s) {
+                    self.animal_think(s, now); // [animals] grazing, pasture, nest box, pets
                 } else {
                     self.think_simple(s, now);
                 }
@@ -1507,6 +1531,7 @@ impl Sim {
             }
             Task::Combat => self.combat_think(s, now), // [combat]
             Task::Construct(j) => self.construct_think(s, j, now, urgent), // [construct]
+            Task::Animal => self.animal_work_think(s, now, urgent), // [animals]
             _ => {
                 let interruptible = matches!(task, Task::GoJob(_) | Task::GoPickup(..) | Task::GoStore(..) | Task::Wander | Task::Fetch(_) | Task::GoSite | Task::Care); // [moods] Care
                 if urgent && interruptible {
@@ -1640,6 +1665,9 @@ impl Sim {
         if !restricted && self.society_decide(s, now) {
             return; // [society] burial, depot hauling, broker
         }
+        if !restricted && self.animals_decide(s, now) {
+            return; // [animals] lead to pasture, slaughter, training
+        }
         if self.construct_try(s, now) {
             return; // [construct] constructions, detailing, dumping
         }
@@ -1666,6 +1694,9 @@ impl Sim {
             ai.seen_haul = eh;
             ai.seen_prod = ep;
             ai.next_search = now + RESEARCH_TICKS + (s as u64 % 64);
+        }
+        if !restricted && self.animals_idle_work(s, now) {
+            return; // [animals] hunting and fishing for idle dwarves
         }
         self.wander(s, now, &mut r);
     }
@@ -1791,6 +1822,7 @@ impl Sim {
             Task::Job(_) | Task::Drink(_) | Task::Eat(_) | Task::Sleep(_) | Task::Craft => {}
             Task::Combat => self.combat_think(s, now), // [combat]
             Task::Construct(_) => {} // [construct] handled in construct_think
+            Task::Animal => {} // [animals] handled in animal_work_think
         }
     }
 
@@ -1903,6 +1935,7 @@ impl Sim {
             Task::Construct(j) => self.construct_cancel(s, j), // [construct]
             Task::Mood => self.mood_cancel(s), // [moods]
             Task::Care => self.care_cancel(s), // [moods]
+            Task::Animal => self.animal_work_cancel(s), // [animals]
             Task::Idle | Task::Wander => {}
         }
         let ai = &mut self.ai[s];
