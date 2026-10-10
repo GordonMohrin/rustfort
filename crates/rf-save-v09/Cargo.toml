@@ -1,0 +1,10 @@
+[package]
+name = "rf-save-v09"
+description = "[saves10] Frozen copy of the rf-core data model of Rustfort v0.9 (bincode .rfsave format 1), only for converting old saves. Never change these types."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true

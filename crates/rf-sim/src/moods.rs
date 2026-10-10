@@ -62,6 +62,7 @@ use crate::path::Goals;
 use crate::rng::Rng;
 use crate::{AnnouncementKind, Kind, Sim, Task, NONE};
 use rf_core::{tile_flags, Pos};
+mod saves10; // [saves10] save/load of mood progress
 
 /// DF: insanity after exactly 50 000 ticks waiting for a demanded item.
 pub const MOOD_WAIT_LIMIT: u64 = 50_000;

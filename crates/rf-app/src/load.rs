@@ -27,7 +27,8 @@ pub fn load(args: &crate::Args) -> Loaded {
             Ok((world, info)) => {
                 let label = format!("{} - {} - save {}", world.meta.fort_name, info.header.date, p.display());
                 eprintln!("loaded save {} ({}) in {:.2}s", p.display(), crate::save::fmt_bytes(info.bytes), info.secs);
-                return Loaded { world, label, report: None, warning: None, new_game: false, gfx: None, seed: 0 };
+                let warning = info.note.clone(); // [saves10] converted / loaded from the backup
+                return Loaded { world, label, report: None, warning, new_game: false, gfx: None, seed: 0 };
             }
             Err(e) => {
                 let mut l = load_world(args.export.as_deref(), args.synthetic, args.size);
@@ -44,7 +45,8 @@ pub fn load_save_file(p: &Path) -> Result<Loaded, String> {
     let (world, info) = crate::save::load_world(p)?;
     let file = p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
     let label = format!("{} - {} - save {file}", world.meta.fort_name, info.header.date);
-    Ok(Loaded { world, label, report: None, warning: None, new_game: false, gfx: None, seed: info.header.seed })
+    let warning = info.note.clone(); // [saves10] converted / loaded from the backup
+    Ok(Loaded { world, label, report: None, warning, new_game: false, gfx: None, seed: info.header.seed })
 }
 
 /// [round 6] Load the graphics for `l.world` (CPU work only, so it can run in the loading

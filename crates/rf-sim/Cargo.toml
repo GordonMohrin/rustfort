@@ -9,6 +9,8 @@ publish.workspace = true
 [dependencies]
 rf-core.workspace = true
 rayon = "1"
+serde.workspace = true # [saves10] module state in World::sim_state
+serde_json.workspace = true # [saves10]
 
 [dev-dependencies]
 rf-import.workspace = true

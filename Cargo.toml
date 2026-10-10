@@ -7,6 +7,7 @@ members = [
     "crates/rf-import",
     "crates/rf-sim",
     "crates/rf-app",
+    "crates/rf-save-v09", # [saves10] frozen v0.9 save types (old-save converter)
 ]
 
 [workspace.package]

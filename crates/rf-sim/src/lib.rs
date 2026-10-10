@@ -105,6 +105,8 @@ pub mod justice; // [society2] crimes, investigation, punishment
 pub mod lifestyle; // [society2] clothing wear, meal quality, kitchen, miasma, rain
 pub mod skills; // [skills9] experience per job, item quality, training, social skills
 pub mod growth; // [skills9] saplings grow into trees, trees regrow
+pub mod persist; // [saves10] module runtime state across save/load (World::sim_state)
+pub use persist::saved_ticks; // [saves10]
 pub use justice::JusticeReport; // [society2]
 pub use lifestyle::LifestyleReport; // [society2]
 pub use locations::{LocationReport, Petition, VisitorRole}; // [society2]
@@ -651,7 +653,8 @@ fn blocks_movement(kind: &str) -> bool {
 }
 
 impl Sim {
-    pub fn new(world: World, seed: u64) -> Sim {
+    pub fn new(mut world: World, seed: u64) -> Sim {
+        let saved = std::mem::take(&mut world.sim_state); // [saves10] module state of a save
         let mut blocked = Vec::new();
         for b in &world.buildings {
             if blocks_movement(&b.kind) {
@@ -732,6 +735,7 @@ impl Sim {
             skills: skills::SkillsReport::default(), // [skills9]
             growth: growth::Growth::default(), // [skills9]
         };
+        sim.restore_core(&saved); // [saves10] tick count first: the init passes below use it
         sim.init_plants();
         sim.init_units();
         sim.init_items();
@@ -749,6 +753,7 @@ impl Sim {
         sim.init_animals(); // [animals]
         sim.rebuild_food_lists();
         sim.rebuild_haul();
+        sim.restore_modules(&saved); // [saves10]
         sim
     }
 
