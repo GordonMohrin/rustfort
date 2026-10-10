@@ -60,6 +60,8 @@ pub use ranged::RangedStats; // [ranged]
 pub mod round3_api;
 pub mod round4_api;
 pub mod round5_api;
+pub mod construct; // [construct]
+pub use construct::ConstructReport; // [construct]
 pub use round5_api::{ConstructionKind, DetailKind, MoodInfo, Traffic};
 pub use round4_api::{PopulationInfo, TradeOffer, TradeStatus};
 pub use round3_api::{SquadOrder, StressLevel};
@@ -386,6 +388,8 @@ enum Task {
     GoDine(i32, u32),
     /// [combat] Unit run by the combat/military module (fighting, fleeing, training, resting).
     Combat,
+    /// [construct] Construction, detailing or dump job `.0` (see `construct`).
+    Construct(u32),
 }
 
 struct UnitAi {
@@ -557,6 +561,8 @@ pub struct Sim {
     def: defense::Defense,
     /// [ranged] Launchers, ammo, shooters, archery targets (see `ranged`).
     ranged: ranged::Ranged,
+    /// [construct] Constructions, detailing, dumping (see `construct`).
+    cx: construct::Cx,
 }
 
 #[inline]
@@ -660,6 +666,7 @@ impl Sim {
             trade: trade::Trade::default(), // [society]
             def: defense::Defense::default(), // [defense]
             ranged: ranged::Ranged::default(), // [ranged]
+            cx: construct::Cx::default(), // [construct]
         };
         sim.init_plants();
         sim.init_units();
@@ -672,6 +679,7 @@ impl Sim {
         sim.init_storage(); // [industry]
         sim.init_combat(); // [combat]
         sim.init_defense(); // [defense]
+        sim.init_construct(); // [construct]
         sim.rebuild_food_lists();
         sim.rebuild_haul();
         sim
@@ -1023,6 +1031,7 @@ impl Sim {
             (_, Task::GoPickup(_, d)) | (_, Task::GoStore(_, d)) => ("Store Item in Stockpile", Some(pos_of(d))),
             (_, Task::Fetch(_)) | (_, Task::GoSite) | (_, Task::Craft) => self.wjob_caption(s),
             (_, Task::Combat) => self.combat_caption(s), // [combat]
+            (_, Task::Construct(j)) => self.construct_caption(j), // [construct]
         };
         UnitStatus {
             activity: activity.into(),
@@ -1339,6 +1348,8 @@ impl Sim {
             self.cancel_task(s);
             self.start_sleep_here(s, now);
             return;
+        } else if let Task::Construct(j) = task {
+            self.construct_path_failed(s, j, now); // [construct]
         } else {
             self.cancel_task(s);
         }
@@ -1462,6 +1473,7 @@ impl Sim {
                 }
             }
             Task::Combat => self.combat_think(s, now), // [combat]
+            Task::Construct(j) => self.construct_think(s, j, now, urgent), // [construct]
             _ => {
                 let interruptible = matches!(task, Task::GoJob(_) | Task::GoPickup(..) | Task::GoStore(..) | Task::Wander | Task::Fetch(_) | Task::GoSite);
                 if urgent && interruptible {
@@ -1587,6 +1599,9 @@ impl Sim {
         }
         if self.society_decide(s, now) {
             return; // [society] burial, depot hauling, broker
+        }
+        if self.construct_try(s, now) {
+            return; // [construct] constructions, detailing, dumping
         }
         let ai = &self.ai[s];
         let labors = ai.labors;
@@ -1730,6 +1745,7 @@ impl Sim {
             Task::GoDine(id, _) => self.social_arrive_dine(s, id, now), // [social]
             Task::Job(_) | Task::Drink(_) | Task::Eat(_) | Task::Sleep(_) | Task::Craft => {}
             Task::Combat => self.combat_think(s, now), // [combat]
+            Task::Construct(_) => {} // [construct] handled in construct_think
         }
     }
 
@@ -1839,6 +1855,7 @@ impl Sim {
             }
             Task::Fetch(_) | Task::GoSite | Task::Craft => self.prod_cancel(s),
             Task::Combat => self.combat_cancel(s), // [combat]
+            Task::Construct(j) => self.construct_cancel(s, j), // [construct]
             Task::Idle | Task::Wander => {}
         }
         let ai = &mut self.ai[s];
@@ -2620,6 +2637,7 @@ impl Sim {
         let f = &it.flags;
         f.on_ground
             && !f.forbid
+            && !f.dump // [construct] dump-marked items go to the garbage dump, not to piles
             && !f.in_job
             && !f.construction
             && !f.in_building
