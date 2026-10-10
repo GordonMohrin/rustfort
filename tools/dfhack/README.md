@@ -3,7 +3,7 @@
 | script | purpose |
 |---|---|
 | `rustfort-export.lua` | Exports the loaded fort into `export/<fort>/` (format: `docs/EXPORT_FORMAT.md`). Read-only. |
-| `rustfort-verify.lua` | Spot-checks an export against the live game: sampled tiles, 3 citizens, counts, work orders, workshop job counts, farm crops, mods; since round 4 also door/bridge/lever/trap states and links, noble positions, entity relations, settings; since round 8 work details, kitchen, locations, crimes, animals, pregnancies, pile links and sampled filter leaves. Read-only. |
+| `rustfort-verify.lua` | Spot-checks an export against the live game: sampled tiles, 3 citizens, counts, work orders, workshop job counts, farm crops, mods; since round 4 also door/bridge/lever/trap states and links, noble positions, entity relations, settings; since round 8 work details, kitchen, locations, crimes, animals, pregnancies, pile links and sampled filter leaves; since round 9 DF's active-unit list and caged-unit positions, squad ammo, wealth, invasions and stockpile option group sizes. Read-only. |
 | `rustfort-probe.lua` | (round 6) Prints one JSON line about the loaded game (map loaded, fortress mode, fort and world names, year, citizens, paused, DFHack version) for Rustfort's "Import from Dwarf Fortress" dialog. Read-only, takes about 0.1 s. |
 
 The scripts are for DF 53.16 with DFHack 53.16-r2. Rustfort's title screen runs the probe and the exporter itself ("Import from Dwarf Fortress", see `crates/rf-app/README.md`); the commands below are for running them by hand.
@@ -207,6 +207,42 @@ Measured on Trussroads (10.10.2026, year 280, during a large siege: 153 hostiles
 
 Verification right after a `--skip-map` export (spot check against the live game, see below): **work details 12/12** (mode, members, labor count), **kitchen 1/1** (entries, no cook, no brew), **locations 23/23** (zones via the civzones' `location_id`, filled occupations via `world.occupations.all`), **crimes 1/1** (count at the site, sentenced), **stockpile links 43/43**, **sampled filter leaves 110/110** (the verify script resolves the first set, the first unset and the middle entry of 10 groups per pile itself and `compare` asks `StockpileSettings::filter_allows`), **tame animals 2/2**, **pregnant units 4/4**; against the full export also **tiles 375/375** and **aquifer flags 20/20**, plus all older checks (orders 54/54, doors 136/136, traps 79/79, squads 9/9, ...).
 
+## Round 9 (rev 2026-10-10f): off-map animals, squad ammo, wealth and invasions, stockpile options
+
+The exporter now also writes (format: `docs/EXPORT_FORMAT.md`, "Additions for round 9"):
+
+- `units.jsonl`: `flags.inactive` for every unit DF does not simulate (not in `world.units.active`); caged units inside a cage item take the cage's position; extras `chained`, `chain_building`, `cage_item`, `cage_building`, `pos_source`, `in_active_list`.
+- `squads.json`: `ammo`, `position_uniforms`, `patrol` (route waypoints), extras `carry_food`, `carry_water`, `ammo_items`.
+- `settings.json`: `WEALTH_CREATED/EXPORTED/IMPORTED/...`, `PROGRESS_POPULATION/TRADE/PRODUCTION`, `FORTRESS_RANK`, fort statistics and `INVASION_HISTORY` in `other`, plus the extras object `wealth`.
+- `invasions.json` (DF's invasion list) and `stockpile_options.json` (every stockpile leaf DF offers, about 30 000).
+
+**The off-map tame animals** (80 of 87 in r5): read-only probes of the live game showed that they are the pack animals and unsold livestock of **departed merchant caravans**. DF keeps them in `world.units.all` with `flags1.forest`, the fort's civ (dwarven caravans), position -30000 and `flags1.inactive` unset, but not in `world.units.active`, so DF does not simulate them. None of them is in a built cage, a cage item, a chain or a pasture. The exporter therefore marks them inactive instead of inventing a position; the importer does the same for older exports. The one real exception was a water buffalo inside a caravan's cage item at the depot (unit position -30000), which now gets the cage's position.
+
+Where the data comes from in DF 53.16 / DFHack 53.16-r2:
+
+| data | source |
+|---|---|
+| simulated units | `df.global.world.units.active` (ids), `flags1.forest` = "part of a merchant caravan" (DFHack `devel/export-dt-ini.lua`) |
+| cages, chains | `items.other.CAGE` with `CONTAINS_UNIT` general refs, `dfhack.items.getHolderBuilding`; `buildings.other.CHAIN` `.chained` |
+| squad ammo | `squad.ammo.ammunition` (`item_type`, `item_subtype`, `mattype`/`matindex`, `material_class` = `df.entity_material_category`, `amount`, `flags.use_combat/use_training`), `squad.ammo.ammo_items`, `squad.supplies` |
+| per-position uniforms | `squad.positions[i].equipment.uniform[category]` |
+| patrol routes | squad orders of type `PATROL_ROUTE` (`route_id`) -> `plotinfo.waypoints.routes` (`points` = point ids) -> `plotinfo.waypoints.points[].pos` |
+| wealth | `plotinfo.tasks.wealth` (`total` = created wealth, `exported`, `imported`, `offered`, parts) |
+| invasion tiers, fort stats | `plotinfo.progress_population/progress_trade/progress_production`, `fortress_rank`, `fortress_age`, `game_over`, `lost_to_siege_civ`; `plotinfo.tasks.total_deaths`, `invaders_repelled`, `excavated_tiles`, `num_artifacts` |
+| invasions | `plotinfo.invasions.list` (`civ_id`, `size`, `created_year`, `created_season_count`, `flags.siege/active`, `active_size1/2`) |
+| stockpile options | the raws and `world.raws.mat_table.organic_types` per group; inclusion rules as DFHack's stockpiles plugin (estimate) |
+
+Measured on Trussroads (10.10.2026, year 280 tick 152 130). **The fort has fallen:** `plotinfo.game_over` is true, `lost_to_siege_civ` = 39 (the goblins), 0 citizens; the game clock stood still during all exports. The export `export/tileshtulon-r7` documents that end state.
+
+| | value |
+|---|---|
+| total export time | **16.8 s** wall, 510 frames (`--skip-map` test export: 12.0 s) |
+| longest slice | 31-47 ms in all phases but one 187 ms slice in `creature_raws` (an unchanged phase; 4 other agents were compiling Rust on the same 6-core machine, and the skip-map run had 47 ms there) |
+| exported (round 9) | 311 units (0 citizens), 88 inactive (81 caravan animals off the map, 7 units at the map edge that had left), 60 caged units (1 placed at its cage item), 0 chained; 9 squads (Schuetzen: 200 iron bolts for combat, 120 wooden bolts for training), no patrol routes in the fort; created wealth 1 576 145, exported 216 264, imported 253 175, tiers population 3 / trade 5 / production 5; 5 invasions (34, 58, 143, 101, 148 goblins); 29 735 stockpile option leaves (1.4 MB) |
+| import (`rf-import`, release) | no count mismatches |
+
+Verification right after the full export (spot check against the live game): **tiles 375/375**, **aquifer flags 20/20**, and the new checks **units simulated by DF (inactive flag and position) 311/311** (1 unit not exported: dead or gone), **squad ammo 9/9**, **wealth 1/1**, **invasions 1/1**, **stockpile option group sizes 6/6** (meat, leather, corpses, coins, wood, weapon types, counted by the verify script from the raws on its own); plus all older checks (orders 65/65, doors 136/136, traps 79/79, squads 9/9, work details 12/12, locations 23/23, sampled filter leaves 110/110, ...).
+
 ## Spot check against the live game
 
 ```bash
@@ -235,7 +271,7 @@ The verify script uses plain field access, `getTileType`, `getPlantAtTile` and `
 - Round 4: `leaves_in` = `time_remaining` × 10 ticks (DFHack's `caravan` script: 120 per day); `trades` = the entity sent a caravan to this site or has one now (DF has no "trade partner" flag); `invasions` from the difficulty setting `Enemies` (Off/Normal/Hard/Custom + `sieges` flag); `LOCKED` = `door_flags.forbidden`.
 - Round 3 estimates: relationship kinds from `love`/`meet_count` (wiki thresholds; `Grudge` = love < 0 is a guess, Trussroads has none), wound `severity` = `surface_perc` × 100. Emotions with emotion `ANYTHING` and thought `None` (about 40 %) are exported as DF stores them.
 - Not exported yet:
-  - jobs outside workshop/furnace queues (hauling, digging, planting), zones' detailed settings (pen/pond/archery/tomb options), squad ammunition and supplies, patrol routes (stockpile item filters are exported since round 8)
+  - jobs outside workshop/furnace queues (hauling, digging, planting), zones' detailed settings (pen/pond/archery/tomb options), squad food/water supplies beyond the carry settings (stockpile item filters are exported since round 8; squad ammunition and patrol routes since round 9)
   - DF's value of personal rooms (DF 53.16 keeps none; see "Room evaluation" in docs/EXPORT_FORMAT.md)
   - historical figures beyond the relationship list, syndromes, preferences (likes/dislikes), dreams, mannerisms
   - flows (miasma, smoke), block hashes

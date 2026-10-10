@@ -44,6 +44,8 @@ export/<fort>/
   crimes.json        rf_core::Crime array: justice cases at the site (round 8, optional)
   punishments.json   punishments DF is carrying out (round 8, optional; rf_import::load_extras)
   haul_routes.json   rf_core::HaulRoute array: hauling routes with stops (round 8, optional)
+  stockpile_options.json  every stockpile leaf DF offers, per category/group -> World::stockpile_options (round 9, optional)
+  invasions.json     every invasion DF sent (plotinfo.invasions.list; round 9, optional; rf_import::load_extras)
   progress.json      exporter status, rewritten about once per second (not imported)
   error.json         only if the export aborted (not imported)
   export.lock        only while an export is running
@@ -821,3 +823,83 @@ Caste extras (read by `rf_import::load_extras` as `AnimalProducts` for castes th
 ### manifest.json: round-8 keys
 
 New `counts`: `work_details`, `kitchen`, `locations`, `occupations`, `crimes`, `punishments`, `haul_routes`, `stockpile_filters` (all filter strings), `pets` (units with an owner), `pastured`, `slaughter`, `pregnant`. The importer compares all but `punishments` with what it loaded (before its repairs). New phases in `max_slice_by_phase`: `pile_filters`, `work_details`, `kitchen`, `locations`, `crimes`, `haul_routes`.
+
+## Additions for round 9 (still format v1)
+
+Exporter rev `2026-10-10f`. New files `stockpile_options.json` and `invasions.json`; new unit, squad and settings fields. Everything is optional for the importer (`rf_import::round9`).
+
+### units.jsonl: units DF does not simulate, cages, chains
+
+**Finding (live game, 10.10.2026):** the 80-82 tame animals at position -30000 in the r4-r6 exports are **animals of departed merchant caravans** (pack animals and unsold livestock). DF keeps them in `world.units.all` with `flags1.forest` ("part of a merchant caravan" in DFHack's `devel/export-dt-ini.lua`), `civ_id` = the fort's civ (the dwarven caravans), no owner, no general or specific refs, birth years 208-278, and `flags1.inactive` **unset**, so `dfhack.units.isActive` is true. But they are **not in `world.units.active`**: DF does not simulate them. None is in a built cage, a cage item, a chain or a pasture. Their number grows with every caravan (r1 54, r4 60, r5 80, r6/r7 82). Of the 82 off-map tame units in r7, 81 are such caravan animals and 1 is a water buffalo in a caravan's (foreign) cage item at the depot, whose unit position DF leaves at -30000.
+
+| field | rule since round 9 |
+|---|---|
+| `flags.inactive` | `not isActive(u)` **or** the unit is not in `world.units.active` (DF does not simulate it). r7: the 81 caravan animals plus 7 units at the map edge that left the map (a human caravan, its horses, a goblin) |
+| `pos` | a caged unit whose own position is off the map gets the position of its cage item (`CONTAINS_UNIT` ref of `items.other.CAGE`); everything else as before |
+
+Extras: `chained` (`flags1.chained` or the unit is a chain building's `chained` unit), `chain_building`, `cage_item`, `cage_building` (the built cage holding the cage item, -1), `pos_source` (`unit`, `cage_item`, `offsite`), `in_active_list`.
+
+The importer marks, for exports before rev `2026-10-10f`, every off-map unit that is not caged as inactive (warning `N off-map units marked inactive ...`; Gordon's r5 export: 80 units, all caravan animals). rf-sim already ignored units without a map position (`Kind::Dead`); with the flag set they also leave the animal lists, the population counts and the UI.
+
+### squads.json: ammunition, per-position uniforms, patrol routes, supplies
+
+New `rf_core::Squad` fields (they existed in rf-core since round 8, the exporter now fills them):
+
+| field | source |
+|---|---|
+| `ammo` | `squad.ammo.ammunition` (`squad_ammo_spec`): `item` = `SUBTYPE[@material]`: the itemdef id (`ITEM_AMMO_BOLTS`), then `@` + the material token when `mattype >= 0` (`@INORGANIC:IRON`) or `@` + the upper-case `df.entity_material_category` name when only `material_class` is set (`@WOOD`); `amount` (total rounds); `combat` / `training` = `flags.use_combat` / `flags.use_training` |
+| `position_uniforms` | per position the uniform entries of `positions[i].equipment.uniform` (all categories), same `ITEM_TYPE[:SUBTYPE][@material]` strings as `uniform`; an empty list = an empty position or no uniform |
+| `patrol` | waypoints of the patrol route a `PATROL_ROUTE` order names (explicit squad orders, else this month's schedule): `plotinfo.waypoints.routes[id].points` -> `plotinfo.waypoints.points[pid].pos` |
+
+Extras: `patrol_route`, `patrol_route_name`, `carry_food`, `carry_water` (`squad.supplies`), `ammo_items` (item ids DF assigned as squad ammo). Trussroads: squad "Schuetzen" keeps 200 iron bolts for combat and 120 wooden bolts for training; the fort has no waypoints or routes, so `patrol` is empty everywhere (checked: `#points` = `#routes` = 0).
+
+### settings.json: wealth, invasion tiers, fort statistics
+
+New `settings.other` entries (`KEY=value`) and the same values in the extras object `wealth`:
+
+| key | source | Trussroads r7 |
+|---|---|---|
+| `WEALTH_CREATED` | `plotinfo.tasks.wealth.total` (= weapons + armor + furniture + other + architecture + displayed + held; DF's "created wealth") | 1 576 145 |
+| `WEALTH_EXPORTED`, `WEALTH_IMPORTED`, `WEALTH_OFFERED` | `tasks.wealth.exported` / `imported` / `offered` (trade totals) | 216 264 / 253 175 / 0 |
+| `WEALTH_WEAPONS`, `_ARMOR`, `_FURNITURE`, `_OTHER`, `_ARCHITECTURE`, `_DISPLAYED`, `_HELD` | the parts of `tasks.wealth` | 75 491, 133 531, 235 905, 486 272, 460 214, 184 430, 302 |
+| `PROGRESS_POPULATION`, `PROGRESS_TRADE`, `PROGRESS_PRODUCTION` | `plotinfo.progress_*`: the tier index (0-5) DF reached in each of the `ENEMY_POP_TRIGGER` / `ENEMY_TRADE_TRIGGER` / `ENEMY_PROD_TRIGGER` lists | 3 / 5 / 5 |
+| `FORTRESS_RANK` | `plotinfo.fortress_rank` | 3 |
+| `FORTRESS_AGE`, `TREES_REMOVED`, `GAME_OVER`, `LOST_TO_SIEGE_CIV` | `plotinfo.*` | 2 743 766 ticks, 238, true, 39 |
+| `FORT_TOTAL_DEATHS`, `FORT_TOTAL_INSANITIES`, `FORT_TOTAL_EXECUTIONS`, `FORT_NUM_ARTIFACTS`, `FORT_INVADERS_REPELLED`, `FORT_EXCAVATED_TILES` | `plotinfo.tasks.*` | 121, 13, 0, 46, 336, 23 410 |
+| `INVASION_HISTORY` | `year:year_tick:size:siege|raid` per `plotinfo.invasions.list` entry | `274:85482:34:siege,275:292484:58:siege,277:37570:143:siege,278:384970:101:siege,280:145595:148:siege` |
+
+`rf_import::wealth(&settings)` parses them into `WealthInfo` (`None` for older exports); `load_extras` returns it as `Extras::wealth`. `tasks.wealth` is DF's current statistic at export time, not a history: the r5 values (year 279) cannot be read back from the live game any more. Imported and exported wealth only grow, so r7's values are upper bounds for r5; `PROGRESS_TRADE` and `PROGRESS_PRODUCTION` were already at the top tier (5) before the r6 siege (inference: DF raised the tiers before sending the 148-unit siege of year 280).
+
+### invasions.json
+
+One object per `plotinfo.invasions.list` entry (`rf_import::InvasionInfo`, `load_invasions` / `Extras::invasions`): `id`, `civ_id`, `size` (the units DF planned), `year`, `year_tick` (`created_season_count`), `siege` / `active` / `layer_source` / `undead_source` (`flags`), `mission`, `active_size1`, `active_size2`, `duration_counter`, `total_death_cage_number`. Trussroads: 5 goblin sieges (civ 39) of 34, 58, 143, 101 and 148 units in the years 274, 275, 277, 278 and 280; the last one was still active at export time.
+
+### stockpile_options.json
+
+Every leaf DF's stockpile editor offers, in the `category/group/token` scheme of the stockpile filters (same token kinds and groups as the table under "buildings.jsonl: stockpile filters and links"):
+
+```json
+{"scheme":"category/group/token","misc":["allow_organic","allow_inorganic"],
+ "categories":[{"category":"food","options":["prepared_meals"],
+                "groups":[{"group":"meat","leaves":[["CREATURE:TOAD:MUSCLE","toad muscle"], ...]}, ...]}, ...]}
+```
+
+Leaves are `[token, label]`; labels are DF's names (creature `name[0]`, `matinfo:toString()` for organic materials, the inorganic's solid state name, plant, itemdef and color names, item and furniture types in lower case). The importer flattens the file into `World::stockpile_options` (`category/options/<name>`, `misc/options/<name>` for the switches) and `Sim::stockpile_filter_options(category)` serves it to the editor.
+
+Which entries a group lists:
+
+| group kind | entries |
+|---|---|
+| creature | every creature except `DOES_NOT_EXIST` ones and `EQUIPMENT_WAGON` |
+| organic | the whole organic material table of the group (`mat_table.organic_types[cat]`), as DF's vectors |
+| inorganic | by group (ESTIMATE, rules as DFHack's stockpiles plugin): `stone/mats` stones (`IS_STONE` without `NO_STONE_STOCKPILE`), `stone/ore` those with `metal_ore`, `gems/rough_mats` gems, `gems/cut_mats` gems and stones, `finished_goods/mats` metals, stones and gems, `furniture/mats` and `bars_blocks/blocks_mats` metals and stones, `ammo`, `coins`, `bars_blocks/bars_mats`, `weapons`, `armor` metals |
+| plant (wood) | tree plants (`TREE` flag) |
+| item type | `finished_goods/type`: the 26 finished-goods types (`CHAIN` ... `BOOK`); `refuse/type`: every item type except `NONE BAR SMALLGEM BLOCKS ROUGH BOULDER CORPSE CORPSEPIECE ROCK ORTHOPEDIC_CAST` (ESTIMATE, DFHack's rules) |
+| furniture type, itemdef, color, quality, lists A-F | all entries |
+| builtin (gems other mats) | the glass materials |
+
+Trussroads r7: 29 735 leaves (12 232 meats, 1 056 creatures in each of the 10 creature groups, 2 046 globs, 705 leathers and parchments; stone 89 + 16 ores; 37 metals); the file is about 1.4 MB.
+
+### manifest.json: round-9 keys
+
+New `counts`: `stockpile_options` (leaves), `invasions`, `offsite_units` (inactive units off the map), `caged_units`, `chained_units`. New phase `pile_options` in `max_slice_by_phase`.
