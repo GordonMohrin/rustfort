@@ -1,5 +1,45 @@
 # Rustfort: progress
 
+## v0.4.0 (2026-10-10): defenses, ranged combat, society, fluids
+
+**New since 0.3:**
+- **Round-4 export (year 277).** It adds:
+  - building states: doors locked/open, bridges raised/lowered with direction, levers pulled, traps loaded with their contents
+  - mechanism links in both directions (e.g. the Hoftor bridge to its lever)
+  - 58 entities with war/peace/trade relations, nobles and mandates
+  - DF settings (pop cap 90/120/120, temperature off)
+  - 163 historical-figure names; caravans and diplomats
+- **Defenses:**
+  - locked doors that invaders path around (building destroyers break them), pet-passable doors
+  - bridges that raise, lower and retract (crushing and flinging), levers as a 'Pull lever' job with DF's delay
+  - cage, stone-fall and weapon traps (weapon traps use the combat damage model), upright spikes, pressure plates
+  - in a natural 21-goblin siege on your real Fallenschnecke, all 21 were hit by traps (18 killed, 3 caged) and 86 of 88 citizens survived
+- **Ranged combat:**
+  - crossbows and bows with ammo by launcher, LOS through fortifications, projectile damage through the material model, ammo breaking or landing
+  - marksdwarves back off and fall back to melee; archery training; bowgoblins in sieges
+  - your Schuetzen fired 131 shots in the running siege
+- **Society:**
+  - migrant waves per DF caps; pregnancies, births and aging
+  - burial in coffins and tombs, ghosts when a corpse stays unburied
+  - caravans (humans, dwarves) with depot, broker and barter by DF item value
+  - nobles, elections and mandates
+- **Fluids:**
+  - DF flow with active cells only (settled water costs nothing), pressure, evaporation, mud, aquifer leaks, obsidian
+  - drowning, swimming, magma burns
+  - the real fort stays stable over 2 years (0 flowing cells after a day)
+- **UI:**
+  - door lock/forbid, lever pull, links shown and drawn, bridge and trap details
+  - trade screen (two columns, values, merchant replies), nobles screen, population info, settings (pop cap, invasions)
+  - **the simulation runs on its own thread:** max speed about 60k ticks/s in play mode with a 0.7 ms frame CPU
+- **Result:** 2 years headless on the r4 fort with `--standdown`: 88 citizens grew to 94 (births and migrants, cap 90/120), one siege beaten, at about 47k ticks/s.
+
+**Known gaps (next):**
+- No temperature (your world has it off), pumps, power or minecarts.
+- Raised bridges are still drawn lowered; occupied cages are not hauled away.
+- Wagons find no 3-wide path to your depot; no diplomats or liaisons.
+- Moods and artifacts, engravings, hospitals/doctors, infections, sparring.
+- Forgotten beasts as their own event; caverns as a source of creatures.
+
 ## v0.3.0 (2026-10-10): psychology, industry, combat
 
 **New since 0.2:**
