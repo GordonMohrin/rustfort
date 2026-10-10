@@ -411,6 +411,14 @@ pub struct CombatStats {
     pub invaders_killed: u64,
     pub invaders_left: u64,
     pub fort_deaths: u64,
+    /// [audit-combat] Times a wounded soldier on duty went to bed instead of training.
+    pub soldiers_rested: u64,
+    /// [audit-combat] Lurking (dormant) hostiles spotted and engaged by soldiers on duty.
+    pub lurkers_engaged: u64,
+    /// [audit-combat] Weapon-trap kills that jammed the trap (wiki: 50 %).
+    pub traps_jammed: u64,
+    /// [audit-combat] Syndromes (venom, breath) that took hold.
+    pub syndromes: u64,
 }
 
 /// Combat, military and invasion state of the simulation.
@@ -2189,6 +2197,20 @@ impl Sim {
         f.wounds.iter().any(|w| w.flags & wf::BROKEN != 0) || total > 15_000 || f.blood * 10 < f.blood_max * 7 || self.health_wants_bed(s) // [moods]
     }
 
+    /// [audit-combat] An able hostile within 3 tiles (same z +-1): too close to lie down.
+    pub(crate) fn fight_nearby(&self, s: usize) -> bool {
+        let p = self.upos(s);
+        let now = self.ticks;
+        self.combat.hostiles.iter().any(|&h| {
+            let h = h as usize;
+            if self.ai[h].kind == Kind::Dead || !self.can_fight(h, now) || self.combat.f[h].role == Role::Leave {
+                return false;
+            }
+            let q = self.upos(h);
+            (p.x as i32 - q.x as i32).abs().max((p.y as i32 - q.y as i32).abs()) <= 3 && (p.z as i32 - q.z as i32).abs() <= 1
+        })
+    }
+
     // ------------------------------------------------------------------ unit control
 
     /// Units whose AI is run by the combat module (hostiles, fighters, soldiers, fleeing, ...).
@@ -2372,7 +2394,11 @@ impl Sim {
             if self.ai[h].kind == Kind::Dead || self.combat.f[h].role == Role::Leave {
                 continue;
             }
-            if !helpless && self.combat.f[h].target == NONE && self.combat.f[h].dormant_until > now {
+            // [audit-combat] A lurking (dormant) hostile is still seen by soldiers on duty (wiki
+            // Military: they "will attack any hostiles they encounter"); checked every 100 ticks
+            // to keep idle cave wildlife cheap. Civilians only react to active hostiles.
+            let lurking = !helpless && self.combat.f[h].target == NONE && self.combat.f[h].dormant_until > now;
+            if lurking && now % 100 != 0 {
                 continue;
             }
             let hp = self.nav.xyz(self.ai[h].pos as usize);
@@ -2390,8 +2416,11 @@ impl Sim {
                 let dz = (hp.2 as i32 - tp.2 as i32).abs();
                 let f = &self.combat.f[t];
                 let soldier = f.duty != crate::military::Duty::None;
-                if helpless && !soldier {
-                    continue; // [defense]
+                if (helpless || lurking) && !soldier {
+                    continue; // [defense] [audit-combat]
+                }
+                if soldier && f.role == Role::Patient {
+                    continue; // [audit-combat] wounded soldiers stay in bed
                 }
                 let radius = if soldier { SIGHT } else { 12 };
                 if cheb > radius || dz > 2 {
@@ -2405,6 +2434,9 @@ impl Sim {
                     if f.role != Role::Soldier || f.target == NONE {
                         f.role = Role::Soldier;
                         f.target = h as u32;
+                        if lurking {
+                            self.combat.stats.lurkers_engaged += 1; // [audit-combat]
+                        }
                         self.engage_now(t, now);
                     }
                 } else if f.role == Role::None || f.role == Role::Patient || (f.role == Role::Civilian && f.threat == NONE) {
@@ -2432,7 +2464,7 @@ impl Sim {
 
     // ------------------------------------------------------------------ recovery
 
-    fn patient_think(&mut self, s: usize, now: u64) {
+    pub(crate) fn patient_think(&mut self, s: usize, now: u64) {
         if self.needs_break(s) && !self.health_keep_in_bed(s) { // [moods] bedridden patients are fed
             self.release_rest(s);
             self.combat.f[s].role = Role::None;
@@ -2692,5 +2724,65 @@ mod tests {
         let wiki = 0.06 * str_ * vel / (1.0 + size / (iron.dens * 800.0));
         assert!((m - wiki).abs() < 1e-3, "{m} vs {wiki}");
         assert!(m > 90.0 && m < 95.0);
+    }
+
+    /// [audit-combat] Surface arena: dwarf 1 and the hostile cat 100 only.
+    fn surface_arena(dwarf: (i16, i16), cat: (i16, i16)) -> (Sim, usize, usize, i16) {
+        let mut w = rf_core::World::synthetic(64, 64, 20);
+        let sz = (20i16 * 2 / 3).max(2);
+        w.units.retain(|u| u.id == 1 || u.id == 100);
+        for u in &mut w.units {
+            u.pos = if u.id == 1 { Pos::new(dwarf.0, dwarf.1, sz) } else { Pos::new(cat.0, cat.1, sz) };
+            u.invader_civ = -1;
+            u.thirst_timer = 0;
+            u.hunger_timer = 0;
+            u.sleepiness_timer = 0;
+        }
+        let mut sim = Sim::new(w, 3);
+        sim.set_invasions(false);
+        let (d, c) = (sim.unit_slot[&1], sim.unit_slot[&100]);
+        (sim, d, c, sz)
+    }
+
+    #[test]
+    fn soldiers_spot_a_lurking_hostile() {
+        // Before round 6 a dormant hostile (no prey in its own sight) was invisible to soldiers
+        // until it woke up by itself (400-500 ticks later); now soldiers on duty see it.
+        let (mut sim, d, c, sz) = surface_arena((5, 32), (50, 32));
+        sim.make_hostile(100);
+        sim.run_ticks(30);
+        assert!(sim.combat.f[c].dormant_until > sim.ticks, "the cat lurks");
+        let q = sim.world.idx(Pos::new(37, 32, sz)).unwrap() as u32;
+        sim.move_to(d, q, sim.ticks);
+        let sq = sim.create_squad("Watch");
+        sim.assign_squad_member(sq, 0, 1);
+        sim.order_squad(sq, crate::SquadOrder::Train);
+        sim.run_ticks(150);
+        assert!(sim.combat.f[c].dormant_until > sim.ticks, "the cat is still dormant");
+        assert_eq!(sim.combat.f[d].target, c as u32, "the soldier goes for the lurker");
+        assert!(sim.combat.stats.lurkers_engaged >= 1);
+    }
+
+    #[test]
+    fn wounded_soldier_rests_instead_of_training() {
+        let (mut sim, d, _c, _sz) = surface_arena((20, 32), (60, 60));
+        let sq = sim.create_squad("Guard");
+        sim.assign_squad_member(sq, 0, 1);
+        sim.order_squad(sq, crate::SquadOrder::Train);
+        sim.run_ticks(100);
+        assert_eq!(sim.combat.f[d].role, Role::Soldier);
+        // A broken bone (as after a fight): DF sends the dwarf to bed.
+        sim.ensure_body(d);
+        let part = 0u16;
+        sim.combat.f[d].wounds.push(WoundS { part, layer: u16::MAX, flags: wf::BROKEN, sev: 5_000, bleed: 0, pain: 10, age: 0 });
+        sim.list_wounded(d);
+        sim.run_ticks(200);
+        assert_eq!(sim.combat.f[d].role, Role::Patient, "wounded soldier rests");
+        assert!(matches!(sim.combat.f[d].sub, Sub::Rest(_) | Sub::Resting(_)));
+        assert!(sim.combat.stats.soldiers_rested >= 1);
+        // Healed: back on duty.
+        sim.combat.f[d].wounds.clear();
+        sim.run_ticks(400);
+        assert_eq!(sim.combat.f[d].role, Role::Soldier, "back on duty after healing");
     }
 }

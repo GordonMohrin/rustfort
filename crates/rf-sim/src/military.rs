@@ -133,7 +133,11 @@ impl Sim {
         let role = self.combat.f[s].role;
         if role == Role::None {
             let f = &self.combat.f[s];
-            let new = if f.duty != Duty::None {
+            // Wounded soldiers rest like everybody else until healed or treated (wiki Health
+            // care: injured dwarves "go (or are brought) to recuperate"), then resume duty.
+            let new = if f.duty != Duty::None && self.needs_rest(s) && !self.fight_nearby(s) {
+                Role::Patient
+            } else if f.duty != Duty::None {
                 Role::Soldier
             } else if self.combat.mil.alert.is_some() && !self.combat.mil.alert_list.is_empty() {
                 Role::Civilian
@@ -199,6 +203,14 @@ impl Sim {
         if self.needs_break(s) {
             self.ai[s].task = Task::Idle;
             self.decide(s, now);
+            return;
+        }
+        // Wounded and no enemy at hand: go to bed (a Kill order still waits for recovery).
+        if self.needs_rest(s) && !self.fight_nearby(s) {
+            self.combat.f[s].role = Role::Patient;
+            self.combat.f[s].target = NONE;
+            self.combat.stats.soldiers_rested += 1;
+            self.patient_think(s, now);
             return;
         }
         if let Duty::Kill(uid) = duty {
