@@ -709,15 +709,22 @@ fn track_neighbors(w: &World, p: Pos) -> u8 {
 /// Rough check whether DF would let you place construction `k` at `p` (for the preview
 /// colors only; the sim decides).
 pub fn can_construct(w: &World, k: ConstructionKind, p: Pos) -> bool {
+    let near: Vec<&Building> = w.buildings.iter().filter(|b| b.z == p.z && b.contains(p)).collect();
+    can_construct_near(w, k, p, &near)
+}
+
+/// [`can_construct`] with the buildings that may overlap `p` collected beforehand (the preview
+/// checks a whole rectangle per frame).
+fn can_construct_near(w: &World, k: ConstructionKind, p: Pos, near: &[&Building]) -> bool {
     let Some(t) = w.tile(p) else { return false };
     if t.hidden() {
         return false;
     }
     let tt = w.tiletypes.get(t.tt);
     if k == ConstructionKind::Remove {
-        return tt.material == TtMaterial::Construction || w.buildings.iter().any(|b| b.kind == "Construction" && b.contains(p));
+        return tt.material == TtMaterial::Construction || near.iter().any(|b| b.kind == "Construction" && b.contains(p));
     }
-    if w.buildings.iter().any(|b| b.kind != "Stockpile" && b.kind != "Civzone" && b.contains(p)) {
+    if near.iter().any(|b| b.kind != "Stockpile" && b.kind != "Civzone" && b.contains(p)) {
         return false;
     }
     match k {
@@ -741,10 +748,16 @@ pub fn draw_construct_preview(g: &mut Game) {
     let sp = std::mem::take(&mut g.rend.r5).unwrap_or_else(|| R5Sprites::load(&g.gfx));
     let (mut good, mut bad) = (0, 0);
     let sub = format!("{k:?}");
+    let oks: Vec<bool> = {
+        let w = &g.sim.world;
+        let near: Vec<&Building> = w.buildings.iter().filter(|b| b.z == z && b.x2 >= lo.x && b.x1 <= hi.x && b.y2 >= lo.y && b.y1 <= hi.y).collect();
+        (lo.y..=hi.y).flat_map(|y| (lo.x..=hi.x).map(move |x| (x, y))).map(|(x, y)| can_construct_near(w, k, Pos::new(x, y, z), &near)).collect()
+    };
+    let mut i = 0;
     for y in lo.y..=hi.y {
         for x in lo.x..=hi.x {
-            let p = Pos::new(x, y, z);
-            let ok = can_construct(&g.sim.world, k, p);
+            let ok = oks[i];
+            i += 1;
             if ok {
                 good += 1;
             } else {
