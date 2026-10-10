@@ -183,8 +183,9 @@ impl Sim {
         Some(SiegePlan { civ, number, strength, tier, regulars, monsters, mounts, masters_pct })
     }
 
-    /// Mount race of the invaders: a `MOUNT_EXOTIC` cave creature of the save's raws, else
-    /// beak dogs (wiki: goblins ride beak dogs).
+    /// Mount race of the invaders: the first `MOUNT_EXOTIC` cave creature in the save's raws
+    /// (DF's raw order; Gordon's world: voracious cave crawlers, as in DF's r6 siege), else beak
+    /// dogs (wiki: goblins ride beak dogs).
     pub(crate) fn war_mount_race(&self) -> String {
         self.world
             .creature_raws
@@ -373,7 +374,13 @@ mod tests {
         let d = sim.unit_slot[&sim.world.units[0].id];
         let dp = sim.upos(d);
         // The goblin stands still 6 tiles away (on the dwarf's level).
-        let q = (1..10).filter_map(|k| sim.world.idx(Pos::new(dp.x + k, dp.y, dp.z))).find(|&i| sim.nav.walkable(i)).unwrap() as u32;
+        let dc = sim.nav.comp_near(sim.ai[d].pos as usize);
+        let q = (-9i16..=9)
+            .flat_map(|dy| (-9i16..=9).map(move |dx| (dx, dy)))
+            .filter(|&(dx, dy)| dx.abs().max(dy.abs()) >= 5)
+            .filter_map(|(dx, dy)| sim.world.idx(Pos::new(dp.x + dx, dp.y + dy, dp.z)))
+            .find(|&i| sim.nav.walkable(i) && sim.nav.comp_root(i) == dc)
+            .expect("a hall tile 5+ tiles away") as u32;
         let now = sim.ticks;
         sim.move_to(g, q, now);
         sim.ai[g].wake = u64::MAX - 1;
@@ -381,14 +388,20 @@ mod tests {
         sim.combat.f[d].role = Role::Civilian;
         sim.combat.f[d].threat = g as u32;
         sim.ai[d].thirst = crate::needs::THIRST_SEEK + 10;
-        let cheb = sim.upos(d).dist(sim.upos(g));
-        if cheb > 2 {
-            sim.engage_now(d, now);
-            sim.run_ticks(3);
-            assert_eq!(sim.combat_stats().flee_breaks, 1, "thirsty civilian goes to drink");
-            assert_ne!(sim.combat.f[d].role, Role::Civilian);
-            sim.run_ticks(40);
-            assert!(sim.combat.f[d].role != Role::Civilian || sim.combat.f[d].threat == NONE, "not grabbed again while the goblin is not adjacent");
+        assert!(sim.upos(d).dist(sim.upos(g)) > 2);
+        sim.engage_now(d, now);
+        sim.run_ticks(3);
+        assert_eq!(sim.combat_stats().flee_breaks, 1, "thirsty civilian goes to drink");
+        assert_ne!(sim.combat.f[d].role, Role::Civilian);
+        // On its way it only flees again once it comes within 2 tiles of the goblin.
+        let mut was_free = true;
+        for _ in 0..200 {
+            sim.run_ticks(1);
+            let grabbed = sim.combat.f[d].role == Role::Civilian && sim.combat.f[d].threat != NONE;
+            if grabbed && was_free {
+                assert!(sim.upos(d).dist(sim.upos(g)) <= 2, "grabbed again while the goblin was not adjacent");
+            }
+            was_free = !grabbed;
         }
     }
 
