@@ -329,6 +329,23 @@ pub fn building_sheet(g: &mut Game, id: i32, r: Rect) {
             y += ALL_STOCK_CATEGORIES.len().div_ceil(2) as f32 * (lh + 2.0 * s);
             let n = g.sim.world.items.iter().filter(|it| b.contains(it.pos) && it.flags.on_ground).count();
             g.font.draw(&format!("{n} items stored"), x, y + 4.0 * s, s, col::TEXT_DIM);
+            // [app8] DF Steam's detailed settings, containers and links.
+            y += lh + 8.0 * s;
+            let sp = b.stockpile.clone().unwrap_or_default();
+            let info = format!(
+                "Bins {}, barrels {}, wheelbarrows {}; gives to {}, takes from {}{}",
+                sp.max_bins,
+                sp.max_barrels,
+                sp.max_wheelbarrows,
+                sp.give_to.len(),
+                sp.take_from.len(),
+                if sp.filters.is_empty() { String::new() } else { format!("; {} filters", sp.filters.len()) }
+            );
+            g.font.draw(&clip(&info, maxc), x, y, s, col::TEXT_DIM);
+            y += lh + 4.0 * s;
+            if text_button(&mut g.ui, &g.font, Rect::new(x, y, 24.0 * 8.0 * s, GH * s + 8.0 * s), "Settings, links...", BtnState::Normal) {
+                super::round8::open_pile(g, b.id);
+            }
         }
         _ => {
             // [round 4] Doors, levers, bridges, traps; the trade depot.
@@ -359,6 +376,14 @@ pub fn building_sheet(g: &mut Game, id: i32, r: Rect) {
             if b.kind == "Civzone" {
                 let furn = g.sim.world.buildings.iter().filter(|o| o.kind != "Civzone" && o.kind != "Stockpile" && o.z == b.z && b.contains(o.center)).count();
                 lines.push(format!("{furn} pieces of furniture inside"));
+                // [app8] Location of the zone, pen animals.
+                if let Some(l) = super::places::location_of_zone(g, b.id) {
+                    lines.push(format!("Location: {} ({})", l.name, l.kind.to_lowercase()));
+                }
+                if matches!(b.subtype.as_str(), "Pen" | "Pasture") {
+                    let n = g.sim.animals().iter().filter(|a| a.pasture == b.id).count();
+                    lines.push(format!("{n} animals assigned"));
+                }
             }
             if !b.items.is_empty() {
                 let n = b.items.len();
@@ -367,6 +392,19 @@ pub fn building_sheet(g: &mut Game, id: i32, r: Rect) {
             for l in lines {
                 g.font.draw(&clip(&l, maxc), x, y, s, col::TEXT);
                 y += lh;
+            }
+            // [app8] DF's zone buttons: pick animals for a pen, make a location from a meeting area.
+            if b.kind == "Civzone" {
+                let bh = GH * s + 8.0 * s;
+                if matches!(b.subtype.as_str(), "Pen" | "Pasture") && text_button(&mut g.ui, &g.font, Rect::new(x, y + 4.0 * s, 22.0 * 8.0 * s, bh), "Pick animals...", BtnState::Normal) {
+                    g.r8.an_tab = 0;
+                    g.toggle_screen(crate::game::Screen::Animals);
+                }
+                if matches!(b.subtype.as_str(), "MeetingHall" | "Hospital" | "DiningHall") && super::places::location_of_zone(g, b.id).is_none() && text_button(&mut g.ui, &g.font, Rect::new(x, y + 4.0 * s, 22.0 * 8.0 * s, bh), "Make location...", BtnState::Normal) {
+                    g.toggle_screen(crate::game::Screen::Places);
+                    g.r8.pl_tab = 1;
+                    g.r8.pl_make = Some(b.id);
+                }
             }
         }
     }

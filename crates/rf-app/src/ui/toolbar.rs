@@ -59,12 +59,12 @@ const fn tb(action: Action, label: &'static str, icon: &'static str, fallback: I
 pub const LEFT: &[ToolButton] = &[
     tb(Action::Citizens, "Citizens", "BUTTON_INFO_CREATURES", Ico::Smiley, "D_UNITLIST", true),
     tb(Action::Tasks, "Tasks (not yet)", "BUTTON_INFO_TASKS", Ico::Glyph(19, [200, 200, 200]), "D_JOBLIST", false),
-    tb(Action::Places, "Places (not yet)", "BUTTON_INFO_PLACES", Ico::Glyph(127, [200, 200, 200]), "", false),
-    tb(Action::Labor, "Labor", "BUTTON_INFO_LABOR", Ico::Hammer, "D_LABOR", true),
+    tb(Action::Places, "Places: locations, zones, stockpiles, workshops", "BUTTON_INFO_PLACES", Ico::Glyph(127, [200, 200, 200]), "D_LOCATIONS", true), // [app8]
+    tb(Action::Labor, "Labor: work details, kitchen", "BUTTON_INFO_LABOR", Ico::Hammer, "D_LABOR", true),
     tb(Action::WorkOrders, "Work orders", "BUTTON_INFO_WORK_ORDERS", Ico::Glyph(240, [220, 200, 150]), "D_ORDERS", true),
     tb(Action::Nobles, "Nobles and administrators", "BUTTON_INFO_NOBLES", Ico::Glyph(157, [240, 210, 90]), "D_NOBLES", true),
-    tb(Action::Objects, "Objects (not yet)", "BUTTON_INFO_OBJECTS", Ico::Glyph(254, [180, 160, 120]), "", false),
-    tb(Action::Justice, "Justice (not yet)", "BUTTON_INFO_JUSTICE", Ico::Glyph(241, [200, 200, 220]), "", false),
+    tb(Action::Objects, "Objects: artifacts", "BUTTON_INFO_OBJECTS", Ico::Glyph(254, [180, 160, 120]), "D_ARTLIST", true), // [app8]
+    tb(Action::Justice, "Justice", "BUTTON_INFO_JUSTICE", Ico::Glyph(241, [200, 200, 220]), "D_JUSTICE", true), // [app8]
 ];
 
 pub const CENTER: &[ToolButton] = &[
@@ -85,7 +85,7 @@ pub const CENTER: &[ToolButton] = &[
 pub const RIGHT: &[ToolButton] = &[
     tb(Action::Squads, "Squads", "BUTTON_SQUADS", Ico::Glyph(24, [230, 100, 90]), "D_SQUADS", true),
     tb(Action::Reports, "Reports", "", Ico::Glyph(19, [240, 200, 90]), "D_ANNOUNCE", true),
-    tb(Action::World, "World (not yet)", "BUTTON_WORLD", Ico::Glyph(9, [120, 180, 240]), "", false),
+    tb(Action::World, "World: civilizations, caravans", "BUTTON_WORLD", Ico::Glyph(9, [120, 180, 240]), "D_WORLD", true), // [app8]
 ];
 
 pub struct DigEntry {
@@ -134,6 +134,11 @@ fn is_active(g: &Game, a: Action) -> bool {
         Action::Smooth => g.submenu == Submenu::Smooth,
         Action::Traffic => g.submenu == Submenu::Traffic,
         Action::Items => g.submenu == Submenu::Items,
+        // [app8]
+        Action::Places => g.screen == Screen::Places,
+        Action::Objects => g.screen == Screen::Objects,
+        Action::Justice => g.screen == Screen::Justice,
+        Action::World => g.screen == Screen::World,
         _ => false,
     }
 }
@@ -167,6 +172,11 @@ fn press(g: &mut Game, a: Action) {
         Action::Smooth => super::round5::open_smooth(g),
         Action::Traffic => super::round5::open_traffic(g),
         Action::Items => super::round5::open_items(g),
+        // [app8]
+        Action::Places => g.toggle_screen(Screen::Places),
+        Action::Objects => g.toggle_screen(Screen::Objects),
+        Action::Justice => g.toggle_screen(Screen::Justice),
+        Action::World => g.toggle_screen(Screen::World),
         _ => {}
     }
 }
@@ -238,6 +248,10 @@ pub fn draw_toolbar(g: &mut Game) -> f32 {
             Tool::SquadKill(sq) => {
                 let n = super::military::squad_name(&g.sim.world, sq);
                 top = draw_hint(g, cx, y, &format!("{n}: click a creature to kill. Right-click: back to the squads."));
+            }
+            Tool::PileLink(..) => {
+                let h = super::round8::link_hint(g).unwrap_or_default(); // [app8]
+                top = draw_hint(g, cx, y, &h);
             }
             Tool::Link(_) => {
                 let n = super::devices::mechanisms(&g.sim.world);

@@ -3,7 +3,7 @@
 //! shown citizens, type to filter by name.
 
 use super::panels::{unit_name, unit_profession};
-use super::{clip, col, panel, skill_level_name, text_button, wheel_over, BtnState};
+use super::{clip, col, skill_level_name, text_button, wheel_over, BtnState};
 use crate::font::GH;
 use crate::game::{Game, Screen, Selected};
 use crate::keys::SHIFT;
@@ -143,20 +143,24 @@ pub fn draw_labor(g: &mut Game) {
     if g.screen != Screen::Labor {
         return;
     }
+    // [app8] Tabs: Work details (v50), Kitchen, and this grid as "Advanced".
+    let Some(c) = super::workdetails::labor_frame(g) else { return };
+    match g.r8.labor_tab {
+        super::round8::LaborTab::WorkDetails => super::workdetails::draw(g, c),
+        super::round8::LaborTab::Kitchen => super::workdetails::draw_kitchen(g, c),
+        super::round8::LaborTab::Advanced => draw_grid(g, c),
+    }
+}
+
+/// [app8] The per-labor grid inside the content rect `c` of the Labor screen.
+fn draw_grid(g: &mut Game, c: Rect) {
     let s = g.ui.scale;
     let lh = g.ui.line_h();
-    let r = super::orders::screen_rect(g, 1500.0);
-    panel(&mut g.ui, r);
-    let pad = 12.0 * s;
-    let (x, mut y) = (r.x + pad, r.y + pad);
-    let cb = Rect::new(r.x + r.w - 24.0 * s, r.y + 6.0 * s, 18.0 * s, 16.0 * s);
-    if text_button(&mut g.ui, &g.font, cb, "x", BtnState::Normal) {
-        g.screen = Screen::None;
-        return;
-    }
-    g.font.draw("Labor", x, y, 1.5 * s, col::TEXT_HI);
+    let pad = 0.0f32;
+    let r = Rect::new(c.x, c.y, c.w, c.h);
+    let (x, mut y) = (r.x + pad, r.y + pad + 3.0 * s);
     // Group tabs.
-    let mut tx = x + 9.0 * 8.0 * s;
+    let mut tx = x;
     for (i, (name, _)) in GROUPS.iter().enumerate() {
         let tw = (name.len() as f32 + 2.0) * 8.0 * s;
         let st = if g.labor.group == i { BtnState::Active } else { BtnState::Normal };

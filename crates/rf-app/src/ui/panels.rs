@@ -588,7 +588,13 @@ pub fn draw_citizens(g: &mut Game, top: f32, bottom: f32) {
     } else {
         list.iter().filter(|c| c.tag.0 == "Hostile").count()
     };
-    if flagged > 0 {
+    if tab == 1 {
+        // [app8] The full pets and livestock screen (slaughter, pastures, training).
+        let ar = Rect::new(r.x + r.w - pad - 22.0 * 8.0 * s, y, 22.0 * 8.0 * s, GH * s + 6.0 * s);
+        if text_button(&mut g.ui, &g.font, ar, "Animals: manage...", BtnState::Normal) {
+            g.toggle_screen(crate::game::Screen::Animals);
+        }
+    } else if flagged > 0 {
         let (t, c) = if tab == 0 { (format!("{flagged} stressed"), col::TEXT_HI) } else { (format!("{flagged} hostile"), col::TEXT_BAD) };
         g.font.draw(&t, r.x + r.w - pad - g.font.width(&t, s), y + 3.0 * s, s, c);
     }

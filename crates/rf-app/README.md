@@ -148,7 +148,14 @@ the same overview with your actual keys.
 | Nobles | toolbar (left group, crown) | `n` (DF's `D_NOBLES`) |
 | Settings (population cap, invasions) | Esc menu "Settings" | |
 | Work orders | toolbar (left group) | `o` |
-| Labor | toolbar (left group) | `y` |
+| Labor: work details, kitchen, all labors | toolbar (left group) | `y` |
+| Places: locations, zones, stockpiles, workshops, farm plots | toolbar (left group) | `P` (DF's `D_LOCATIONS`) |
+| Objects: artifacts | toolbar (left group) | `O` (`D_ARTLIST`) |
+| Justice | toolbar (left group, scales) | `j` (`D_JUSTICE`) |
+| World: civilizations, caravans | toolbar (right group, globe) | `Y` (`D_WORLD`) |
+| Pets and livestock | Creatures > Pets/livestock > "Animals: manage...", or a pen's "Pick animals..." | |
+| Stockpile settings | stockpile sheet "Settings, links...", or Places > Stockpiles > Settings | |
+| Minimap | `▓` button in the top bar (left of `?`) | |
 | Save | Esc menu "Save game" | F5 (quicksave) |
 | Load | Esc menu "Load game" (list of saves, newest first) | |
 | Controls overview | `?` button (top bar, right) | F1 or `?` |
@@ -215,16 +222,70 @@ position to jump there.
   their task queue (repeat `R`, suspend `S`, cancel `x`) and "+ Add job" with the jobs from
   `Sim::templates_for_workshop` (tick "Repeat" first for repeating jobs). Farm plots have one
   crop per season (`Sim::crop_options`, crops not plantable in that season are greyed out).
-  Stockpiles show their categories as checkboxes.
+  Stockpiles show their categories as checkboxes, their containers and links, and "Settings,
+  links..." for the full editor (round 8). Zones show their location; a pen has "Pick
+  animals...", a meeting area without a location "Make location...".
 - **Work orders** (`o`): every manager order with progress (left/total), frequency, conditions
   (e.g. `boulder (non economic, hard) ≥ 22; slab < 2`), workshop and status (√ active,
   · waiting). "+ New order" opens a window: pick a template, set the amount with -/+ (Shift =
   10) or the wheel, pick the frequency, "Create order". `x` removes an order.
-- **Labor** (`y`): citizens x labors with DF's `unit_labor` names in tabs (Core, Farming & food,
-  Wood & stone, Crafts & metal, Health & other). Cells show the related skill level; click a
-  cell to toggle (`Sim::set_labor`), click a column header to toggle it for everyone shown, type
-  in the filter box to filter by name or profession, wheel scrolls. The footer counts how many
-  have each labor (red = nobody).
+- **Labor** (`y`, round 8: `ui/workdetails.rs`) has three tabs like DF Steam:
+  - *Work details*: the details on the left with DF's `WORK_DETAIL_*` icons and "5 assigned" /
+    "everybody" / "nobody". On the right the selected detail: its labors, the mode buttons
+    (Everybody does this / Only selected do this / Nobody does this), "Assigned workers also do
+    other jobs" / "only do this", "Edit labors" (your own details; DF's eleven built-in ones keep
+    theirs), Delete. Below, every citizen with a toggle, profession, best skill of the detail's
+    labors and their other details; click to assign (`Sim::set_work_detail_member`,
+    `set_work_detail_mode`, `set_work_detail_labors`). "+ New work detail" asks for a name, then
+    opens the labor editor (`Sim::create_work_detail`). An export without work details offers
+    "Set up DF's default work details".
+  - *Kitchen*: every cookable or brewable kind in stock (plants, fruit, seeds, drinks, meat,
+    fish, eggs, cheese, milk, flour, fat) with DF's cook and brew toggles
+    (`LABOR_KITCHEN_*_ALLOWED/RESTRICTED/CANNOT`, `Sim::set_kitchen`). Plump helmets start as
+    "no cook" (Gordon's rule) when the save has no entry for them.
+  - *Advanced: all labors*: the old grid, citizens x labors with DF's `unit_labor` names in tabs
+    (Core, Farming & food, Wood & stone, Crafts & metal, Health & other). Cells show the related
+    skill level; click a cell to toggle (`Sim::set_labor`), click a column header to toggle it
+    for everyone shown, type in the filter box to filter by name or profession, wheel scrolls.
+    The footer counts how many have each labor (red = nobody).
+- **Stockpile settings** (round 8, `ui/stockpile_ed.rs`): DF Steam's editor. Presets (DF's
+  custom-stockpile buttons: Everything, Organic, Inorganic, Empty cages, Empty animal traps,
+  Prepared food, Usable/Unusable weapons and armor, Corpses, Nothing); Barrels / Bins /
+  Wheelbarrows with -/+ (Shift = 10); "Give to..." / "Take from..." switch to the map, where you
+  click another stockpile or a workshop (linkable buildings are outlined; links between piles
+  are kept on both piles; right-click returns); "Takes from anywhere / links only". Below, three
+  columns: the categories with DF's on/partial/off marks (click the mark to switch the whole
+  category), the groups of the selected category (Meat, Fish, Plants, ...; stone is split into
+  metal ores / economic / other / clay like DF Steam), and the leaves with checkboxes plus
+  "Enable all" / "Disable all". Everything goes through `Sim::set_stockpile_settings`; leaves come
+  from `Sim::stockpile_filter_options`, or a stand-in built from the save's raws while the sim
+  has none. Filters are stored like the exporter writes them: `food/plants/PLANT:BARLEY:STRUCTURAL`,
+  `food/meat/*` for a whole group, `finished_goods/type/!CROWN` for all but one. With a pile
+  selected, its links are drawn on the map (green gives, orange takes).
+- **Pets and livestock** (round 8, `ui/animals.rs`, `Sim::animals`): every tame animal with its
+  sprite, name, creature and sex, training, owner, pen/pasture and state (pregnant, to
+  slaughter, grazer, not on the map), tabs All / On the map / Pastured / For slaughter / Pets /
+  Pregnant, and DF's buttons: slaughter (`Sim::set_slaughter`), war and hunting training
+  (`Sim::request_training`), and the pen/pasture picker (Pen zones, `Sim::assign_pasture`).
+- **Places** (`P`, round 8, `ui/places.rs`): *Locations* (temples, taverns, libraries,
+  guildhalls, hospitals with their zone, deity, visitors switch and occupations with Assign /
+  Replace: a citizen picker, `Sim::assign_occupation`), *Zones* (every zone; meeting areas get
+  "Make location": kind, then for a temple the deity, from the gods the citizens worship with
+  the number of worshippers: `Sim::create_location`), *Stockpiles* (with "Settings"),
+  *Workshops* and *Farm plots*. Click a name to go there.
+- **Justice** (`j`): open cases (crime, victim, year, witnesses, "Convict...": a citizen picker
+  with the witnesses first, `Sim::convict`), closed cases with the convicted and the
+  punishment, and the convicts. Names of dead or departed dwarves come from the export.
+- **Objects** (`O`): every artifact with DF's item name ("Battle Axe"), material, where it is
+  (carried by, in a building, a stockpile or a named room) and its maker (for artifacts made in
+  Rustfort); click one to go there.
+- **World** (`Y`): the civilizations with race, kind and relation (yours, at war, at peace, no
+  contact) and whether they send caravans; *All entities*; *Caravans* (the caravan at the depot
+  with "Trade", the expected caravan, the save's caravans, trade partners).
+- **Minimap** (round 8, `ui/minimap.rs`): the `▓` button in the top bar shows the current
+  level at the top right (left of an open sheet): terrain colors (walls darker, open space shows
+  the level below dimmed, water, magma), buildings, citizens (yellow), animals (blue), hostiles
+  (red) and the camera's view; click or drag on it to move there. Remembered in the settings.
 - **Unit sheet** (click a creature): two rows of tabs like the Steam sheet.
   - *Overview*: hunger/thirst/tiredness bars, the DF stress category with its face and color
     (`Sim::stress_level`: Ecstatic, Happy, Content, Fine, Stressed, Very stressed, Breaking
@@ -364,6 +425,14 @@ rustfort play --screenshot target/shots/a.png --frames 20 --view 48,48,22,1 \
 - Screenshot runs print the average ticks/s and, with the sim thread, how busy the worker was;
   `RUSTFORT_MEASURE=a,b` prints the real time from sim tick a to b.
 - `--mouse x,y` parks the cursor.
+- Round 8: `workdetails[:index|name]`, `wd-edit` (labor editor), `wd-new:<name>` (name field;
+  `--script "3:key enter"` creates it), `wd-defaults` (DF's default details), `kitchen`,
+  `labor-grid`, `pile[:id]` (stockpile editor, default the largest pile), `pile-cat:<n|name>`,
+  `pile-group:<n>`, `pile-link:give|take` (map link tool), `animals[:tab]`, `pasture-pick[:unit]`,
+  `places[:tab]`, `make-location[:zone]`, `temple-pick`, `occupation-pick`, `justice[:tab]`,
+  `convict[:crime]`, `objects`, `world[:tab]`, `minimap`, and the test hooks `fake-locations`
+  (a tavern and a temple on the first meeting areas) and `fake-crimes` (two open and one closed
+  case).
 - Round 6: `--menu` shows the title screen even with `--screenshot` (the script can click on,
   and the frame count continues into the game); `--menu-page load|exports|import|settings`
   opens a page; `--menu-page import:go` starts the import as soon as DF answers (end-to-end
@@ -397,6 +466,11 @@ screenshots under `target/`, never in git.
 - `save.rs`: save games (bincode + zstd), save list, `savebench`; (round 6) tagged autosaves and
   their rotation.
 - `ui/help.rs` (round 6): controls overview and first-time hints.
+- Round 8: `ui/round8.rs` (state, pickers, `--ui` states, Esc, stockpile link tool and map
+  lines), `ui/workdetails.rs` (Labor tabs: work details, kitchen), `ui/stockpile_ed.rs`,
+  `ui/animals.rs`, `ui/places.rs` (Places, Justice, Objects, World), `ui/minimap.rs`.
+  `load.rs` fills work details, kitchen, locations, crimes and hauling routes from the round-6
+  export's side files when the importer left them empty.
 - `ui/`: `topbar` (plus stocks, hostile counter), `toolbar` (data-driven button tables plus
   Dig/Stockpile submenus), `build` (build and zone menus, placement ghost, zone overlay),
   `building` (building sheet), `orders` (work orders), `labor` (labor grid), `panels` (unit

@@ -17,7 +17,10 @@ pub fn draw_ui(g: &mut Game) {
     super::topbar::draw_zbar(g, tb_y - 8.0 * s);
     let top = super::topbar::TOPBAR_H * s + 6.0 * s;
     let right = screen_width() - super::topbar::ZBAR_W * s - 14.0 * s;
-    super::panels::draw_sheet(g, top, toolbar_top.min(tb_y) - 6.0 * s, right);
+    if !super::round8::hides_sheet(g) {
+        super::panels::draw_sheet(g, top, toolbar_top.min(tb_y) - 6.0 * s, right); // [app8] not under the round-8 screens
+    }
+    super::minimap::draw(g, top, right); // [app8]
     // Announcements stay out of the way of the big screens.
     // Announcements stay left of the right-hand sheet.
     let ann_right = if g.selected != crate::game::Selected::None { right - super::panels::SHEET_W * s - 8.0 * s } else { screen_width() - 40.0 * s };
@@ -29,6 +32,7 @@ pub fn draw_ui(g: &mut Game) {
     super::reports::draw_reports(g);
     super::trade::draw_trade(g); // [round 4]
     super::nobles::draw_nobles(g); // [round 4]
+    super::round8::draw_screens(g); // [app8]
     draw_status(g, toolbar_top.min(tb_y));
     if g.menu_open {
         draw_menu(g);

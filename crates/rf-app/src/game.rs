@@ -75,6 +75,8 @@ pub enum Tool {
     Traffic(rf_sim::Traffic),
     /// [round 5] Item designations (claim, forbid, dump, melt, hide): drag a box.
     ItemDes(crate::ui::round5::ItemDes),
+    /// [app8] Click a stockpile or workshop to link this stockpile to (give = true) or from.
+    PileLink(i32, bool),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -115,6 +117,18 @@ pub enum Screen {
     Trade,
     /// [round 4] Nobles and administrators.
     Nobles,
+    /// [app8] Stockpile settings editor (`R8Ui::pile`).
+    StockpileSettings,
+    /// [app8] Pets and livestock.
+    Animals,
+    /// [app8] Places: locations, zones, stockpiles, workshops, farm plots (DF `P`).
+    Places,
+    /// [app8] Justice (DF `j`).
+    Justice,
+    /// [app8] Objects: artifacts (DF `O`).
+    Objects,
+    /// [app8] World: civilizations, caravans (DF `Y`).
+    World,
 }
 
 /// Sort order of the citizens list.
@@ -427,6 +441,9 @@ pub struct Game {
     saving_auto: bool,
     /// Set to leave the game loop.
     pub exit: Option<Exit>,
+    /// [app8] Work details, kitchen, stockpile settings, animals, places, justice, objects,
+    /// world, minimap.
+    pub r8: crate::ui::round8::R8Ui,
 }
 
 /// [round 6] How the game loop ended.
@@ -612,6 +629,7 @@ impl Game {
             autosave_days,
             saving_auto: false,
             exit: None,
+            r8: Default::default(),
         };
         // [round 6] Defaults from the settings for a fresh start (imports, synthetic forts).
         if loaded.new_game {
@@ -623,6 +641,8 @@ impl Game {
             }
         }
         g.autosave_next = next_autosave_day(game_day(&g.sim.world.calendar), g.autosave_days);
+        crate::ui::round8::apply_kitchen_default(&mut g); // [app8]
+        g.r8.minimap = g.settings.minimap && !shot; // [app8]
         g.reset_hostiles();
         g.build_opts = g.sim.build_options();
         g.stocks = crate::ui::topbar::count_stocks(&g.sim.world, 0.0);
@@ -900,6 +920,8 @@ impl Game {
                     let c = self.cam;
                     self.drag = Some(Drag { a: Pos::new(c.x as i16 - 3, c.y as i16 - 2, c.z as i16), held: false });
                 }
+                // [app8] work details, kitchen, stockpile settings, animals, places, ...
+                _ if crate::ui::round8::ui_arg(self, k, v) => {}
                 _ => eprintln!("unknown --ui state {u}"),
             }
         }
@@ -1173,6 +1195,8 @@ impl Game {
             self.toggle_screen(Screen::Reports);
         } else if inp.hit(b, "D_NOBLES") {
             self.toggle_screen(Screen::Nobles); // [round 4]
+        } else {
+            crate::ui::round8::global_keys(self); // [app8]
         }
     }
 
@@ -1186,7 +1210,9 @@ impl Game {
 
     /// A text field has keyboard focus: hotkeys and WASD are off.
     pub fn typing(&self) -> bool {
-        (self.screen == Screen::Labor && self.labor.typing) || (self.screen == Screen::Trade && self.r4.depot_open && self.r4.depot_typing)
+        (self.screen == Screen::Labor && self.labor.typing)
+            || (self.screen == Screen::Trade && self.r4.depot_open && self.r4.depot_typing)
+            || crate::ui::round8::typing(self) // [app8]
     }
 
     pub fn toggle_screen(&mut self, s: Screen) {
@@ -1311,6 +1337,8 @@ impl Game {
                 *self.sim = Sim::new(world, seed);
                 self.r4 = Default::default();
                 self.r5 = Default::default();
+                let minimap = self.r8.minimap;
+                self.r8 = crate::ui::round8::R8Ui { minimap, ..Default::default() }; // [app8]
                 let file = path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
                 self.label = format!("{} - loaded {file}", self.sim.world.meta.fort_name);
                 self.selected = Selected::None;
@@ -1384,6 +1412,8 @@ impl Game {
             self.r4.depot_typing = false;
         } else if self.screen == Screen::Nobles && self.r4.appoint.is_some() {
             self.r4.appoint = None;
+        } else if crate::ui::round8::escape(self) {
+            // [app8] pickers, name field, stockpile link tool
         } else if matches!(self.tool, Tool::Link(_)) {
             self.tool = Tool::None;
         } else if self.menu_open {
@@ -1534,6 +1564,8 @@ impl Game {
                 self.screen = Screen::Military;
             } else if matches!(self.tool, Tool::Link(_)) {
                 self.tool = Tool::None;
+            } else if let Tool::PileLink(id, _) = self.tool {
+                crate::ui::round8::open_pile(self, id); // [app8] back to the settings
             } else if self.tool != Tool::None || self.submenu != Submenu::None {
                 self.tool = Tool::None;
                 self.submenu = Submenu::None;
@@ -1592,6 +1624,11 @@ impl Game {
             Tool::Link(lever) => {
                 if lp {
                     crate::ui::devices::link_click(self, lever, h);
+                }
+            }
+            Tool::PileLink(pile, give) => {
+                if lp {
+                    crate::ui::round8::pile_link_click(self, pile, give, h); // [app8]
                 }
             }
             Tool::SquadKill(sq) => {
@@ -1662,7 +1699,7 @@ impl Game {
                 self.burrow_ui.selected = Some(id);
                 self.tool = Tool::None;
             }
-            Tool::SquadStation(_) | Tool::SquadKill(_) | Tool::Link(_) => {}
+            Tool::SquadStation(_) | Tool::SquadKill(_) | Tool::Link(_) | Tool::PileLink(..) => {}
             Tool::Construct(_) | Tool::Detail(_) | Tool::Traffic(_) | Tool::ItemDes(_) => {
                 crate::ui::round5::apply(self, a, b);
             }

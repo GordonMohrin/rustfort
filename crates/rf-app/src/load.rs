@@ -173,6 +173,22 @@ pub fn fill_from_export_files(world: &mut World, dir: &Path) {
             world.settings = st;
         }
     }
+    // [app8] Round-6 exports: work details, kitchen, locations, justice, hauling routes.
+    if world.work_details.is_empty() {
+        world.work_details = read_json(dir, "work_details.json").unwrap_or_default();
+    }
+    if world.kitchen.is_empty() {
+        world.kitchen = read_json(dir, "kitchen.json").unwrap_or_default();
+    }
+    if world.locations.is_empty() {
+        world.locations = read_json(dir, "locations.json").unwrap_or_default();
+    }
+    if world.crimes.is_empty() {
+        world.crimes = read_json(dir, "crimes.json").unwrap_or_default();
+    }
+    if world.haul_routes.is_empty() {
+        world.haul_routes = read_json(dir, "haul_routes.json").unwrap_or_default();
+    }
 }
 
 #[cfg(test)]

@@ -36,6 +36,8 @@ pub struct Settings {
     pub hints_seen: Vec<String>,
     /// All hints switched off.
     pub hints_off: bool,
+    /// [app8] The minimap is shown.
+    pub minimap: bool,
 }
 
 impl Default for Settings {
@@ -51,6 +53,7 @@ impl Default for Settings {
             df_dir: String::new(),
             hints_seen: Vec::new(),
             hints_off: false,
+            minimap: false,
         }
     }
 }
