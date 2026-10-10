@@ -21,7 +21,7 @@ pub struct MinimapCache {
 }
 
 /// Minimap size in screen pixels (before the UI scale).
-pub const MM_W: f32 = 200.0;
+pub const MM_W: f32 = 240.0;
 
 fn shade(c: [u8; 3], k: f32) -> [u8; 3] {
     [(c[0] as f32 * k).min(255.0) as u8, (c[1] as f32 * k).min(255.0) as u8, (c[2] as f32 * k).min(255.0) as u8]

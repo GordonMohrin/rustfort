@@ -80,6 +80,9 @@ pub struct Crime {
     /// Punishment given, e.g. `Jail 3 months`, `Beating`, `Hammerstrikes 20`.
     pub punishment: String,
     pub witnesses: Vec<i32>,
+    /// [app8] Names of the criminal and the victim as exported (the units may be dead or gone).
+    pub criminal_name: String,
+    pub victim_name: String,
 }
 
 /// A hauling route (minecarts / wheelbarrows) with stops.

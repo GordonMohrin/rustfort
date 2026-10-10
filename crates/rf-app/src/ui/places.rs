@@ -148,7 +148,7 @@ fn draw_locations(g: &mut Game, c: Rect) {
     // One block per location: header line, then one line per occupation.
     let mut blocks: Vec<(usize, f32)> = Vec::new();
     for (i, l) in locs.iter().enumerate() {
-        let n = occupations(&l.kind).len().max(l.occupations.len());
+        let n = occupations(&l.kind).len().max(l.occupations.len()).max(1);
         blocks.push((i, 40.0 * s + n as f32 * (lh + 8.0 * s) + 8.0 * s));
     }
     let total_h: f32 = blocks.iter().map(|b| b.1).sum();
@@ -454,7 +454,7 @@ pub fn draw_justice(g: &mut Game) {
         })
         .collect();
     let row_h = 30.0 * s;
-    let xs = [c.x + 4.0 * s, c.x + 26.0 * 8.0 * s, c.x + 52.0 * 8.0 * s, c.x + 64.0 * 8.0 * s, c.x + 78.0 * 8.0 * s];
+    let xs = [c.x + 4.0 * s, c.x + 32.0 * 8.0 * s, c.x + 60.0 * 8.0 * s, c.x + 68.0 * 8.0 * s, c.x + 96.0 * 8.0 * s];
     let heads = if tab == 0 { ["Crime", "Victim", "Year", "Witnesses", ""] } else if tab == 1 { ["Crime", "Victim", "Year", "Convicted", "Punishment"] } else { ["Convict", "Crime", "Year", "Punishment", ""] };
     for (x, t) in xs.iter().zip(heads) {
         g.font.draw(t, *x, y0, s, col::TEXT_DIM);
@@ -469,12 +469,14 @@ pub fn draw_justice(g: &mut Game) {
             draw_rectangle(list.x, y, list.w, row_h - 2.0 * s, Color::new(1.0, 1.0, 1.0, 0.04));
         }
         let ty = y + (row_h - 2.0 * s - GH * s) / 2.0;
-        let victim = if cr.victim >= 0 { unit_label(g, cr.victim) } else { "-".into() };
+        let victim = person(g, cr.victim, &cr.victim_name);
+        let convict = person(g, cr.convicted, if cr.convicted == cr.criminal { &cr.criminal_name } else { "" });
+        let kind = crime_label(&cr.kind);
         let year = if cr.year != 0 { cr.year.to_string() } else { "-".into() };
         match tab {
             0 => {
-                g.font.draw(&clip(&words(&cr.kind), 24), xs[0], ty, s, col::TEXT_BAD);
-                g.font.draw(&clip(&victim, 24), xs[1], ty, s, col::TEXT);
+                g.font.draw(&clip(&kind, 30), xs[0], ty, s, col::TEXT_BAD);
+                g.font.draw(&clip(&victim, 26), xs[1], ty, s, col::TEXT);
                 g.font.draw(&year, xs[2], ty, s, col::TEXT_DIM);
                 g.font.draw(&cr.witnesses.len().to_string(), xs[3], ty, s, col::TEXT_DIM);
                 if text_button(&mut g.ui, &g.font, Rect::new(xs[4], y + 1.0 * s, 14.0 * 8.0 * s, row_h - 4.0 * s), "Convict...", BtnState::Normal) {
@@ -482,15 +484,15 @@ pub fn draw_justice(g: &mut Game) {
                 }
             }
             1 => {
-                g.font.draw(&clip(&words(&cr.kind), 24), xs[0], ty, s, col::TEXT);
-                g.font.draw(&clip(&victim, 24), xs[1], ty, s, col::TEXT_DIM);
+                g.font.draw(&clip(&kind, 30), xs[0], ty, s, col::TEXT);
+                g.font.draw(&clip(&victim, 26), xs[1], ty, s, col::TEXT_DIM);
                 g.font.draw(&year, xs[2], ty, s, col::TEXT_DIM);
-                g.font.draw(&clip(&unit_label(g, cr.convicted), 16), xs[3], ty, s, col::TEXT_CYAN);
-                g.font.draw(&clip(if cr.punishment.is_empty() { "pending" } else { &cr.punishment }, 24), xs[4], ty, s, col::TEXT_DIM);
+                g.font.draw(&clip(&convict, 27), xs[3], ty, s, col::TEXT_CYAN);
+                g.font.draw(&clip(if cr.punishment.is_empty() { "pending" } else { &cr.punishment }, 30), xs[4], ty, s, col::TEXT_DIM);
             }
             _ => {
-                g.font.draw(&clip(&unit_label(g, cr.convicted), 24), xs[0], ty, s, col::TEXT_CYAN);
-                g.font.draw(&clip(&words(&cr.kind), 24), xs[1], ty, s, col::TEXT);
+                g.font.draw(&clip(&convict, 30), xs[0], ty, s, col::TEXT_CYAN);
+                g.font.draw(&clip(&kind, 26), xs[1], ty, s, col::TEXT);
                 g.font.draw(&year, xs[2], ty, s, col::TEXT_DIM);
                 g.font.draw(&clip(if cr.punishment.is_empty() { "pending" } else { &cr.punishment }, 28), xs[3], ty, s, col::TEXT_DIM);
             }
@@ -518,18 +520,45 @@ pub fn draw_justice(g: &mut Game) {
             r.color = col::TEXT_HI;
         }
         let pr = Rect::new(c.x + c.w / 2.0 - 26.0 * 8.0 * s, c.y + 30.0 * s, 52.0 * 8.0 * s, c.h - 60.0 * s);
-        let (sc, pick) = picker(g, pr, &format!("Convict for {}", words(&cr.kind).to_lowercase()), &rows, g.r8.j_pscroll, None);
+        let (sc, pick) = picker(g, pr, &format!("Convict for {}", crime_label(&cr.kind).to_lowercase()), &rows, g.r8.j_pscroll, None);
         g.r8.j_pscroll = sc;
         match pick {
             Pick::Picked(u) if u >= 0 => {
                 g.sim.convict(cid, u);
                 g.r8.j_convict = None;
-                g.set_status(format!("{} convicted of {}", unit_label(g, u), words(&cr.kind).to_lowercase()));
+                g.set_status(format!("{} convicted of {}", unit_label(g, u), crime_label(&cr.kind).to_lowercase()));
             }
             Pick::Cancel => g.r8.j_convict = None,
             _ => {}
         }
     }
+}
+
+/// DF's words for a crime kind.
+pub fn crime_label(kind: &str) -> String {
+    match kind {
+        "ProductionOrderViolation" => "Violation of production order".into(),
+        "ExportViolation" => "Violation of export ban".into(),
+        "JobOrderViolation" => "Violation of job order".into(),
+        "ConspiracyToSlowLabor" => "Conspiracy to slow labor".into(),
+        "DisorderlyBehavior" => "Disorderly conduct".into(),
+        "BuildingDestruction" => "Building destruction".into(),
+        other => words(other),
+    }
+}
+
+/// A unit's name: on the map, else the exported name, else `#id`; `-` for none.
+fn person(g: &Game, id: i32, exported: &str) -> String {
+    if id < 0 {
+        return "-".into();
+    }
+    if g.sim.world.unit(id).is_some() {
+        return unit_label(g, id);
+    }
+    if !exported.is_empty() {
+        return exported.to_string();
+    }
+    format!("#{id}")
 }
 
 /// `--ui fake-crimes`: two open cases and one closed case (layout tests; the export has none).
