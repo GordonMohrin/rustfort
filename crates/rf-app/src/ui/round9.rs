@@ -963,8 +963,12 @@ fn draw_equipment(g: &mut Game, sid: i32, area: Rect) {
     let lh = g.ui.line_h();
     let eq = g.sim.squad_equipment(sid);
     let (x, mut y) = (area.x, area.y);
-    let lw = (area.w * 0.42).floor();
-    let maxc = (lw / (8.0 * s)) as usize;
+    // [mil-ui] In the narrow side panel the positions (two columns) sit above the editor.
+    let narrow = area.w < 640.0 * s;
+    let cols = if narrow { 2 } else { 1 };
+    let lw = if narrow { area.w } else { (area.w * 0.42).floor() };
+    let cw = (lw / cols as f32).floor();
+    let maxc = (cw / (8.0 * s)) as usize;
     g.font.draw("Positions", x, y, s, col::BORDER_HI);
     y += lh;
     if eq.is_empty() {
@@ -974,17 +978,33 @@ fn draw_equipment(g: &mut Game, sid: i32, area: Rect) {
     if g.r9.eq_pos.map(|p| p >= eq.len()).unwrap_or(true) {
         g.r9.eq_pos = eq.iter().find(|e| e.unit >= 0).map(|e| e.position).or(Some(0));
     }
-    let row_h = 2.0 * lh + 2.0 * s;
+    let row_h = if narrow { lh + 4.0 * s } else { 2.0 * lh + 2.0 * s };
     let mut pick = None;
-    for e in &eq {
+    let y0 = y;
+    for (k, e) in eq.iter().enumerate() {
+        let (x, y) = (x + (k % cols) as f32 * cw, y0 + (k / cols) as f32 * row_h);
         if y + row_h > area.y + area.h {
             break;
         }
-        let rr = Rect::new(x - 4.0 * s, y - 2.0 * s, lw - 4.0 * s, row_h - 1.0);
+        let rr = Rect::new(x - 4.0 * s, y - 2.0 * s, cw - 4.0 * s, row_h - 1.0);
         if list_row(&mut g.ui, rr, g.r9.eq_pos == Some(e.position)) {
             pick = Some(e.position);
         }
         let who = if e.unit >= 0 { g.sim.world.unit(e.unit).map(unit_name).unwrap_or_else(|| format!("unit #{}", e.unit)) } else { "(empty)".into() };
+        if narrow {
+            // One line: name, then "ok" / "2 missing".
+            let (st, sc) = if e.unit < 0 {
+                (String::new(), col::TEXT_DIM)
+            } else if e.missing.is_empty() {
+                ("ok".to_string(), col::TEXT_GOOD)
+            } else {
+                (format!("{} missing", e.missing.len()), col::TEXT_BAD)
+            };
+            let nmax = maxc.saturating_sub(st.chars().count() + 2);
+            g.font.draw(&clip(&format!("{:>2}. {who}", e.position + 1), nmax), x, y, s, if e.unit >= 0 { col::TEXT } else { col::TEXT_DIM });
+            g.font.draw(&st, x + cw - 10.0 * s - g.font.width(&st, s), y, s, sc);
+            continue;
+        }
         g.font.draw(&clip(&format!("{:>2}. {who}", e.position + 1), maxc), x, y, s, if e.unit >= 0 { col::TEXT } else { col::TEXT_DIM });
         let own = position_uniform(&g.sim.world, sid, e.position).1;
         let (t, c) = if e.unit < 0 {
@@ -995,16 +1015,15 @@ fn draw_equipment(g: &mut Game, sid: i32, area: Rect) {
             (format!("{} missing ({})", e.missing.len(), if own { "own uniform" } else { "squad uniform" }), col::TEXT_BAD)
         };
         g.font.draw(&clip(&t, maxc.saturating_sub(4)), x + 32.0 * s, y + lh, s, c);
-        y += row_h;
     }
+    let list_end = y0 + eq.len().div_ceil(cols) as f32 * row_h;
     if let Some(p) = pick {
         g.r9.eq_pos = Some(p);
     }
     // ---- editor of the selected position
     let Some(pos) = g.r9.eq_pos else { return };
-    let rx = x + lw + 8.0 * s;
+    let (rx, mut y) = if narrow { (x, list_end + 8.0 * s) } else { (x + lw + 8.0 * s, area.y) };
     let rw = area.x + area.w - rx;
-    let mut y = area.y;
     let row = eq.iter().find(|e| e.position == pos).cloned().unwrap_or_default();
     let (uni, own) = position_uniform(&g.sim.world, sid, pos);
     let title = format!("Position {} uniform{}", pos + 1, if own { "" } else { " (the squad's)" });
@@ -1022,6 +1041,9 @@ fn draw_equipment(g: &mut Game, sid: i32, area: Rect) {
         .collect();
     let choices: Vec<Vec<(String, String)>> = SLOTS.iter().map(|(k, _)| slot_choices(w, k)).collect();
     for (i, kind, label, cur) in rows {
+        if narrow && y + lh > area.y + area.h {
+            break; // [mil-ui] the side panel is full
+        }
         let (_, sub, mat) = cur.as_ref().map(|e| split_entry(e)).unwrap_or_default();
         let ch = &choices[i];
         let ci = match &cur {
@@ -1074,11 +1096,12 @@ fn draw_equipment(g: &mut Game, sid: i32, area: Rect) {
     y += 4.0 * s;
     let bh2 = 24.0 * s;
     let bw2 = 20.0 * 8.0 * s;
-    if text_button(&mut g.ui, &g.font, Rect::new(rx, y, bw2, bh2), "Use squad uniform", if own { BtnState::Normal } else { BtnState::Disabled }) {
+    let room = !narrow || y + bh2 <= area.y + area.h; // [mil-ui]
+    if room && text_button(&mut g.ui, &g.font, Rect::new(rx, y, bw2, bh2), "Use squad uniform", if own { BtnState::Normal } else { BtnState::Disabled }) {
         g.sim.set_squad_uniform(sid, pos, &[]);
         g.set_status(format!("Position {}: back to the squad uniform", pos + 1));
     }
-    if text_button(&mut g.ui, &g.font, Rect::new(rx + bw2 + 8.0 * s, y, bw2, bh2), "Copy to all positions", BtnState::Normal) {
+    if room && text_button(&mut g.ui, &g.font, Rect::new(rx + bw2 + 8.0 * s, y, bw2, bh2), "Copy to all positions", BtnState::Normal) {
         let refs: Vec<&str> = uni.iter().map(|e| e.as_str()).collect();
         let n = eq.len();
         for p in 0..n {
@@ -1095,13 +1118,23 @@ fn draw_equipment(g: &mut Game, sid: i32, area: Rect) {
     if row.unit >= 0 && y < area.y + area.h - lh {
         g.font.draw(&format!("Worn and carried ({})", row.worn.len()), rx, y, s, col::BORDER_HI);
         y += lh;
-        for (_, d) in &row.worn {
-            if y > area.y + area.h - lh {
+        // [mil-ui] Two columns in the narrow side panel, and the wheel scrolls the list.
+        let cols = if narrow { 2 } else { 1 };
+        let colw = (rw / cols as f32).floor();
+        let vis = (((area.y + area.h - y) / lh) as usize).max(1);
+        let total = row.worn.len().div_ceil(cols);
+        let wr = Rect::new(rx, y, rw, area.y + area.h - y);
+        let step = super::wheel_over(&g.ui, &mut g.input, wr);
+        g.r9.eq_scroll = (g.r9.eq_scroll as i32 + step).clamp(0, total.saturating_sub(vis) as i32) as usize;
+        let cc = ((colw / (8.0 * s)) as usize).saturating_sub(1);
+        for (k, (_, d)) in row.worn.iter().enumerate().skip(g.r9.eq_scroll * cols) {
+            let rk = k / cols - g.r9.eq_scroll;
+            if rk >= vis {
                 break;
             }
-            g.font.draw(&clip(d, (rw / (8.0 * s)) as usize), rx, y, s, col::TEXT);
-            y += lh;
+            g.font.draw(&clip(d, cc), rx + (k % cols) as f32 * colw, y + rk as f32 * lh, s, col::TEXT);
         }
+        y += total.min(vis) as f32 * lh;
         if row.ammo > 0 && y <= area.y + area.h - lh {
             g.font.draw(&format!("{} rounds of ammunition", row.ammo), rx, y, s, col::TEXT_CYAN);
         }
@@ -1143,12 +1176,15 @@ fn draw_ammo(g: &mut Game, sid: i32, area: Rect) {
     let lh = g.ui.line_h();
     let Some(q) = g.sim.world.squads.iter().find(|q| q.id == sid).cloned() else { return };
     let (x, mut y) = (area.x, area.y);
-    g.font.draw("Ammunition (DF squad ammo: item, amount, use in combat / training)", x, y, s, col::BORDER_HI);
+    // [mil-ui] In the narrow side panel each entry takes two lines.
+    let narrow = area.w < 760.0 * s;
+    let maxc = (area.w / (8.0 * s)) as usize;
+    g.font.draw(&clip("Ammunition (DF squad ammo: item, amount, use in combat / training)", maxc), x, y, s, col::BORDER_HI);
     y += lh + 4.0 * s;
     let mut ammo = q.ammo.clone();
     let mut changed = false;
     if ammo.is_empty() {
-        g.font.draw("No ammunition assigned: marksdwarves take any matching bolts.", x, y, s, col::TEXT_DIM);
+        g.font.draw(&clip("No ammunition assigned: marksdwarves take any matching bolts.", maxc), x, y, s, col::TEXT_DIM);
         y += lh;
     }
     let bh = lh;
@@ -1171,6 +1207,14 @@ fn draw_ammo(g: &mut Game, sid: i32, area: Rect) {
             changed = true;
         }
         bx += 14.0 * 8.0 * s;
+        if narrow {
+            // Remove button on the first line, amounts and flags on the second.
+            if text_button(&mut g.ui, &g.font, Rect::new(bx, y - 2.0 * s, 3.0 * 8.0 * s, bh), "x", BtnState::Normal) {
+                remove = Some(i);
+            }
+            y += lh + 4.0 * s;
+            bx = x + 2.0 * 8.0 * s;
+        }
         for (lbl, d) in [("-100", -100), ("-10", -10)] {
             if text_button(&mut g.ui, &g.font, Rect::new(bx, y - 2.0 * s, 5.0 * 8.0 * s, bh), lbl, BtnState::Normal) {
                 a.amount = (a.amount + d).max(0);
@@ -1199,10 +1243,10 @@ fn draw_ammo(g: &mut Game, sid: i32, area: Rect) {
             changed = true;
         }
         bx += 12.0 * 8.0 * s;
-        if text_button(&mut g.ui, &g.font, Rect::new(bx, y - 2.0 * s, 3.0 * 8.0 * s, bh), "x", BtnState::Normal) {
+        if !narrow && text_button(&mut g.ui, &g.font, Rect::new(bx, y - 2.0 * s, 3.0 * 8.0 * s, bh), "x", BtnState::Normal) {
             remove = Some(i);
         }
-        y += lh + 4.0 * s;
+        y += lh + if narrow { 10.0 } else { 4.0 } * s;
     }
     if let Some(i) = remove {
         ammo.remove(i);
@@ -1213,6 +1257,11 @@ fn draw_ammo(g: &mut Game, sid: i32, area: Rect) {
     let mut bx = x + 6.0 * 8.0 * s;
     for (tok, name) in ammo_raws(&g.sim.world) {
         let bw = (name.chars().count() as f32 + 4.0) * 8.0 * s;
+        if bx + bw > x + area.w && bx > x + 6.0 * 8.0 * s {
+            // [mil-ui] wrap
+            bx = x + 6.0 * 8.0 * s;
+            y += lh + 4.0 * s;
+        }
         if text_button(&mut g.ui, &g.font, Rect::new(bx, y - 2.0 * s, bw, bh), &format!("+ {name}"), BtnState::Normal) {
             // DF's default is the squad's full need; 100 rounds per entry here (estimate).
             ammo.push(SquadAmmo { item: tok.clone(), amount: 100, combat: true, training: true });
@@ -1231,7 +1280,7 @@ fn draw_ammo(g: &mut Game, sid: i32, area: Rect) {
         let total: i32 = ammo.iter().map(|a| a.amount).sum();
         let per = (total / members.len() as i32).min(50);
         let t = if total > 0 { format!("Carried now (each soldier keeps up to {per} rounds, a quiver holds 50)") } else { "Carried now".to_string() };
-        g.font.draw(&t, x, y, s, col::BORDER_HI);
+        g.font.draw(&clip(&t, maxc), x, y, s, col::BORDER_HI);
         y += lh;
         let colw = (area.w / 2.0).floor();
         for (k, (n, a)) in members.iter().enumerate() {
@@ -1240,8 +1289,9 @@ fn draw_ammo(g: &mut Game, sid: i32, area: Rect) {
             if cy > area.y + area.h - lh {
                 break;
             }
-            g.font.draw(&clip(n, 26), cx, cy, s, col::TEXT);
-            g.font.draw(&format!("{a}"), cx + 28.0 * 8.0 * s, cy, s, if *a > 0 { col::TEXT_CYAN } else { col::TEXT_DIM });
+            let nc = ((colw / (8.0 * s)) as usize).saturating_sub(6).min(26);
+            g.font.draw(&clip(n, nc), cx, cy, s, col::TEXT);
+            g.font.draw(&format!("{a}"), cx + (nc as f32 + 1.0) * 8.0 * s, cy, s, if *a > 0 { col::TEXT_CYAN } else { col::TEXT_DIM });
         }
     }
 }
@@ -1252,36 +1302,39 @@ fn draw_patrol(g: &mut Game, sid: i32, area: Rect) {
     let Some(q) = g.sim.world.squads.iter().find(|q| q.id == sid).cloned() else { return };
     let (x, mut y) = (area.x, area.y);
     let patrolling = q.orders.iter().any(|o| o == "Patrol");
-    g.font.draw(&format!("Patrol route ({} waypoints){}", q.patrol.len(), if patrolling { " - patrolling now" } else { "" }), x, y, s, col::BORDER_HI);
+    let maxc = (area.w / (8.0 * s)) as usize;
+    g.font.draw(&clip(&format!("Patrol route ({} waypoints){}", q.patrol.len(), if patrolling { " - patrolling now" } else { "" }), maxc), x, y, s, col::BORDER_HI);
     y += lh + 4.0 * s;
     let bh = 24.0 * s;
     let bw = 26.0 * 8.0 * s;
+    // [mil-ui] The squads panel stays open while picking (the map is usable next to it), and
+    // the buttons wrap in the narrow panel.
+    let wrap = x + bw + 32.0 * s + 40.0 * 8.0 * s > x + area.w;
     if text_button(&mut g.ui, &g.font, Rect::new(x, y, bw, bh), "New route (pick on map)", BtnState::Normal) {
         g.r9.patrol.clear();
         g.tool = Tool::Patrol(sid);
-        g.screen = Screen::None;
         g.set_status(format!("{}: click waypoints, Enter when done, right-click removes the last", squad_name(&g.sim.world, sid)));
         return;
     }
     let has = !q.patrol.is_empty();
     let st = if has { BtnState::Normal } else { BtnState::Disabled };
-    if text_button(&mut g.ui, &g.font, Rect::new(x + bw + 8.0 * s, y, 12.0 * 8.0 * s, bh), "Patrol", if patrolling { BtnState::Active } else { st }) && has {
+    let (bx0, by) = if wrap { (x - bw - 8.0 * s, y + bh + 6.0 * s) } else { (x, y) };
+    if text_button(&mut g.ui, &g.font, Rect::new(bx0 + bw + 8.0 * s, by, 12.0 * 8.0 * s, bh), "Patrol", if patrolling { BtnState::Active } else { st }) && has {
         g.sim.order_squad_patrol(sid, &q.patrol);
         g.set_status(format!("{}: patrol ({} waypoints)", squad_name(&g.sim.world, sid), q.patrol.len()));
     }
-    if text_button(&mut g.ui, &g.font, Rect::new(x + bw + 20.0 * s + 12.0 * 8.0 * s, y, 14.0 * 8.0 * s, bh), "Show route", st) {
+    if text_button(&mut g.ui, &g.font, Rect::new(bx0 + bw + 20.0 * s + 12.0 * 8.0 * s, by, 14.0 * 8.0 * s, bh), "Show route", st) {
         g.r9.show_route = Some(sid);
         if let Some(p) = q.patrol.first() {
             g.cam.focus(*p);
         }
-        g.screen = Screen::None;
         return;
     }
-    if text_button(&mut g.ui, &g.font, Rect::new(x + bw + 32.0 * s + 26.0 * 8.0 * s, y, 14.0 * 8.0 * s, bh), "Clear route", st) {
+    if text_button(&mut g.ui, &g.font, Rect::new(bx0 + bw + 32.0 * s + 26.0 * 8.0 * s, by, 14.0 * 8.0 * s, bh), "Clear route", st) {
         g.sim.order_squad_patrol(sid, &[]);
         g.set_status(format!("{}: patrol route cleared", squad_name(&g.sim.world, sid)));
     }
-    y += bh + 6.0 * s;
+    y = by + bh + 6.0 * s;
     let colw = (area.w / 3.0).floor();
     for (i, p) in q.patrol.iter().enumerate().take(18) {
         let cx = x + (i % 3) as f32 * colw;
@@ -1292,13 +1345,12 @@ fn draw_patrol(g: &mut Game, sid: i32, area: Rect) {
         if g.ui.clicked(rr) {
             g.cam.focus(*p);
             g.r9.show_route = Some(sid);
-            g.screen = Screen::None;
-            return;
+            return; // [mil-ui] the squads panel stays open
         }
     }
     y += ((q.patrol.len().min(18) + 2) / 3) as f32 * lh + 14.0 * s;
     // ---- barracks
-    g.font.draw("Barracks (zones where the squad trains, sleeps on duty and keeps its gear)", x, y, s, col::BORDER_HI);
+    g.font.draw(&clip("Barracks (zones where the squad trains, sleeps on duty and keeps its gear)", maxc), x, y, s, col::BORDER_HI);
     y += lh + 2.0 * s;
     let w = &g.sim.world;
     let mut zones: Vec<(i32, String, i16, i32, bool)> = w
@@ -1313,7 +1365,7 @@ fn draw_patrol(g: &mut Game, sid: i32, area: Rect) {
         .collect();
     zones.sort_by_key(|z| (!z.4, z.0));
     if zones.is_empty() {
-        g.font.draw("No barracks zones yet: Zones > Barracks (or assign any zone).", x, y, s, col::TEXT_DIM);
+        g.font.draw(&clip("No barracks zones yet: Zones > Barracks (or assign any zone).", maxc), x, y, s, col::TEXT_DIM);
         return;
     }
     let mut toggle = None;
@@ -1321,13 +1373,15 @@ fn draw_patrol(g: &mut Game, sid: i32, area: Rect) {
         if y > area.y + area.h - lh {
             break;
         }
-        if checkbox(&mut g.ui, &g.font, x, y, *on, &clip(name, 30)) {
+        let nc = if area.w < 640.0 * s { 24 } else { 30 };
+        if checkbox(&mut g.ui, &g.font, x, y, *on, &clip(name, nc)) {
             toggle = Some(*id);
         }
         // Other squads using the same barracks.
         let others: Vec<String> = w.squads.iter().filter(|o| o.id != sid && o.barracks.contains(id)).map(|o| squad_name(w, o.id)).collect();
         let info = format!("z {z}, {a} tiles{}", if others.is_empty() { String::new() } else { format!(", also {}", others.join(", ")) });
-        g.font.draw(&clip(&info, ((area.w - 36.0 * 8.0 * s) / (8.0 * s)) as usize), x + 36.0 * 8.0 * s, y, s, col::TEXT_DIM);
+        let ix = (nc as f32 + 6.0) * 8.0 * s;
+        g.font.draw(&clip(&info, ((area.w - ix) / (8.0 * s)) as usize), x + ix, y, s, col::TEXT_DIM);
         y += lh + 3.0 * s;
     }
     if let Some(id) = toggle {
