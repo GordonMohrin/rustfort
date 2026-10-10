@@ -29,7 +29,10 @@
 //! - [r7] Under an alert, meals, drinks and beds outside the burrow are still used (DF prefers
 //!   the burrow's own); doctor, burial, depot and lever jobs are not taken under an alert.
 //!   Hauling picks the nearest item inside the burrow over all wanted stockpile categories.
-//! - Patrol routes are not simulated (treated as Train).
+//! - [r8] Patrol routes, barracks (training spots, sparring, beds, equipment storage), per-position
+//!   uniforms and squad ammo live in `barracks.rs`; ambushes, thieves and snatchers in `raids.rs`.
+//!   Under an alert, drinks, meals and beds inside the burrow come first; doctors and lever pullers
+//!   work inside it.
 
 use crate::combat::{Role, Sub};
 use crate::nav::MAX_NEIGHBORS;

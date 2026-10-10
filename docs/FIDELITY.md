@@ -245,7 +245,7 @@ Wiki pages checked: Combat, Material science, Attack, Armor, Wound, Blood, Pain,
 | Wrestling moves (grab, joint lock, break, throw, choke) | MISSING | Unarmed attacks are body-part strikes only. |
 | Stunned, winded, nauseous and dizzy states | MISSING | Combat page status effects. |
 | Fatigue and exhaustion in long fights | MISSING | |
-| Prone and crawling with broken legs | MISSING | Units with a broken stance limb still walk; see Recover wounded below. |
+| Prone and crawling with broken legs | FIXED r8 | A unit with an unset broken bone in a weight-bearing (STANCE) limb, or a lost foot, cannot stand: it waits on the floor to be carried, or crawls 4x slower (ESTIMATE) when nobody has Recover wounded. No crutches yet. `health::tests::without_rescuers_the_patient_crawls`. |
 | Fainting below 50 % blood, death at 0 blood, brain/heart/head death | OK | Wiki Blood / Wound. |
 | Bleeding volumes, clotting, pain threshold 250 + WILLPOWER/10, healing rates | ESTIMATE | |
 | Severing (all layers cut and the contact area is at least half the part) | ESTIMATE | |
@@ -258,14 +258,14 @@ Wiki pages checked: Combat, Material science, Attack, Armor, Wound, Blood, Pain,
 | Duty from orders and schedule (off duty, staggered, constant, Ready) | OK | Staggered is split by position parity per month (ESTIMATE). |
 | Kill orders: pursue the unit wherever it is reachable; done when it dies | OK | If the target is unreachable the soldier waits (DF soldiers stand idle the same way). |
 | Soldiers engage hostiles in sight (20 tiles, 2 z-levels) | ESTIMATE + FIXED r6 | The range is an estimate; dormant hostiles are now included. |
-| Patrol routes | MISSING | Treated as Train. |
-| Training by sparring and demonstrations (sparring injuries, teachers) | MISSING | Training is flat experience every 100 ticks (ESTIMATE). |
-| Barracks: sleeping, training spot, equipment storage | MISSING | |
-| Squad ammunition settings (ammo per squad, combat/training flags) | MISSING | Not exported. Ammo is chosen by launcher class: bolts for crossbows, metal ammo first for combat. |
-| Uniforms: pick up missing pieces, `KIND:SUBTYPE@MATERIAL` entries | OK | "Replace clothing", "exact matches" and partial matches are not distinguished. |
+| Patrol routes | FIXED r8 | `Squad::patrol` waypoints (`Sim::order_squad_patrol`): a `Patrol` order walks them in a loop, waiting 50 ticks at each (ESTIMATE); patrolling soldiers engage what they see. The export only names the route id, so imported patrols without waypoints still train. `barracks::tests::patrol_walks_its_route`. |
+| Training by sparring and demonstrations (sparring injuries, teachers) | FIXED r8 (ESTIMATE rates) | Wiki Sparring/Barracks: soldiers train in their barracks; partners side by side spar (double weapon experience, +DODGING; a bruise in 1 of 400 bouts), and a squadmate within 3 tiles who is 2+ levels better gives a demonstration (+2 experience). Without a barracks: individual drills as before. `barracks::tests::soldiers_train_and_spar_in_their_barracks` (sparring teaches more than drills). Lectures are not modelled. |
+| Barracks: sleeping, training spot, equipment storage | FIXED r8 | `Squad::barracks` is read from the export (`squad.rooms`; your Wache has the Kaserne, the Schuetzen the archery range). Training spots in the barracks, beds in the barracks for soldiers on duty (ESTIMATE: DF's per-routine sleep mode is not exported), uniform pieces stored in the barracks taken first. `soldiers_on_duty_sleep_in_barracks_beds`. |
+| Squad ammunition settings (ammo per squad, combat/training flags) | FIXED r8 | `Squad::ammo` (`Sim::set_squad_ammo`): ammo type, material or class (`WOOD`, `BONE`, `METAL`), amount (split per member, at most a quiver of 50) and combat/training use. Not exported yet; without settings the old rule applies (metal for combat, else training ammo). `squad_ammo_settings_pick_ammo_by_use`. |
+| Uniforms: pick up missing pieces, `KIND:SUBTYPE@MATERIAL` entries | OK + r8 | Per-position uniforms (`Sim::set_squad_uniform`) and an equipment report per squad (`Sim::squad_equipment`: worn, missing, ammo). "Replace clothing", "exact matches" and partial matches are not distinguished. `position_uniform_and_equipment_report`. |
 | Wounded soldiers rest | FIXED r6 | |
 | Soldiers leave a fight at the job-cancel thirst/hunger thresholds | ESTIMATE | Wiki: fights are "do-or-die". The rule exists so an unkillable foe cannot starve the whole squad. |
-| **Civilian alert** | FIXED r7 | Wiki Burrow: citizens assigned to a burrow "will only accept jobs from within their assigned burrow(s)" and still work. Rustfort r7: inside the alert burrow civilians dig, build, work workshops and farm plots and haul, when the work tile and the needed items lie inside the burrow (one bitset test per candidate). Idle civilians mill about inside.<br>Still ESTIMATE: meals, drinks and beds outside the burrow are used; doctor, burial, depot and lever jobs pause under the alert. |
+| **Civilian alert** | FIXED r7 | Wiki Burrow: citizens assigned to a burrow "will only accept jobs from within their assigned burrow(s)" and still work. Rustfort r7: inside the alert burrow civilians dig, build, work workshops and farm plots and haul, when the work tile and the needed items lie inside the burrow (one bitset test per candidate). Idle civilians mill about inside.<br>[r8] Drinks, meals and beds inside the burrow come first (outside ones only when there are none inside, ESTIMATE); doctors and Recover wounded treat patients inside the burrow with supplies from inside; levers inside the burrow are pulled. `civilian_alert_prefers_drinks_and_beds_inside_the_burrow`.<br>Still ESTIMATE: burial, depot and trap-reload jobs pause under the alert. |
 | Civilians flee hostiles within 12 tiles; cornered civilians fight back | ESTIMATE | |
 
 ## Invasions
@@ -275,11 +275,11 @@ Wiki pages checked: Combat, Material science, Attack, Armor, Wound, Blood, Pain,
 | Sieges from a population of 80 | OK | Wiki Siege: "80 members". |
 | Checked at season changes, chance 1/3 | ESTIMATE | |
 | Siege size | FIXED r7 | Wiki Siege + Difficulty (Normal): a tier needs its population "and one of production or trade": population 20/50/80/110/140, created wealth 5k/25k/100k/200k/300k, exported wealth 500/2.5k/10k/20k/30k. Sieges from the Town tier: 10 regulars, City 40 (+5 monsters), Metropolis 120 (+40 monsters). Rustfort r7 uses these tiers.<br>ESTIMATE: created wealth = current item value; exported = goods sold this session. Monsters are not spawned yet. |
-| Sieges vs ambushes | MISSING | Wiki: 25 % of invasions are sieges on normal difficulty (50 % on hard); the rest are smaller ambushes. Rustfort only has sieges. |
-| Thieves and snatchers (kobold thieves, goblin snatchers) | MISSING | |
-| Goblins charge at once; humans sometimes camp at the map edge | OK for goblins / MISSING camps | Rustfort sieges are goblin sieges, which charge as on the wiki. |
-| Monsters and mounts (trolls, beak dogs) in sieges | MISSING | 25 % of a siege are bowmen (ESTIMATE). |
-| Retreat when "sufficiently" beaten or waited out | ESTIMATE | Half dead or 2 months. Leader death has no effect. |
+| Sieges vs ambushes | FIXED r8 | `raids.rs`: an invasion is a siege 1 time in 4 when the siege tier is met, otherwise an ambush (from the first tier on). Ambush squads arrive **hidden**: civilians do not flee, soldiers do not engage, `Sim::hostiles` does not list them, until a citizen spots them (observer vs ambusher skill within a few tiles, ESTIMATE) or they strike: "An ambush! Curse them!". Size ESTIMATE: 1-3 squads of 2-5. `raids::tests::ambush_is_hidden_until_spotted`. |
+| Thieves and snatchers (kobold thieves, goblin snatchers) | FIXED r8 | Raws: kobolds `ITEM_THIEF`, goblins `BABYSNATCHER`. A hidden thief takes the most valuable small item it can reach and runs for the edge (the item is lost); spotted: "Thief! Protect the hoard from skulking filth!" and it flees. A snatcher carries a child off the map ("... has been abducted!", wording ESTIMATE); spotted: "Snatcher! Protect the children!"; killed or knocked out it drops the child. Visit odds ESTIMATE (thief 1/2, snatcher 1/3 per season, random day). 5 tests in `raids::tests`. |
+| Goblins charge at once; humans sometimes camp at the map edge | FIXED r8 (ESTIMATE times) | Natural and forced sieges gather at their arrival point first (goblins 600-2400 ticks, other races 2-7 days), attack only what comes within 8 tiles, then charge. `Sim::spawn_siege` keeps the old immediate charge for tests. `siege_camps_then_charges_with_monsters`. |
+| Monsters and mounts (trolls, beak dogs) in sieges | FIXED r8 | Wiki Siege: +5 monsters at City, +40 at Metropolis: trolls and beak dogs 1:1 (ESTIMATE) with the save's raws (troll 250 000 cm³, beak dog 150 000). Riding is not simulated (beak dogs walk beside). 25 % of a siege are bowmen (ESTIMATE). |
+| Retreat when "sufficiently" beaten or waited out | ESTIMATE + r8 | Half dead or 2 months; [r8] a siege also breaks when its leader (best weapon skill) dies (wiki: killing the leader; ESTIMATE). Thieves and snatchers leave on their own, at the latest after a month. `a_dead_leader_breaks_the_siege`. |
 | Invader equipment shares and skills | ESTIMATE | |
 
 ## Ranged combat
@@ -291,7 +291,7 @@ Wiki pages checked: Combat, Material science, Attack, Armor, Wound, Blood, Pain,
 | Fortifications: below Accomplished, fire only from the adjacent tile | OK | Wiki Fortification. |
 | Hit, dodge and block chances; rate of fire; ammo breakage | ESTIMATE | |
 | Friendly fire (units standing in the line of fire) | MISSING | |
-| Squad ammo settings | MISSING | See Military. |
+| Squad ammo settings | FIXED r8 | See Military. Hidden raiders cannot be targeted. |
 
 ## Defense (doors, bridges, levers, traps)
 
@@ -317,7 +317,7 @@ Wiki pages checked: Combat, Material science, Attack, Armor, Wound, Blood, Pain,
 |---|---|---|
 | Diagnosis first, then suturing, bone setting, surgery and dressing with supplies | OK | Durations are estimates. |
 | Hospital beds first, then the patient's own bed, then any free bed | OK | Wiki Health care. |
-| **Recover wounded**: immobile or injured dwarves are carried to a hospital zone or the nearest free bed | MISSING | Doctors treat unconscious patients where they fell. Patients with a broken leg walk to bed themselves (WRONG). Next item to do. |
+| **Recover wounded**: immobile or injured dwarves are carried to a hospital zone or the nearest free bed | FIXED r8 | Wiki Health care / labor RECOVER_WOUNDED: a patient who cannot walk (unconscious, or cannot stand) and needs rest is picked up by a dwarf with the labor and carried to a hospital bed, else its own, else any free bed; it no longer walks on a broken leg. Nobody is carried while an able hostile is within 3 tiles (ESTIMATE). A carrier that dies or passes out drops the patient. `health::tests::broken_leg_patient_is_carried_to_bed`. |
 | Feeding bedridden patients (water, food) | OK | |
 | Traction benches, casts, crutches | MISSING | |
 | Hospital chests stocked with thread, cloth and splints | MISSING | Supplies are taken from anywhere. |

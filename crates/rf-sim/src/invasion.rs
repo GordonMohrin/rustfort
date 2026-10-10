@@ -18,11 +18,15 @@
 //! - They retreat when half of them are dead or after two months, walking back to their
 //!   map edge and leaving the map.
 //!
+//! - [r8] Season starts now go through `raids.rs`: a quarter of the invasions are sieges (with a
+//!   camp, monsters from the City tier and a leader), the rest hidden ambushes; thieves and
+//!   snatchers visit too. A siege also retreats when its leader dies.
+//!
 //! # Estimates
 //! - Chance per season start once the threshold is met: 1 in 3. [r7] Created wealth is the
 //!   current value of the fort's items (DF counts the value of everything the fort made);
-//!   exported wealth is the value of the goods sold to caravans in this session. Siege
-//!   monsters (trolls, beak dogs) are not spawned yet. Equipment shares (copper 45 %, bronze 25 %, iron 30 %; mail shirt 70 %,
+//!   exported wealth is the value of the goods sold to caravans in this session. [r8] Siege
+//!   monsters (trolls, beak dogs) are spawned by `raids.rs`. Equipment shares (copper 45 %, bronze 25 %, iron 30 %; mail shirt 70 %,
 //!   helm 60 %, leggings 40 %); invader skills 2-7 in the weapon, attributes 750-1250.
 
 use crate::combat::Role;
