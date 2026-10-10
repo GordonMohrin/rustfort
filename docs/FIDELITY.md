@@ -1,6 +1,5 @@
 # Rustfort fidelity audit (round 6)
 
-<<<<<<< HEAD
 This file compares the rules Rustfort implements with the DF v50 wiki (dwarffortresswiki.org)
 and with what DF does in Gordon's fort. It was written by two audit agents:
 
@@ -215,29 +214,13 @@ reported as a floor (`min_tier`). Once the exporter writes the engravings into
 4. Room overlap and unenclosed penalties.
 5. Wagons and traps/stairs on the depot path; pack animal load limits.
 
-# Combat & military
-
-(Written by the combat audit agent.)
-=======
-The DF v50 wiki and observed behavior are the spec. Each row is classified:
-
-- **OK**: matches the wiki.
-- **WRONG**: contradicts the wiki.
-- **MISSING**: the wiki describes it, but Rustfort does not do it.
-- **ESTIMATE**: the wiki gives no number, so Rustfort uses its own value (listed in the module docs).
-- **FIXED r6**: was WRONG or MISSING and was fixed in round 6, with a test.
-
-## Economy, production & society
-
-(This half is written by the economy audit and merged in.)
-
-## Combat, defense, health & moods
+# Combat, defense, health & moods
 
 Modules: `combat.rs`, `military.rs`, `invasion.rs`, `ranged.rs`, `defense.rs`, `health.rs`, `moods.rs`, `caverns.rs` and the new `syndrome.rs`.
 
 Wiki pages checked: Combat, Material science, Attack, Armor, Wound, Blood, Pain, Dodging, Military, Squad, Schedule, Siege, Ambush, Invasion, Crossbow, Ammunition, Trap, Cage trap, Weapon trap, Door, Bridge, Lever, Burrow, Health care, Hospital, Infection, Strange mood, Artifact, Insanity, Cavern, Forgotten beast and Cave-in.
 
-### Round 6 fixes
+## Round 6 fixes
 
 | Fix | Wiki | Before | After | Evidence |
 |---|---|---|---|---|
@@ -246,7 +229,7 @@ Wiki pages checked: Combat, Material science, Attack, Armor, Wound, Blood, Pain,
 | Weapon traps jam | Weapon trap: "a 50% chance that a kill will result in the victim getting stuck in the mechanism and cause the trap to jam"; "a mechanic will automatically attempt to clean it" | Traps never jammed. | 50 % of kills by the trap itself jam it: it does nothing until a mechanic does a **Clean Trap** job (no job while enemies are within 20 tiles). The state is kept as a `JAMMED` building flag, so it survives a rebuild or a save. | `defense::tests::weapon_trap_jams_on_kills_and_a_mechanic_cleans_it`. On the real fort over 2 years, `traps_jammed` = 1. |
 | Forgotten beast special attacks | Forgotten beast: poisonous bites and stings, deadly dust and toxic gas, webs; syndromes "from mild pain to complete and instantaneous necrosis or paralysis" | Only claws and teeth. | `syndrome.rs` rolls one special attack per beast: none 30 %, venom 35 %, breath 25 %, webs 10 %.<br>Effects: paralysis, unconsciousness, bleeding, pain, necrosis, and respiratory failure (venom only).<br>The arrival text ends with DF's "Beware its ...!". | 4 tests in `syndrome::tests` (breath paralyzes at 6 tiles, a venom bite takes hold only on a wound, respiratory failure kills, the odds). On the real fort 2 of 5 beasts had stings. |
 
-### Combat (wounds, materials, defense rolls)
+## Combat (wounds, materials, defense rolls)
 
 | Item | Class | Notes |
 |---|---|---|
@@ -265,7 +248,7 @@ Wiki pages checked: Combat, Material science, Attack, Armor, Wound, Blood, Pain,
 | Severing (all layers cut and the contact area is at least half the part) | ESTIMATE | |
 | Fire, burns, temperature | MISSING | The save has temperature off. Dragonfire and fire breath are not modelled. |
 
-### Military
+## Military
 
 | Item | Class | Notes |
 |---|---|---|
@@ -282,7 +265,7 @@ Wiki pages checked: Combat, Material science, Attack, Armor, Wound, Blood, Pain,
 | **Civilian alert** | WRONG | Wiki Burrow: the civilian alert is "missing" in v50.07+; citizens assigned to a burrow "will only accept jobs from within their assigned burrow(s)" and still work. Rustfort's alert makes civilians mill about in the burrow with no work at all.<br>Not fixed: it needs burrow filtering in the job, haul and production searches (economy modules). |
 | Civilians flee hostiles within 12 tiles; cornered civilians fight back | ESTIMATE | |
 
-### Invasions
+## Invasions
 
 | Item | Class | Notes |
 |---|---|---|
@@ -296,7 +279,7 @@ Wiki pages checked: Combat, Material science, Attack, Armor, Wound, Blood, Pain,
 | Retreat when "sufficiently" beaten or waited out | ESTIMATE | Half dead or 2 months. Leader death has no effect. |
 | Invader equipment shares and skills | ESTIMATE | |
 
-### Ranged combat
+## Ranged combat
 
 | Item | Class | Notes |
 |---|---|---|
@@ -307,7 +290,7 @@ Wiki pages checked: Combat, Material science, Attack, Armor, Wound, Blood, Pain,
 | Friendly fire (units standing in the line of fire) | MISSING | |
 | Squad ammo settings | MISSING | See Military. |
 
-### Defense (doors, bridges, levers, traps)
+## Defense (doors, bridges, levers, traps)
 
 | Item | Class | Notes |
 |---|---|---|
@@ -325,7 +308,7 @@ Wiki pages checked: Combat, Material science, Attack, Armor, Wound, Blood, Pain,
 | Weapon trap reset delay ("after an unknown period") | ESTIMATE | Rustfort: no delay. |
 | Stone-fall trap: single use, re-armed with a stone | OK | |
 
-### Health
+## Health
 
 | Item | Class | Notes |
 |---|---|---|
@@ -337,7 +320,7 @@ Wiki pages checked: Combat, Material science, Attack, Armor, Wound, Blood, Pain,
 | Hospital chests stocked with thread, cloth and splints | MISSING | Supplies are taken from anywhere. |
 | Infections from uncleaned wounds; soap | ESTIMATE | Rates. |
 
-### Strange moods and insanity
+## Strange moods and insanity
 
 | Item | Class | Notes |
 |---|---|---|
@@ -347,7 +330,7 @@ Wiki pages checked: Combat, Material science, Attack, Armor, Wound, Blood, Pain,
 | Artifact value, names | ESTIMATE | Names come from random syllables, not DF's language files. |
 | Insanity kinds and odds | ESTIMATE | Melancholy dwarves stop eating; they do not seek water to drown in. |
 
-### Caverns and forgotten beasts
+## Caverns and forgotten beasts
 
 | Item | Class | Notes |
 |---|---|---|
@@ -359,10 +342,9 @@ Wiki pages checked: Combat, Material science, Attack, Armor, Wound, Blood, Pain,
 | Fire breath, dragonfire, secretions, contact syndromes on touch | MISSING | No temperature. |
 | **Cave-ins** | MISSING | Wiki Cave-in: tiles not supported along the X, Y and Z axes fall (diagonals, bridges and ramps below give no support). Creatures directly underneath die; the dust knocks out and throws creatures nearby. Rustfort never checks support after digging, channeling or deconstruction. |
 
-### Performance and determinism (round 6, real fort, 2 years with `--standdown`)
+## Performance and determinism (round 6, real fort, 2 years with `--standdown`)
 
 - **State hash:** stays the same across repeated runs (`9cfb23265fa36f6b`, twice).
 - **Survival:** 88 -> 90 citizens, the same as master.
 - **Speed:** about 59.6k ticks/s, against master's 61.4k measured back to back on the same busy machine (4 agents building at once). That is within the noise.
 - **Combat cost:** the combat phase stays at about 0.11 us/tick.
->>>>>>> worktree-wf_d0737c2b-398-2
