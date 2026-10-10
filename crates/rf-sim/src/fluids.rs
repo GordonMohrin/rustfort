@@ -147,6 +147,8 @@ pub struct FluidReport {
     pub mud_tiles: usize,
     /// Units currently in deep water or magma.
     pub submerged: usize,
+    /// Wall-clock seconds spent in the fluid tick (not part of the simulated state).
+    pub time_s: f64,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -953,6 +955,13 @@ impl Sim {
                 return;
             }
         }
+        let periodic = now % BLD_PERIOD == 3 || now % AQ_PERIOD == 37 || now % EVAP_PERIOD == 71 || now % UNIT_SCAN_PERIOD == 13;
+        let busy = !self.fluids.next.is_empty() || !self.fluids.sources.is_empty() || !self.fluids.sub.is_empty() || self.fluids.deep_new;
+        if !periodic && !busy {
+            // Settled: nothing to do this tick.
+            return;
+        }
+        let t0 = std::time::Instant::now();
         if now % BLD_PERIOD == 3 {
             self.fluids_buildings_check(false);
         }
@@ -973,6 +982,7 @@ impl Sim {
         if !self.fluids.sub.is_empty() {
             self.fluids_units(now);
         }
+        self.fluids.stats.time_s += t0.elapsed().as_secs_f64();
     }
 
     fn fluids_pass(&mut self, now: u64) {

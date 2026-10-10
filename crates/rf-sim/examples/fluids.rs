@@ -136,7 +136,11 @@ fn real_fort(explicit: Option<PathBuf>, ticks: u64, compare: bool) {
         r2.drowned,
         r2.burned
     );
-    println!("fluids on: {tps:.0} ticks/s, {alive} citizens alive");
+    println!(
+        "fluids on: {tps:.0} ticks/s, {alive} citizens alive | time in the fluid tick {:.3}s = {:.2} % of the run",
+        r2.time_s,
+        r2.time_s * tps / ticks as f64 * 100.0
+    );
     if compare {
         let (tps_off, _, alive_off) = run(false);
         println!("fluids off: {tps_off:.0} ticks/s, {alive_off} citizens alive | fluids cost {:+.1} %", (tps_off / tps - 1.0) * 100.0);
