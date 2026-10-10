@@ -199,6 +199,12 @@ impl Sim {
         self.combat.mil.alert.is_some() && !self.combat.mil.alert_list.is_empty()
     }
 
+    /// [calib11-econ] A civilian alert with its burrow bitset is on (work orders then go to
+    /// workshops inside the burrow, see `production.rs`).
+    pub(crate) fn alert_active_bits(&self) -> bool {
+        self.alert_on() && !self.combat.mil.alert_bits.is_empty()
+    }
+
     /// [r7] Is tile `t` part of the alert burrow?
     #[inline]
     pub(crate) fn in_alert(&self, t: usize) -> bool {

@@ -538,3 +538,35 @@ fn animals_are_deterministic_across_thread_counts() {
     assert!(a.1 >= 4, "animals were led: {a:?}");
     assert_eq!(a, b);
 }
+
+/// [calib11-econ] Wild creatures held together in one cage breed (Gordon's caged
+/// troglodytes); a lone caged female does not.
+#[test]
+fn creatures_sharing_a_cage_breed() {
+    let mut w = world();
+    w.creature_raws.push(raw("TROGLODYTE", "troglodyte", vec![caste("FEMALE", "troglodyte", 60_000, &[]), caste("MALE", "troglodyte", 60_000, &[])]));
+    let (x, y, z) = hall();
+    let cage = Pos::new(x, y, z);
+    let alone = Pos::new(x + 3, y, z);
+    let trog = |id: i32, p: Pos, sex: i8| {
+        let mut u = animal(id, "TROGLODYTE", if sex == 0 { "FEMALE" } else { "MALE" }, p, sex);
+        u.name = "Troglodyte".into();
+        u.flags = UnitFlags { caged: true, ..Default::default() };
+        u.age = 10.0;
+        u
+    };
+    let base = 9000;
+    for k in 0..3 {
+        w.units.push(trog(base + k, cage, 0));
+    }
+    w.units.push(trog(base + 3, cage, 1));
+    w.units.push(trog(base + 4, alone, 0));
+    let mut sim = Sim::new(w, 3);
+    sim.run_ticks(3 * 403_200);
+    let young: Vec<&Unit> = sim.world.units.iter().filter(|u| u.race == "TROGLODYTE" && u.id > base + 4).collect();
+    assert!(!young.is_empty(), "three females with a male in one cage for 3 years");
+    assert!(young.iter().all(|u| u.flags.caged && u.pos == cage), "born in the cage");
+    assert!(sim.animal_report().litters as usize >= young.len());
+    assert!(sim.drain_announcements().iter().any(|a| a.text.starts_with("Troglodyte has given birth to")));
+    assert_eq!(sim.world.units.iter().find(|u| u.id == base + 4).unwrap().pregnancy, 0, "alone in her cage");
+}

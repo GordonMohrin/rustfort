@@ -70,6 +70,8 @@ reported as a floor (`min_tier`). Once the exporter writes the engravings into
 | Seeds from eating raw plants | yes | yes (w:Seed) | OK |
 | Workshop queue | at most 10 jobs | 10 (w:Workshop) | OK |
 | Work orders | checked daily, conditions on stock, `amount_left`, repeat per period | same model (w:Manager) | OK |
+| [calib11-econ] Work orders under a civilian alert | the order's jobs go to matching workshops inside the alert burrow (if it has one), and jobs waiting outside no longer use up the order's amount | burrowed dwarves "will only accept jobs from within their assigned burrow(s)" (w:Burrow); before, jobs queued at unreachable workshops held the whole amount and the burrow's still or kitchen got none | FIXED |
+| [calib11-econ] Fallback standing orders (`--standing-orders`, not DF) | brew below 18 drinks per citizen, cook below 8 meals per citizen (today's citizens, re-checked daily); the daily amount grows with the shortfall (1 job per 15 missing drinks / 6 missing meals, base .. 4x base) | emulates Gordon's food watch ("bei knapper werdenden Vorraeten hoehere Produktionsziele statt Abschalten"); targets from DF's real stocks per citizen (drinks 14.6 / 18.4 / 35, meals 8.8 / 7.4 / 8.8 at r4 / r5 / r6) | ESTIMATE (player emulation) |
 | Work times | 100-600 ticks, scaled by skill | not documented | ESTIMATE |
 | Well | water of 3/7 or more directly below | (w:Well) | OK |
 
@@ -143,11 +145,12 @@ reported as a floor (`min_tier`). Once the exporter writes the engravings into
 | rule | Rustfort | DF (source) | class |
 |---|---|---|---|
 | Population caps | d_init POPULATION_CAP, STRICT_POPULATION_CAP (also stops births), BABY_CHILD_CAP | w:Population cap | OK |
-| Wave timing | decided per season, arrive later in the season | once per season (w:Migrant) | OK |
+| Wave timing | [calib11-econ] a date 1-27 days into spring, summer and autumn; what comes is decided on that date | "The date ... is determined at the start of that season, but the number of immigrants ... when the migrant wave arrives" (w:Migrant); no winter waves: Gordon's gamelog (8 forts, ~100 years) never has more than 3 migration messages per year | OK (wiki + observed) |
+| Sieges | [calib11-econ] a wave waits while a siege is seen on the map and is lost when its season ends | waves can be "blocked by a siege" (w:Migrant); gamelog: no migration message in spring 279, right after a siege arrived | OK (wiki + observed) |
 | First two waves | not special | hardcoded, 1-10 dwarves, not in the first winter (w:Migrant) | MISSING (only matters for new forts) |
-| Wave size | 2 + rand(min(28, 4 + wealth / 25 000)) | from created wealth (w:Migrant) | ESTIMATE |
-| Wave chance | 3 in 4 per season | not given | ESTIMATE |
-| Dangerousness | deaths do not deter migrants | many recent deaths deter migrants (w:Migrant) | MISSING |
+| Wave size | [calib11-econ] 1 + rand(max), max = min(4 + wealth / 25 000 (<= 28), free places under the cap / 3 (>= 1), local-population limit) | from created wealth; 1000 local units: at most 10, -1 at 1300 ... 2900, none from 3000 (w:Migrant); Gordon's waves near the cap were 1-3 (22 waves, his script's counts), up to 10 with ~40 free places | ESTIMATE (wealth part, cap shrink observed) |
+| Wave chance | 3 in 4 per season, else "The fortress attracted no migrants this season." | not given (gamelog: 22 waves in 36 seasons for Trussroads) | ESTIMATE |
+| Dangerousness | [calib11-econ] citizen deaths + insanities per year, this year x1, last x1/2 ... 5 years ago x1/32; known to the civilization when its own caravan leaves and at each year start; from 10 a wave comes 1 in 3 ("despite the danger", else "Migrants were too wary to make the journey this season."), from 50 likewise ("brave this terrifying place" / "cursed death-trap") | sum and weights, thresholds 10 / 50 and the messages: w:Migrant; the effect size is not given (Gordon's forts 6-7: 15 danger arrivals, 44 "too wary"); report by the own caravan: gamelog spring 277 (11 deaths, two plain waves before the dwarven caravan left) | OK (rule) / ESTIMATE (refusal rate, report timing) |
 | Pregnancy | married couples, 9 months, twins 1 in 50; [skills9] conception 1 in 36 per couple and month (was 1 in 12) | w:Pregnancy | ESTIMATE (rates); r9: 3 births (2-4) in 2.18 years vs DF's 2 (r8: 6) |
 | Children | baby until 1, adult at 13 (observed, raws say 12) | raws `CHILD:12`; the export shows 12.x-year-olds as children | OK (observed) |
 | Old age | MAXAGE 150-170 | raws | OK |
@@ -231,6 +234,7 @@ reported as a floor (`min_tier`). Once the exporter writes the engravings into
 | Mating chance | 1/5 per 100 ticks of adjacency | not given | ESTIMATE |
 | Not interested | 5 % of animals | 5 % (w:Breeding) | OK |
 | Caps | no pregnancy at 50 of a race on the map or > 75 % children | same (w:Breeding) | OK |
+| Caged creatures | [calib11-econ] a caged female sharing her cage with a male of her race conceives (1 in 16 per month), gives birth in the cage ("Troglodyte has given birth to a girl."); 50-per-race cap | w:Breeding: caged males can breed, caged females give birth in cages; Gordon's fort: all of DF's animal births r3 -> r6 (23) were troglodytes held together in cage traps | OK (observed) / ESTIMATE (rate) |
 | Gestation | 6 months | 6 months for non-sentients (w:Breeding) | OK |
 | Litter | 1-3; `MULTIPLE_LITTER_RARE` 1 (1/500: 1-3) | LITTERSIZE default 1-3 (w:Creature token) | OK |
 | Young | born tame, adult at 1 year (vanilla `CHILD:1`), size from 1/10 to adult | raws BODY_SIZE by age | ESTIMATE (size) |

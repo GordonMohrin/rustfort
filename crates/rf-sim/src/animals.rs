@@ -1427,12 +1427,17 @@ impl Sim {
     /// troglodytes held together in 7 cage traps had 23 births ("Troglodyte has given birth to
     /// a girl."), all of the fort's animal births, so a female sharing her cage with a male of
     /// her race conceives too. Estimate fitted to that: 1 in 16 per month, 6 months gestation
-    /// (wiki), one young; `Unit::pregnancy` keeps the ticks left (saved with the unit).
+    /// (wiki), one young, the wiki's 50-per-species cap (DF: 46 troglodytes at r5, 2 births to r6);
+    /// `Unit::pregnancy` keeps the ticks left (saved with the unit).
     fn an_cage_breed_pass(&mut self, now: u64) {
         let mut groups: HashMap<(i32, i32, i32, String), (Vec<usize>, bool)> = HashMap::new();
         let mut births = Vec::new();
+        // Wiki "Breeding": intelligent creatures need marriage, so caged goblins (CAN_SPEAK) do
+        // not breed; troglodytes (CAN_LEARN only) do.
+        let speaks: std::collections::HashSet<String> =
+            self.world.creature_raws.iter().filter(|c| c.castes.iter().any(|k| k.flags.iter().any(|f| f == "CAN_SPEAK"))).map(|c| c.token.clone()).collect();
         for (i, u) in self.world.units.iter_mut().enumerate() {
-            if !u.flags.caged || u.flags.dead || u.flags.citizen || u.flags.inactive || u.flags.tame {
+            if !u.flags.caged || u.flags.dead || u.flags.citizen || u.flags.inactive || u.flags.tame || speaks.contains(&u.race) {
                 continue;
             }
             if u.pregnancy > 0 {
@@ -1455,13 +1460,25 @@ impl Sim {
         }
         let mut keys: Vec<_> = groups.into_iter().filter(|(_, g)| g.1 && !g.0.is_empty()).collect();
         keys.sort_by(|a, b| a.0.cmp(&b.0));
-        for (_, (females, _)) in keys {
+        // Wiki "Breeding": no pregnancy at 50 of a species on the map (unborn young count).
+        let mut pop: HashMap<String, usize> = HashMap::new();
+        for u in &self.world.units {
+            if !u.flags.dead && !u.flags.inactive && !u.flags.citizen {
+                *pop.entry(u.race.clone()).or_default() += 1 + usize::from(u.pregnancy > 0);
+            }
+        }
+        for ((_, _, _, race), (females, _)) in keys {
             for i in females {
+                let n = pop.get(&race).copied().unwrap_or(0);
+                if n >= POP_CAP {
+                    break;
+                }
                 let id = self.world.units[i].id;
                 let mut r = Rng::for_unit(self.seed, id as usize, now, 0xCA6E);
                 if r.chance(1, CAGE_CONCEIVE_IN) {
                     self.world.units[i].pregnancy = GESTATION as i32;
                     self.animals.rep.pregnancies += 1;
+                    *pop.entry(race.clone()).or_default() += 1;
                 }
             }
         }

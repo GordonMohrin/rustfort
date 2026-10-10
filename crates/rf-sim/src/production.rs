@@ -62,6 +62,11 @@ use std::collections::HashMap;
 pub const PROD_PERIOD: u64 = 100;
 /// DF: at most 10 jobs in a workshop queue.
 pub const MAX_QUEUE: usize = 10;
+/// [calib11-econ] Stock targets of the fallback standing orders per citizen (Gordon's food watch
+/// emulation; DF's real stocks per citizen in his fort: drinks 14.6 at r4, 18.4 at r5, 35 at r6;
+/// meals 8.8, 7.4, 8.8).
+pub const STANDING_DRINK_PER_CITIZEN: i32 = 18;
+pub const STANDING_FOOD_PER_CITIZEN: i32 = 8;
 /// DF: seed-producing activities stop at 200 seeds of a species (wiki "Seed").
 pub const SEED_CAP: i32 = 200;
 
@@ -436,6 +441,8 @@ pub(crate) struct Prod {
     pub unsupported: Vec<(String, u32)>,
     /// Ids of the fallback standing orders the sim added (see `set_standing_orders`).
     pub standing: Vec<i32>,
+    /// [calib11-econ] Base daily amount of each standing order (before the shortfall bonus).
+    pub standing_base: HashMap<i32, i32>,
 }
 
 /// Stock and production overview (for the bench report and the UI).
@@ -935,11 +942,11 @@ impl Sim {
                 0,
                 (2 * stills).max(2),
                 "Daily",
-                vec![cond("DRINK", "", &[], (10 * citizens).max(50)), cond("PLANT", "", &["BREWABLE"], -citizens.max(5))],
+                vec![cond("DRINK", "", &[], (STANDING_DRINK_PER_CITIZEN * citizens).max(50)), cond("PLANT", "", &["BREWABLE"], -citizens.max(5))], // [calib11-econ] target
             );
         }
         if kitchens > 0 {
-            push(self, 2, (2 * kitchens).max(2), "Daily", vec![cond("FOOD", "", &[], (3 * citizens).max(20))]);
+            push(self, 2, (2 * kitchens).max(2), "Daily", vec![cond("FOOD", "", &[], (STANDING_FOOD_PER_CITIZEN * citizens).max(20))]); // [calib11-econ] target
         }
         if carps > 0 {
             push(self, 5, 3, "Monthly", vec![cond("BARREL", "", &["EMPTY"], 5)]);
@@ -1459,7 +1466,45 @@ impl Sim {
         n
     }
 
+    /// [calib11-econ] The fallback standing orders follow the fort like Gordon's food watch
+    /// ("bei knapper werdenden Vorraeten HOEHERE Produktionsziele statt Abschalten"): the stock
+    /// targets scale with today's citizens, and the daily amount grows with the shortfall (one
+    /// job per `per_job` missing units, from the base amount up to 4x).
+    fn standing_orders_adjust(&mut self) {
+        if self.prod.standing.is_empty() {
+            return;
+        }
+        let citizens = self.world.citizens().count() as i32;
+        for k in 0..self.prod.standing.len() {
+            let id = self.prod.standing[k];
+            let Some(oi) = self.world.work_orders.iter().position(|o| o.id == id) else { continue };
+            let o = &self.world.work_orders[oi];
+            let Some(c) = o.conditions.first().cloned() else { continue };
+            let (per_cit, min, per_job) = match c.item_type.as_str() {
+                "DRINK" => (STANDING_DRINK_PER_CITIZEN, 50, 15),
+                "FOOD" => (STANDING_FOOD_PER_CITIZEN, 20, 6),
+                _ => continue,
+            };
+            if c.compare != "LessThan" {
+                continue;
+            }
+            let target = (per_cit * citizens).max(min);
+            let have = self.count_condition_in(&c, None);
+            let base = self.prod.standing_base.get(&id).copied().unwrap_or(o.amount_total.max(1));
+            self.prod.standing_base.insert(id, base);
+            let amount = ((target - have).max(0) / per_job).clamp(base, 4 * base);
+            let o = &mut self.world.work_orders[oi];
+            o.conditions[0].value = target;
+            if amount > o.amount_total {
+                o.amount_left += amount - o.amount_total;
+            }
+            o.amount_total = amount;
+            o.amount_left = o.amount_left.min(amount);
+        }
+    }
+
     fn run_orders(&mut self) {
+        self.standing_orders_adjust(); // [calib11-econ]
         let mut done_orders: Vec<i32> = Vec::new();
         // [industry] Many orders share conditions (e.g. "at least 22 boulders"): count each once.
         let mut memo: HashMap<String, i32> = HashMap::new();
@@ -1516,7 +1561,28 @@ impl Sim {
             }
             let o = &self.world.work_orders[oi];
             let workshop = RECIPES[r as usize].workshop;
-            let queued: i32 = self.prod.shops.iter().map(|s| self.world.buildings[s.bi].jobs.iter().filter(|j| j.order_id == id).count() as i32).sum();
+            let ws_id = o.workshop_id;
+            // [calib11-econ] Under a civilian alert the civilians can only use workshops inside
+            // the alert burrow: the order's jobs go there (when it has such a workshop), and jobs
+            // waiting in workshops outside no longer use up the order's amount (before, they
+            // held it, so a fort under alert brewed and cooked nothing).
+            let alert_shops: Vec<usize> = if self.alert_active_bits() {
+                self.prod
+                    .shops
+                    .iter()
+                    .filter(|s| (if ws_id >= 0 { s.bid == ws_id } else { s.subtype == workshop }) && self.in_alert(s.site as usize))
+                    .map(|s| s.bi)
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let queued: i32 = self
+                .prod
+                .shops
+                .iter()
+                .filter(|s| alert_shops.is_empty() || alert_shops.contains(&s.bi))
+                .map(|s| self.world.buildings[s.bi].jobs.iter().filter(|j| j.order_id == id).count() as i32)
+                .sum();
             let mut want = o.amount_left - queued;
             if want <= 0 {
                 continue;
@@ -1532,14 +1598,11 @@ impl Sim {
                 suspended: false,
                 order_id: id,
             };
-            let ws_id = o.workshop_id;
-            let shops: Vec<usize> = self
-                .prod
-                .shops
-                .iter()
-                .filter(|s| if ws_id >= 0 { s.bid == ws_id } else { s.subtype == workshop })
-                .map(|s| s.bi)
-                .collect();
+            let shops: Vec<usize> = if !alert_shops.is_empty() {
+                alert_shops
+            } else {
+                self.prod.shops.iter().filter(|s| if ws_id >= 0 { s.bid == ws_id } else { s.subtype == workshop }).map(|s| s.bi).collect()
+            };
             if shops.is_empty() {
                 continue;
             }
