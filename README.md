@@ -41,4 +41,13 @@ cargo run --release -p rf-app -- bench           # headless ticks/s benchmark
 - **F5** speichert sofort. **Esc** öffnet das Menü: Speichern, Laden, Einstellungen, *Save and return to title* (speichert und zurück zum Titelbildschirm), Beenden.
 - **Autosave** nach Einstellung (Standard: am Anfang jeder Jahreszeit, wie DFs saisonales Autosave) nach `saves/<fort>-auto-<zeit>.rfsave`; die letzten 3 bleiben, ältere Autosaves werden gelöscht. Eigene Spielstände (F5, Menü) werden nie gelöscht.
 
+**Neu in Runde 8** (wie in Steam-DF):
+
+- **Arbeit (`y`)** hat drei Reiter: *Work details* (DFs Arbeitsgruppen mit ihren Symbolen; rechts die gewählte Gruppe mit "Alle / Nur ausgewählte / Niemand", die Zwerge zum An- und Abhaken, eigene Gruppen mit "New work detail" und "Edit labors"), *Kitchen* (Kochen/Brauen je Zutat; Plump Helmets werden nur gebraut, deine Regel) und *Advanced* (das alte Raster aller Arbeiten).
+- **Lager-Einstellungen:** im Lager-Fenster "Settings, links...": Kategorien, Gruppen und einzelne Sorten wie in DF, Vorlagen, Fässer/Kisten/Schubkarren, Verknüpfungen ("Give to..." / "Take from..." und dann ein anderes Lager oder eine Werkstatt auf der Karte anklicken).
+- **Tiere:** Kreaturen > Haustiere > "Animals: manage..." (oder "Pick animals..." im Pferch): Schlachten, Kriegs-/Jagdausbildung, Weide zuweisen.
+- **Orte (`P`):** Tempel, Tavernen, Bibliotheken mit ihren Ämtern (Wirt, Darsteller, Gelehrte ...); aus einem Versammlungsbereich einen Ort machen, beim Tempel mit Gottheit.
+- **Justiz (`j`)**, **Objekte (`O`, Artefakte)** und **Welt (`Y`, Zivilisationen, Karawanen)** sind jetzt in der unteren Leiste.
+- **Minikarte:** Knopf `▓` oben rechts; Klick auf die Karte springt dorthin.
+
 Gefährlich oder wichtig wie in DF: Belagerungen und Monster pausieren das Spiel mit einem Hinweisfenster (*Center on them* springt hin). Der Trupp-Bildschirm (`c`) stellt die Soldaten auf Bereitschaft oder zurück an die Arbeit.

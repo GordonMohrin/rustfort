@@ -351,3 +351,26 @@ Wiki pages checked: Combat, Material science, Attack, Armor, Wound, Blood, Pain,
 - **Survival:** 88 -> 90 citizens, the same as master.
 - **Speed:** about 59.6k ticks/s, against master's 61.4k measured back to back on the same busy machine (4 agents building at once). That is within the noise.
 - **Combat cost:** the combat phase stays at about 0.11 us/tick.
+
+# Player screens (round 8, rf-app `[app8]`)
+
+The screens follow the DF Steam (v50/53) layouts; the rules behind them live in the sim (`round8_api`). This is what the UI itself decides:
+
+| Item | Class | Notes |
+|---|---|---|
+| Labor > Work details: list with DF's `WORK_DETAIL_*` icons, the modes Everybody / Only selected / Nobody (`LABOR_WORKER_ASSIGNED*`), per-dwarf toggles, "assigned workers only do this" | OK | Observed in Gordon's DF 53.16 via DFHack (read-only): the 11 built-in details (Miners ... Siege operators) with their icons, modes and labors, plus one custom detail. |
+| Built-in details keep their labors | OK | DF's `no_modify` flag is set on the 11 defaults. Custom details get the labor editor and Delete. |
+| Clicking a dwarf in an Everybody or Nobody detail | ESTIMATE | Switches to "Only selected" with everybody else, or with only that dwarf. DF's exact click behavior was not checked. |
+| "Set up DF's default work details" for exports without them | ESTIMATE | Assigns the "only selected" details to dwarves who already have all of their labors. |
+| Kitchen: cook/brew per item kind and material (`LABOR_KITCHEN_*`) | OK | Rows come from the fort's stock (DF lists the same kinds).<br>Cooking is allowed for edible plants, seeds, drinks, meat, fish, eggs, cheese, milk, flour and fat. Brewing is allowed for brewable plants and fruit (raws). |
+| Plump helmets: no cook | ESTIMATE (player setting) | Gordon's rule. It is added at start only when the save has no kitchen entry for them. |
+| Stockpile settings | OK | DF Steam layout and icons (`STOCKPILE_*`, `CUSTOM_STOCKPILE_*`): categories, groups and leaves with on/partial/off marks, presets, bins/barrels/wheelbarrows, give-to/take-from links picked on the map, and "take from links only".<br>Filter paths follow the exporter: `cat/group/token`, `cat/group/*` (whole group), `cat/group/!token` (all but that one). A category without filters accepts everything. |
+| Leaf lists when the sim offers none | ESTIMATE | Built from the save's raws and materials (all creatures for meat, and so on).<br>Stone uses DF Steam's ore / economic / other / clay split. "Economic" means flux, gypsum, calcium carbonate and clay, plus a fixed list (coal, kaolinite, ...). |
+| What the "Organic" and "Inorganic" presets cover | ESTIMATE | Organic: food, corpses, refuse, leather, cloth, wood, sheets.<br>Inorganic: stone, ammo, coins, bars/blocks, gems, finished goods, furniture, weapons, armor. |
+| Pile-to-pile links are kept on both piles | OK | DF keeps `give_to` / `take_from` on both sides. Workshop links are kept on the pile only (rf-core has no workshop link list). |
+| Pets and livestock: training, owner, pasture, pregnancy, slaughter, war/hunting training, pen picker | OK | DF's `PETS_LIVESTOCK_*` buttons. Training requests go to `Sim::request_training` ("" cancels). |
+| Places: locations with occupations; make a location from a meeting area (a temple asks for the deity) | OK | The deities are those the citizens worship, most worshippers first (DF's dedication list).<br>Occupations per kind: tavern keeper and performer, temple performer, library scholar and scribe, hospital doctor (plus the exported diagnostician, surgeon and bone doctor).<br>New locations are named "Tavern 1 of Trussroads"; DF generates names (ESTIMATE). |
+| Justice: open and closed cases, convicts, convict picker (witnesses first) | OK | No interrogation; the punishment is the sim's. |
+| Objects: artifacts with DF's item name, material, place (named room) and maker | OK | The maker is only known for artifacts made in Rustfort (mood records); the export has no creator. |
+| World: civilizations with their relation, caravans | OK | |
+| Minimap | not in DF | DF Steam has no minimap; this is a Rustfort extra and off by default. |
