@@ -127,6 +127,26 @@ quiet machine (first r4 -> r5 run, r3 -> r4 run), about 61k for one sim in round
 (PROGRESS.md). That is **about 500x DF's calendar speed and about 2 000x DF's real frame
 rate**.
 
+**Round 9 (`[perf9]`, A* landmarks):** on r5 the slow scaling was not hostiles but construction
+fetches across 10 z-levels (stockpile at z121, sites at z130-132; 499 of 545 searches above 5 000
+nodes). `examples/scale.rs` back to back with the round-8 binary (machine shared with other
+builds, so cycles are the robust number; 88 Mcyc per 1 000 ticks is about 50k ticks/s):
+
+| citizens | A* nodes / 1k ticks | Mcyc / 1k ticks | ticks/s | paths us/tick |
+|---|---|---|---|---|
+| 87, round 8 | 315-550k | 252-354 | 12-17k | 47-72 |
+| 87, round 9 | 37-50k | 85 | 47k | 9.8 |
+| 487, round 8 | 215-290k | 308-329 | 12.8-13.4k | 43-49 |
+| 487, round 9 | 82k | 186 | 22.6k | 13.3 |
+
+At 487 citizens the think phase (19 us/tick) now leads: idle dwarves re-run the haul search
+about 2 900 times per 1 000 ticks while only about 30 items get hauled (try_haul is about 40 %
+of the decision cycles), then workshop and construction searches.
+
+Two years headless (`rustfort bench --ticks 806400 --standdown`, r5, invasions on): 87 -> 93
+citizens, 39k ticks/s on the shared machine (production 9.1, paths 6.0, think 4.7 us/tick).
+The state hash is the same with `RAYON_NUM_THREADS=1` and `=12`.
+
 ## Results r4 -> r5 (2.18 years, 6 seeds, standing orders, restored squad routines)
 
 | metric | DF r4 | DF r5 / change | sim min | sim median | sim max | verdict |

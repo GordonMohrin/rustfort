@@ -657,6 +657,7 @@ impl Sim {
                     t.flags = nf;
                     let f = self.nav.compute(&self.world.tiles, i);
                     self.nav.flags[i] = f;
+                    self.nav.lm_cost_changed(i); // [perf9] cheaper tiles: repair landmark table
                     if f & WALK != 0 {
                         let c = TRAFFIC_COST[(f >> crate::nav::TRAFFIC_SHIFT) as usize];
                         self.nav.min_cost = self.nav.min_cost.min(c);

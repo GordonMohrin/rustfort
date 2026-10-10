@@ -1330,6 +1330,11 @@ impl Sim {
                 continue;
             }
             ai.waiting = false;
+            if pj.nodes >= 5_000 && std::env::var_os("RF_PATH_LOG").is_some() {
+                // [perf9] debug: who runs the big searches
+                let (u, task) = (&self.world.units[ai.uidx], ai.task);
+                eprintln!("bigpath t={now} unit {} {} kind {:?} task {:?} from {:?} to {:?} goals {} nodes {} ok {} len {}", u.id, u.race, ai.kind, task, self.world.pos_of(pj.start as usize), self.world.pos_of(pj.goals.t[0] as usize), pj.goals.n, pj.nodes, pj.ok, pj.out.len());
+            }
             if pj.ok {
                 std::mem::swap(&mut ai.path, &mut pj.out);
                 ai.path_i = 0;

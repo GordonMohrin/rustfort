@@ -471,6 +471,16 @@ method in `docs/VALIDATION.md`.
 - **Speed:** about 59.6k ticks/s, against master's 61.4k measured back to back on the same busy machine (4 agents building at once). That is within the noise.
 - **Combat cost:** the combat phase stays at about 0.11 us/tick.
 
+## Pathfinding and determinism (round 9, `[perf9]`)
+
+| Item | Class | Notes |
+|---|---|---|
+| A* path cost (traffic 1/2/5/25 per entered tile) | OK | Unchanged rule (w:Path, w:Traffic). New heuristic: landmarks (ALT, `nav::Landmarks`), 16 per walk component of at least 1 500 tiles, picked by farthest-point selection. Paths stay **optimal** (tests `landmarks_keep_paths_optimal_and_expand_less`, `landmarks_stay_admissible_after_digging`). |
+| Which of several equally cheap paths a unit takes | ESTIMATE (changed) | The tie-break is still (f, h, tile), but h is larger now, so among equally cheap paths another one can win. The state hash differs from round 8 for that reason only. DF's own choice among equal paths is unknown. `RF_NO_LANDMARKS=1` switches back to the round-8 heuristic for A/B runs. |
+| New stairs, dug tunnels, opened doors, cheaper traffic | OK | The landmark table is repaired at once (decrease-only relaxation from the changed 3x3x3 box, `Nav::lm_relax_box`; traffic: `Nav::lm_cost_changed`), so new shortcuts are used right away, as in DF. Removed moves (walls, locked doors, raised bridges) keep the old values, which stay valid lower bounds. |
+| Search effort on the r5 fort | measured | 87 citizens: A* nodes per 1 000 ticks 315k -> 37-50k (6-8x fewer), main-thread cycles per 1 000 ticks 252-354 -> 85 Mcyc. The big searches were construction fetches across 10 z-levels (stockpile at z121, sites at z130-132), not hostiles. |
+| Determinism with 1..24 threads and any parallel threshold | OK | Not reproduced: 16 + 12 configurations on r5 and the r6 siege (`examples/determinism.rs`, 12 busy threads), 6 rounds of all `*deterministic*` tests run concurrently, and the new `tests/determinism_stress.rs` all gave equal hashes at every checkpoint. Checked and ruled out: the parallel A* phase is a pure function per search (thread-local tables never affect results), no time-based decisions (all `Instant`s only feed statistics), no `HashMap` iteration whose order changes results, no global state. Hardened: A* never lets f drop below the popped f (pathmax), so an inconsistent heuristic can no longer lose queue entries. |
+
 # Export data (round 8)
 
 What the round-8 exporter (`tools/dfhack/rustfort-export.lua`, rev `2026-10-10e`) brings into
