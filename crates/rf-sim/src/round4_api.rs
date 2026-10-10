@@ -85,35 +85,30 @@ impl Sim {
 
     /// Current caravan at the depot, if any.
     pub fn trade_status(&self) -> Option<TradeStatus> {
-        None
+        self.trade_status_impl() // [society]
     }
 
     /// Evaluate (and if `commit`, execute) a barter: fort items `offer` for merchant items `request`.
-    pub fn trade(&mut self, _offer: &[i32], _request: &[i32], _commit: bool) -> TradeOffer {
-        TradeOffer { reply: "There is nobody to trade with.".into(), ..Default::default() }
+    pub fn trade(&mut self, offer: &[i32], request: &[i32], commit: bool) -> TradeOffer {
+        self.trade_impl(offer, request, commit) // [society]
     }
 
     /// Mark fort items to be brought to the depot (DF "move goods to depot").
-    pub fn move_to_depot(&mut self, _item_ids: &[i32]) {}
+    pub fn move_to_depot(&mut self, item_ids: &[i32]) {
+        self.move_to_depot_impl(item_ids) // [society]
+    }
 
     /// Appoint a unit to a noble position (token from `world.nobles`).
     pub fn appoint(&mut self, token: &str, unit_id: i32) {
-        if let Some(n) = self.world.nobles.iter_mut().find(|n| n.token == token) {
-            n.holder = unit_id;
-        }
+        self.appoint_impl(token, unit_id) // [society]
     }
 
     pub fn population_info(&self) -> PopulationInfo {
-        PopulationInfo {
-            citizens: self.world.citizens().count(),
-            children: self.world.citizens().filter(|u| u.profession == "CHILD" || u.profession == "BABY").count(),
-            population_cap: self.world.settings.population_cap,
-            ..Default::default()
-        }
+        self.population_info_impl() // [society]
     }
 
     pub fn set_population_cap(&mut self, cap: i32) {
-        self.world.settings.population_cap = cap;
+        self.set_population_cap_impl(cap) // [society]
     }
 
     /// Number of tiles with liquid and how many are currently flowing (for the UI/bench).

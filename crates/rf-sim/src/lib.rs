@@ -57,6 +57,10 @@ pub mod round3_api;
 pub mod round4_api;
 pub use round4_api::{PopulationInfo, TradeOffer, TradeStatus};
 pub use round3_api::{SquadOrder, StressLevel};
+pub mod population; // [society]
+pub mod trade; // [society]
+pub use population::PopulationReport; // [society]
+pub use trade::{CaravanLog, TradeReport}; // [society]
 pub use build_api::{BuildOption, OrderTemplate, ZONE_KINDS};
 pub mod gen;
 pub mod items;
@@ -525,6 +529,10 @@ pub struct Sim {
     ind: industry::Ind,
     /// [combat] Combat, military and invasions (see `combat`, `military`, `invasion`).
     combat: combat::Combat,
+    /// [society] Migrants, births, burial, ghosts, nobles (see `population`).
+    pop: population::Pop,
+    /// [society] Caravans, depot and trading (see `trade`).
+    trade: trade::Trade,
 }
 
 #[inline]
@@ -622,6 +630,8 @@ impl Sim {
             store: storage::Store::default(), // [industry]
             ind: industry::Ind::default(),    // [industry]
             combat: combat::Combat::default(), // [combat]
+            pop: population::Pop::default(), // [society]
+            trade: trade::Trade::default(), // [society]
         };
         sim.init_plants();
         sim.init_units();
@@ -1035,6 +1045,7 @@ impl Sim {
         self.prod_hash(&mut mix);
         self.social_hash(&mut mix); // [social]
         self.combat_hash(&mut mix); // [combat]
+        self.society_hash(&mut mix); // [society]
         h
     }
 
@@ -1137,6 +1148,9 @@ impl Sim {
             self.social_pass(now); // [social]
         }
         self.combat_tick(now); // [combat]
+        if now % population::POP_PERIOD == population::POP_PHASE {
+            self.population_tick(now); // [society]
+        }
         let t0 = Instant::now();
         for s in 0..self.ai.len() {
             if self.ai[s].wake <= now {
@@ -1354,6 +1368,8 @@ impl Sim {
                 // [combat] hostiles, fighting animals, leaving invaders
                 if self.combat_owns(s) {
                     self.combat_think(s, now);
+                } else if self.trade_owns(s) {
+                    self.trade_think(s, now); // [society] merchants and pack animals
                 } else {
                     self.think_simple(s, now);
                 }
@@ -1519,6 +1535,9 @@ impl Sim {
             self.wander(s, now, &mut r);
             return;
         }
+        if self.society_decide(s, now) {
+            return; // [society] burial, depot hauling, broker
+        }
         let ai = &self.ai[s];
         let labors = ai.labors;
         let jobs_changed = labors & labor::ANY_JOB != 0 && ai.seen_jobs != self.epoch_jobs;
@@ -1649,6 +1668,7 @@ impl Sim {
             }
             Task::GoStore(id, dest) => {
                 self.drop_item(s, id, dest);
+                self.society_stored(id, dest); // [society] coffin / trade depot
                 self.ai[s].task = Task::Idle;
                 self.stats.items_hauled += 1;
                 self.decide(s, now);
