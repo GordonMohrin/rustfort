@@ -1647,6 +1647,7 @@ impl Sim {
         let mut severed_part: Option<u16> = None;
         let mut depth = 0;
         let mut bruise_brain = false;
+        let mut wounded = false; // [perf10]
         loop {
             depth += 1;
             let (l0, nl, pvol, pflags) = {
@@ -1734,6 +1735,7 @@ impl Sim {
                         died = died.or(Some("heart"));
                     }
                     self.add_wound(d, cur, l, flags, sev, pvol, &lt, now);
+                    wounded = true; // [perf10]
                     if flags & wf::BROKEN != 0 {
                         self.combat.f[d].part_state[cur as usize] |= 2;
                     }
@@ -1809,6 +1811,9 @@ impl Sim {
                 // Blunt force reaching an organ spreads out.
                 m *= 0.5;
             }
+        }
+        if wounded {
+            self.sync_wounds(d); // [perf10] once, after the last wound of this blow
         }
         let mut tail = String::new();
         if let Some(sp) = severed_part {
@@ -1921,7 +1926,8 @@ impl Sim {
         if bleed > 0 {
             self.list_bleeder(d);
         }
-        self.sync_wounds(d);
+        // [perf10] `strike` mirrors the wounds into `Unit::wounds` once after its last wound
+        // (rebuilding that list per tissue layer was most of a big siege's think time).
     }
 
     fn sever(&mut self, d: usize, part: u16, now: u64) {
@@ -2441,7 +2447,12 @@ impl Sim {
             return false;
         }
         let ai = &self.ai[s];
-        let end_ok = ai.path_i < ai.path.len() && self.world.pos_of(*ai.path.last().unwrap() as usize).dist(pt) <= 1;
+        // [perf10] Far from the target, a path to where it stood a moment ago is good enough:
+        // its end may be off by a quarter of the distance (re-planned on the way in, exact
+        // within 12 tiles). Before, every step of a fleeing target re-planned every chaser.
+        let d = ps.dist(pt);
+        let tol = if d > 12 { d / 4 } else { 1 };
+        let end_ok = ai.path_i < ai.path.len() && self.world.pos_of(*ai.path.last().unwrap() as usize).dist(pt) <= tol;
         if end_ok && (self.combat.f[s].repath_at > now || ps.dist(pt) > 12) {
             self.step(s, now);
         } else if !end_ok && self.combat.f[s].repath_at > now + 20 {

@@ -127,6 +127,23 @@ impl Queue {
     }
 }
 
+/// [perf10] Landmark lower bound `max_j max(D_j(g) - D_j(n), D_j(n) - D_j(g) + off)` over the
+/// landmarks known at both tiles (`i32::MIN` if none), with `off = cost(g) - cost(n)`.
+///
+/// Branch-free so the compiler vectorizes it (16 lanes); the value is exactly the one the
+/// old per-landmark loop folded into the heuristic, so every A* search expands the same nodes.
+#[inline(always)]
+fn alt_bound(g: &[u16; LM_K], n: &[u16; LM_K], off: i32) -> i32 {
+    let mut m = i32::MIN;
+    for j in 0..LM_K {
+        let (a, b) = (g[j] as i32, n[j] as i32);
+        let v = (a - b).max(b - a + off);
+        let ok = g[j] != LM_INF && n[j] != LM_INF;
+        m = m.max(if ok { v } else { i32::MIN });
+    }
+    m
+}
+
 const NO_PARENT: u32 = u32::MAX >> 1;
 /// [perf] Closed flag in the top bit of `Node::parent` (tile indices are below 2^31).
 const CLOSED: u32 = 1 << 31;
@@ -303,16 +320,8 @@ impl AStar {
             let cn = nav.cost(i as usize) as i32;
             let mut best = i32::MAX;
             for (k, &(gx, gy, gz)) in gp.iter().enumerate() {
-                let mut hk = ((gx - x).abs().max((gy - y).abs())).max((gz - z).abs()) * mc as i32;
-                let g = &gd[k];
-                for j in 0..LM_K {
-                    let (a, b) = (g[j], dn[j]);
-                    if a != LM_INF && b != LM_INF {
-                        let (a, b) = (a as i32, b as i32);
-                        hk = hk.max(a - b).max(b - a + gc[k] - cn);
-                    }
-                }
-                best = best.min(hk);
+                let hk = ((gx - x).abs().max((gy - y).abs())).max((gz - z).abs()) * mc as i32;
+                best = best.min(hk.max(alt_bound(&gd[k], dn, gc[k] - cn))); // [perf10]
             }
             best as u32
         };
