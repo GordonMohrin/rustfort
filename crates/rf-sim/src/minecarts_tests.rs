@@ -292,6 +292,8 @@ fn heavier_carts_are_slower_to_guide() {
     assert_eq!(Sim::carry_pct(5_000), CARRY_MAX_PCT as u16);
     let mut sim = mk(world(), 8);
     sim.set_slow(0, 314);
+    assert_eq!(sim.carts_speed(0), sim.ai[0].speed, "only while carrying");
+    sim.ai[0].carrying = 1;
     assert_eq!(sim.carts_speed(0), sim.ai[0].speed * 179 / 100);
 }
 
