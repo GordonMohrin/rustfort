@@ -124,6 +124,12 @@ pub fn draw_topbar(g: &mut Game) {
     g.font.draw(&ztxt, rx, ty, s, col::TEXT_HI);
     let mut px = rx - pw - 22.0 * s;
     g.font.draw(&popt, px, ty, s, col::TEXT);
+    // [round 4] Population tooltip: citizens, children, cap, next migrants, caravan.
+    let pr = Rect::new(px - 4.0 * s, 0.0, pw + 8.0 * s, h);
+    if g.ui.hovered(pr) {
+        let lines = super::round4::population_lines(g);
+        g.ui.tooltip = Some((lines.join("\n"), vec2(px - 220.0 * s, h + 6.0 * s + lines.len() as f32 * g.ui.line_h() + 10.0 * s)));
+    }
     // [round 3] Hostiles on the map (click: center on the next one) and the civilian alert.
     let active: Vec<(i32, rf_core::Pos)> = g
         .hostiles

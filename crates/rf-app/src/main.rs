@@ -16,6 +16,7 @@ mod load;
 mod render;
 mod save;
 mod script;
+mod simthread;
 mod ui;
 
 use std::path::PathBuf;
@@ -54,12 +55,14 @@ pub struct Args {
     pub ui_scale: f32,
     /// Start from a save game (`saves/*.rfsave`).
     pub load: Option<PathBuf>,
+    /// [round 4] Run the simulation inside the frame (no worker thread), for comparisons.
+    pub sim_inline: bool,
 }
 
 const USAGE: &str = "usage:
   rustfort play  [--export DIR] [--synthetic] [--seed N] [--speed 1|2|5|max]
                  [--screenshot out.png --frames N] [--view x,y,z,zoom] [--ui citizens,unit,build,orders,labor-screen,..]
-                 [--mouse x,y] [--script \"frame:cmd; ...\"] [--ui-scale 2] [--gfps 60] [--size x,y,z]
+                 [--mouse x,y] [--script \"frame:cmd; ...\"] [--ui-scale 2] [--gfps 60] [--size x,y,z] [--sim-inline]
   rustfort bench [--export DIR] [--synthetic] [--ticks N] [--seed N] [--no-invasions] [--standdown]
   rustfort savebench [--export DIR]
   --load FILE.rfsave   start from a save game (play, bench)";
@@ -80,6 +83,7 @@ fn parse_args() -> Result<Args, String> {
             "--synthetic" => a.synthetic = true,
             "--no-invasions" => a.no_invasions = true,
             "--standdown" => a.standdown = true,
+            "--sim-inline" => a.sim_inline = true,
             "--size" => {
                 let v = val("--size")?;
                 let p: Vec<u16> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();

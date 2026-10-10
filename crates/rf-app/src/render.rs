@@ -325,6 +325,7 @@ pub fn draw_map(g: &mut Game) {
     }
     g.rend.buf = sprites;
     crate::ui::build::draw_ghost(g);
+    crate::ui::devices::draw_map_overlay(g); // [round 4] lever links, link targets
     draw_selection_and_cursor(g);
 }
 

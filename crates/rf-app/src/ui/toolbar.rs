@@ -58,7 +58,7 @@ pub const LEFT: &[ToolButton] = &[
     tb(Action::Places, "Places (not yet)", "BUTTON_INFO_PLACES", Ico::Glyph(127, [200, 200, 200]), "", false),
     tb(Action::Labor, "Labor", "BUTTON_INFO_LABOR", Ico::Hammer, "D_LABOR", true),
     tb(Action::WorkOrders, "Work orders", "BUTTON_INFO_WORK_ORDERS", Ico::Glyph(240, [220, 200, 150]), "D_ORDERS", true),
-    tb(Action::Nobles, "Nobles (not yet)", "BUTTON_INFO_NOBLES", Ico::Glyph(157, [240, 210, 90]), "", false),
+    tb(Action::Nobles, "Nobles and administrators", "BUTTON_INFO_NOBLES", Ico::Glyph(157, [240, 210, 90]), "D_NOBLES", true),
     tb(Action::Objects, "Objects (not yet)", "BUTTON_INFO_OBJECTS", Ico::Glyph(254, [180, 160, 120]), "", false),
     tb(Action::Justice, "Justice (not yet)", "BUTTON_INFO_JUSTICE", Ico::Glyph(241, [200, 200, 220]), "", false),
 ];
@@ -124,6 +124,7 @@ fn is_active(g: &Game, a: Action) -> bool {
         Action::Burrow => g.submenu == Submenu::Burrow,
         Action::Squads => g.screen == Screen::Military || matches!(g.tool, Tool::SquadStation(_) | Tool::SquadKill(_)),
         Action::Reports => g.screen == Screen::Reports,
+        Action::Nobles => g.screen == Screen::Nobles,
         _ => false,
     }
 }
@@ -153,6 +154,7 @@ fn press(g: &mut Game, a: Action) {
             g.toggle_screen(Screen::Military)
         }
         Action::Reports => g.toggle_screen(Screen::Reports),
+        Action::Nobles => g.toggle_screen(Screen::Nobles),
         _ => {}
     }
 }
@@ -223,6 +225,10 @@ pub fn draw_toolbar(g: &mut Game) -> f32 {
             Tool::SquadKill(sq) => {
                 let n = super::military::squad_name(&g.sim.world, sq);
                 top = draw_hint(g, cx, y, &format!("{n}: click a creature to kill. Right-click: back to the squads."));
+            }
+            Tool::Link(_) => {
+                let n = super::devices::mechanisms(&g.sim.world);
+                top = draw_hint(g, cx, y, &format!("Link: click a bridge, door, floodgate, hatch, cage, grate, bars or spikes ({n} mechanisms in stock). Right-click cancels."));
             }
             _ => {}
         },
