@@ -2038,7 +2038,8 @@ impl Sim {
     }
 
     /// Append an item with its sim metadata (no pile/haul bookkeeping).
-    pub(crate) fn push_item(&mut self, it: Item) -> usize {
+    pub(crate) fn push_item(&mut self, mut it: Item) -> usize {
+        self.war_item_made(&mut it); // [war9] created wealth
         let (pcl, plant) = self.classify(&it);
         let id = it.id;
         self.next_item_id = self.next_item_id.max(id + 1);

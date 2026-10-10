@@ -24,8 +24,12 @@
 //!   one layer; a layer with a region over 10 % magma is the magma sea.
 //! - Wildlife: checked at each season start; a discovered layer below 25 living wild
 //!   creatures gets a group with chance 2/3; group size 1-2 for predators, 2-5 otherwise.
-//! - Forgotten beasts: checked at each season start once a cavern is discovered, chance 1/4,
-//!   one at a time (DF: one per underground region, attracted by wealth and noise).
+//! - Forgotten beasts: checked at each season start once a cavern is discovered, one at a time.
+//!   [war9] At most one per cavern layer (wiki: "exactly one beast is spawned per each
+//!   underground region"), attracted by wealth (irritation = wealth / `FORGOTTEN_WEALTH_DIV`,
+//!   none at or below `FORGOTTEN_IRRITATE_MIN`, full chance `FORGOTTEN_SENS` above it); the full
+//!   chance is 1/4 per season (estimate, the r5 rate). Layers already discovered when a fort is
+//!   imported count as spent (see `warcal.rs`): r5 had 1-5 beasts per 2 years, DF none in 3.5.
 //!   Body size 1-5 million cm³, strength/toughness 1 500-2 500. A beast "made of" rock, gem or
 //!   metal gets that material on the outermost tissue layer of every body part (no bleeding or
 //!   pain there); the inner tissues stay flesh. With the material on all tissues the sim's wound
@@ -103,7 +107,7 @@ pub struct CavernReport {
 #[derive(Default)]
 pub(crate) struct Caverns {
     pub layers: Vec<CavernLayer>,
-    detected: bool,
+    pub(crate) detected: bool, // [war9] pub(crate)
     last_season: i32,
     pub wildlife: Vec<(u64, String, String, usize, bool)>,
     /// (slot, layer index) of wild cave creatures we spawned.
@@ -409,18 +413,44 @@ impl Sim {
         if !self.caverns.beast_slots.is_empty() {
             return;
         }
-        if !self.caverns.layers.iter().any(|l| l.discovered() && !l.magma && !l.spawn.is_empty()) {
+        // [war9] One beast per cavern layer, attracted by the fort's wealth.
+        self.war_seed();
+        let spent = &self.world.fort_history.beast_layers;
+        let avail: Vec<usize> = (0..self.caverns.layers.len())
+            .filter(|&i| {
+                let l = &self.caverns.layers[i];
+                l.discovered() && !l.magma && !l.spawn.is_empty() && !spent.contains(&l.id)
+            })
+            .collect();
+        if avail.is_empty() {
             return;
         }
+        let div = self.war_setting("FORGOTTEN_WEALTH_DIV", 0, 40).max(1);
+        let min = self.war_setting("FORGOTTEN_IRRITATE_MIN", 0, 5_000);
+        let sens = self.war_setting("FORGOTTEN_SENS", 0, 10_000).max(1);
+        let irritation = self.fort_wealth() / div;
+        if irritation <= min {
+            return;
+        }
+        let share = ((irritation - min) * 1_000 / sens).min(1_000) as u32;
         let mut r = Rng::for_unit(self.seed, 8, now, 0xFB);
-        if r.chance(1, 4) {
-            self.spawn_forgotten_beast();
+        if r.below(4_000) < share {
+            let li = avail[r.below(avail.len() as u32) as usize];
+            let id = self.caverns.layers[li].id;
+            if self.spawn_forgotten_beast_in(Some(li)).is_some() {
+                self.world.fort_history.beast_layers.push(id);
+            }
         }
     }
 
     /// Debug/UI and tests: a forgotten beast arrives now in a discovered cavern (any cavern if
     /// none is discovered). Returns its unit id.
     pub fn spawn_forgotten_beast(&mut self) -> Option<i32> {
+        self.spawn_forgotten_beast_in(None)
+    }
+
+    /// [war9] A forgotten beast arrives in layer `want` (index), else as `spawn_forgotten_beast`.
+    pub(crate) fn spawn_forgotten_beast_in(&mut self, want: Option<usize>) -> Option<i32> {
         let now = self.ticks;
         if !self.caverns.detected {
             self.caverns.detected = true;
@@ -430,8 +460,9 @@ impl Sim {
         self.caverns.beast_n += 1;
         // Prefer a breached, discovered cavern, then any discovered, then any.
         let pick = |want_breach: bool, want_disc: bool, l: &CavernLayer| !l.magma && !l.spawn.is_empty() && (!want_breach || l.breached) && (!want_disc || l.discovered());
-        let li = (0..self.caverns.layers.len())
-            .find(|&i| pick(true, true, &self.caverns.layers[i]))
+        let li = want
+            .filter(|&i| i < self.caverns.layers.len())
+            .or_else(|| (0..self.caverns.layers.len()).find(|&i| pick(true, true, &self.caverns.layers[i])))
             .or_else(|| (0..self.caverns.layers.len()).find(|&i| pick(false, true, &self.caverns.layers[i])))
             .or_else(|| (0..self.caverns.layers.len()).find(|&i| pick(false, false, &self.caverns.layers[i])));
         let (tile, label) = match li {

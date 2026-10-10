@@ -467,6 +467,9 @@ fn run_seed(start: &World, ticks: u64, seed: u64, opt: &Opts, years: f64) -> Run
     let moods = sim.mood_records();
     m.insert("ev.sieges".into(), cs.sieges as f64);
     m.insert("ev.invaders".into(), cs.invaders_spawned as f64);
+    m.insert("ev.ambushes".into(), cs.ambushes as f64); // [war9] ambush squads (DF: the spotted ones)
+    m.insert("ev.mounts".into(), cs.mounts_spawned as f64); // [war9]
+    m.insert("ev.buildings_wrecked".into(), cs.buildings_wrecked as f64); // [war9]
     m.insert("ev.migrant_waves".into(), pr.waves.len() as f64);
     m.insert("ev.migrants".into(), pr.waves.iter().map(|w| w.1).sum::<usize>() as f64);
     m.insert("ev.dwarf_births".into(), pr.births.len() as f64);

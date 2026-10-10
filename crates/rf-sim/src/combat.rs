@@ -376,6 +376,14 @@ pub(crate) struct Fighter {
     pub spot: u32,
     /// [military2] Cannot stand (broken leg): crawls at a fraction of the walking speed.
     pub crawl: bool,
+    /// [war9] Tick the unit started leaving the map (0 = not leaving).
+    pub leave_since: u64,
+    /// [war9] Civilian on a drink/eat break despite a threat, until this tick.
+    pub brk_until: u64,
+    /// [war9] Building destroyers: building id being wrecked (-1 none), done at, next search.
+    pub wreck: i32,
+    pub wreck_until: u64,
+    pub wreck_at: u64,
 }
 
 impl Default for Fighter {
@@ -416,6 +424,11 @@ impl Default for Fighter {
             patrol_i: 0,
             spot: NONE,
             crawl: false,
+            leave_since: 0,
+            brk_until: 0,
+            wreck: -1,
+            wreck_until: 0,
+            wreck_at: 0,
         }
     }
 }
@@ -472,6 +485,16 @@ pub struct CombatStats {
     pub demonstrations: u64,
     pub barracks_sleeps: u64,
     pub patrol_points: u64,
+    /// [war9] Mounts that came with sieges, ambush squads sent alongside sieges.
+    pub mounts_spawned: u64,
+    pub siege_ambush_squads: u64,
+    /// [war9] Buildings (workshops, furniture, doors...) wrecked by building destroyers.
+    pub buildings_wrecked: u64,
+    /// [war9] Leaving raiders that could not get off the map in time (fought on / slipped away
+    /// / left lying helpless).
+    pub leave_gave_up: u64,
+    /// [war9] Civilians who broke off fleeing to drink or eat.
+    pub flee_breaks: u64,
 }
 
 /// Combat, military and invasion state of the simulation.
@@ -2316,7 +2339,11 @@ impl Sim {
         match f.role {
             Role::Hostile | Role::Fighter => self.fighter_think(s, now),
             Role::Soldier => self.soldier_think(s, now),
-            Role::Civilian => self.civilian_think(s, now),
+            Role::Civilian => {
+                if !self.war_flee_break(s, now) {
+                    self.civilian_think(s, now);
+                }
+            }
             Role::Patient => self.patient_think(s, now),
             Role::Leave => self.leave_think(s, now),
             Role::None => self.release(s, now),
@@ -2436,6 +2463,9 @@ impl Sim {
         if !self.caverns.powers.is_empty() && self.syndrome_breath(s, now) {
             return; // [audit-combat] forgotten beast breath and webs
         }
+        if self.war_wreck_think(s, now) {
+            return; // [war9] building destroyers wreck workshops, furniture and doors nearby
+        }
         if self.pursue(s, now) {
             return;
         }
@@ -2526,6 +2556,8 @@ impl Sim {
                         }
                         self.engage_now(t, now);
                     }
+                } else if f.brk_until > now && (cheb > 2 || dz > 1) {
+                    // [war9] on a drink/eat break: only a hostile right next to them interrupts it
                 } else if f.role == Role::None || f.role == Role::Patient || (f.role == Role::Civilian && f.threat == NONE) {
                     f.role = Role::Civilian;
                     f.threat = h as u32;
@@ -2536,6 +2568,27 @@ impl Sim {
                 }
             }
         }
+    }
+
+    /// [war9] A fleeing civilian who has to drink or eat goes for it when the threat is not
+    /// right next to them (more than 2 tiles away): DF dwarves cancel jobs on seeing a hostile
+    /// but take the next drink once it is out of reach, while the r8 flee loop kept them running
+    /// until they died of thirst. For two days afterwards only a hostile within 2 tiles makes
+    /// them flee again (estimate). True if the civilian was released to its break.
+    pub(crate) fn war_flee_break(&mut self, s: usize, now: u64) -> bool {
+        let thr = self.combat.f[s].threat;
+        if thr == NONE || !self.alive(thr) || !self.needs_break(s) {
+            return false;
+        }
+        let (a, b) = (self.upos(s), self.upos(thr as usize));
+        let cheb = (a.x as i32 - b.x as i32).abs().max((a.y as i32 - b.y as i32).abs());
+        if cheb <= 2 && (a.z as i32 - b.z as i32).abs() <= 1 {
+            return false;
+        }
+        self.combat.f[s].brk_until = now + 2 * rf_core::TICKS_PER_DAY as u64;
+        self.combat.stats.flee_breaks += 1;
+        self.release(s, now);
+        true
     }
 
     /// Interrupt whatever a unit does and let the combat AI take over next tick.

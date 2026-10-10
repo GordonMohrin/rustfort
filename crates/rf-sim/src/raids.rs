@@ -26,8 +26,10 @@
 //!   own.
 //!
 //! # Estimates
-//! - Invasion check at each season start, 1 in 3 (as before); then 1 in 4 a siege (if the siege
-//!   tier is met), else an ambush. Ambush size: 1 squad from the first tier, 2 from the Town
+//! - [war9] Invasion check at each season start, 2 in 3 (was 1 in 3); then `SIEGE_FREQUENCY`
+//!   (25 %) a siege if the siege tier is met and the civilization sent enough raids since its
+//!   last siege (`MIN_RAIDS_BEFORE_SIEGE` / `_BETWEEN_SIEGES`), else an ambush. Siege size and
+//!   composition: see `warcal.rs`. Ambush size: 1 squad from the first tier, 2 from the Town
 //!   tier, 3 at Metropolis; 2-5 goblins per squad.
 //! - Thief visits: 1 in 2 per season if a kobold civilization exists; snatchers: 1 in 3 per
 //!   season with a goblin civilization at war and children in the fort; they arrive on a random
@@ -118,6 +120,11 @@ impl Sim {
         let mut r = Rng::for_unit(self.seed, 7, now, 0xF0CE);
         match kind {
             RaidKind::Siege => {
+                if n == 0 && monsters == 0 {
+                    if let Some(p) = self.siege_plan() {
+                        return self.war_spawn_siege(&p, now, &mut r, false); // [war9]
+                    }
+                }
                 let n = if n == 0 { self.siege_size().unwrap_or(crate::invasion::SIEGE_FORCE[2].0) } else { n };
                 let camp = camp_ticks("GOBLIN", &mut r);
                 self.spawn_raid(RaidKind::Siege, "GOBLIN", n, monsters, camp)
@@ -152,8 +159,7 @@ impl Sim {
 
     /// Ambush size from the invasion tier (estimate): 1-3 squads of 2-5.
     pub(crate) fn ambush_size(&self, r: &mut Rng) -> usize {
-        let pop = self.world.citizens().count();
-        let tier = crate::invasion::invasion_tier(pop, self.created_wealth(), self.exported_wealth());
+        let tier = self.invasion_tier_now(); // [war9]
         let squads = 1 + (tier >= 3) as usize + (tier >= 5) as usize;
         (0..squads).map(|_| 2 + r.below(4) as usize).sum()
     }
@@ -175,16 +181,65 @@ impl Sim {
 
     /// Spawn a raid group of `n` (+ `monsters`) at a map edge connected to the fort.
     pub(crate) fn spawn_raid(&mut self, kind: RaidKind, race: &str, n: usize, monsters: usize, camp: u64) -> usize {
+        self.spawn_raid_ex(kind, race, n, monsters, camp, crate::warcal::RaidExtra::default())
+    }
+
+    /// [war9] A siege as planned by [`Sim::siege_plan`]: the siege group (regulars, monsters and
+    /// mounts) plus 1-5 ambush squads arriving with it. `record`: count it in the fort's
+    /// history (natural sieges). Returns the number of creatures that arrived.
+    pub(crate) fn war_spawn_siege(&mut self, p: &crate::warcal::SiegePlan, _now: u64, r: &mut Rng, record: bool) -> usize {
+        use crate::warcal::RaidExtra;
+        let mut squads = Vec::new();
+        if p.regulars >= 15 {
+            let mut left = p.regulars / 3;
+            for _ in 0..1 + r.below(5) {
+                let n = (3 + r.below(4) as usize).min(left);
+                if n < 2 {
+                    break;
+                }
+                squads.push(n);
+                left -= n;
+            }
+        }
+        let main = p.regulars - squads.iter().sum::<usize>();
+        let camp = camp_ticks("GOBLIN", r);
+        let extra = RaidExtra { mounts: p.mounts, masters_pct: p.masters_pct, civ: Some(p.civ) };
+        let mut total = self.spawn_raid_ex(RaidKind::Siege, "GOBLIN", main, p.monsters, camp, extra);
+        if total == 0 {
+            return 0;
+        }
+        if record {
+            Self::war_bump(&mut self.world.fort_history.sieges, p.civ, Some(p.number), 0);
+            Self::war_bump(&mut self.world.fort_history.raids, p.civ, Some(0), 0);
+        }
+        for n in squads {
+            let extra = RaidExtra { mounts: 0, masters_pct: p.masters_pct, civ: Some(p.civ) };
+            let k = self.spawn_raid_ex(RaidKind::Ambush, "GOBLIN", n, 0, 0, extra);
+            if k > 0 {
+                total += k;
+                self.combat.stats.siege_ambush_squads += 1;
+                if record {
+                    Self::war_bump(&mut self.world.fort_history.raids, p.civ, None, 1);
+                }
+            }
+        }
+        total
+    }
+
+    /// [war9] `spawn_raid` with mounts, master troops and the invading civilization.
+    pub(crate) fn spawn_raid_ex(&mut self, kind: RaidKind, race: &str, n: usize, monsters: usize, camp: u64, extra: crate::warcal::RaidExtra) -> usize {
         let now = self.ticks;
+        let mounts = extra.mounts;
         self.combat_sync_units();
         let tiles = self.edge_tiles();
-        if tiles.is_empty() || n + monsters == 0 {
+        if tiles.is_empty() || n + monsters + mounts == 0 {
             if kind == RaidKind::Siege {
                 self.announce(now, "The invaders could not find a way to the fortress.".into(), None, AnnouncementKind::Warning);
             }
             return 0;
         }
-        let mut r = Rng::for_unit(self.seed, kind.code() as usize, now, 0x5E1E);
+        // [war9] Salted with the group number, so groups arriving together spread out.
+        let mut r = Rng::for_unit(self.seed, kind.code() as usize, now, 0x5E1E ^ ((self.combat.inv.next_id as u64) << 24));
         let start = tiles[r.below(tiles.len() as u32) as usize];
         let sp = self.nav.xyz(start as usize);
         let mut near = tiles.clone();
@@ -199,44 +254,100 @@ impl Sim {
                 .unwrap_or((60_000, 900))
         };
         let (body_size, walk) = caste_of(race);
-        let civ = self
-            .world
-            .entities
-            .iter()
-            .find(|e| e.race == race && (e.relation == "War" || kind == RaidKind::Thief))
-            .map(|e| e.id)
-            .or_else(|| self.world.units.iter().filter(|u| u.flags.hostile && u.invader_civ >= 0).map(|u| u.invader_civ).next())
-            .unwrap_or(9_999);
+        let civ = extra.civ.filter(|&c| c != 9_999).unwrap_or_else(|| {
+            self.world
+                .entities
+                .iter()
+                .find(|e| e.race == race && (e.relation == "War" || kind == RaidKind::Thief))
+                .map(|e| e.id)
+                .or_else(|| self.world.units.iter().filter(|u| u.flags.hostile && u.invader_civ >= 0).map(|u| u.invader_civ).next())
+                .unwrap_or(9_999)
+        });
+        let mount_race = if mounts > 0 { self.war_mount_race() } else { String::new() };
+        // [war9] Weapons of Gordon's goblin sieges (r6 export), if the save has their raws.
+        let weapons: Vec<(&str, &str, &str, u32)> = {
+            let have = |t: &str| self.world.weapon_raws.iter().any(|w| w.token == t);
+            let v: Vec<_> = WAR_WEAPONS.iter().copied().filter(|w| have(w.0)).collect();
+            if v.len() >= 4 {
+                v
+            } else {
+                crate::invasion::GOBLIN_WEAPONS.iter().map(|&(t, p)| (t, p, weapon_skill(t), 1)).collect()
+            }
+        };
+        let wsum: u32 = weapons.iter().map(|w| w.3).sum();
+        let calibrated = weapons.len() > crate::invasion::GOBLIN_WEAPONS.len() || extra.civ.is_some();
         let mut next_id = self.world.units.iter().map(|u| u.id).max().unwrap_or(0) + 1;
         let mut kit = Vec::new();
         let armed = matches!(kind, RaidKind::Siege | RaidKind::Ambush);
-        for k in 0..n + monsters {
+        for k in 0..n + monsters + mounts {
             let tile = if kind == RaidKind::Siege { near[k % near.len()] } else { near[(k * 3) % near.len().min(12).max(1)] };
             let p = self.world.pos_of(tile as usize);
             let monster = k >= n;
-            let urace = if monster { if k % 2 == 0 { "TROLL" } else { "BEAK_DOG" } } else { race };
+            let mount = k >= n + monsters; // [war9]
+            let urace = if mount {
+                mount_race.as_str()
+            } else if monster {
+                if k % 2 == 0 {
+                    "TROLL"
+                } else {
+                    "BEAK_DOG"
+                }
+            } else {
+                race
+            };
             let (bsz, wspd) = if monster { caste_of(urace) } else { (body_size, walk) };
-            let (wtok, prof) = crate::invasion::GOBLIN_WEAPONS[r.below(crate::invasion::GOBLIN_WEAPONS.len() as u32) as usize];
-            let metal = match r.below(100) {
-                0..=44 => "INORGANIC:COPPER",
-                45..=69 => "INORGANIC:BRONZE",
-                _ => "INORGANIC:IRON",
+            let pick = {
+                let mut x = r.below(wsum.max(1));
+                let mut i = 0;
+                while i + 1 < weapons.len() && x >= weapons[i].3 {
+                    x -= weapons[i].3;
+                    i += 1;
+                }
+                i
             };
-            let skill = match wtok {
-                "ITEM_WEAPON_SPEAR" => "SPEAR",
-                "ITEM_WEAPON_SWORD_SHORT" => "SWORD",
-                "ITEM_WEAPON_MACE" => "MACE",
-                "ITEM_WEAPON_AXE_BATTLE" => "AXE",
-                _ => "WHIP",
+            let (wtok, prof, skill, _) = weapons[pick];
+            // [war9] r6: goblin weapons iron (47 %) or silver (53 %), their armor iron.
+            let metal = if calibrated {
+                if r.chance(47, 100) {
+                    "INORGANIC:IRON"
+                } else {
+                    "INORGANIC:SILVER"
+                }
+            } else {
+                match r.below(100) {
+                    0..=44 => "INORGANIC:COPPER",
+                    45..=69 => "INORGANIC:BRONZE",
+                    _ => "INORGANIC:IRON",
+                }
             };
+            let master = armed && !monster && extra.masters_pct > 0 && r.chance(extra.masters_pct, 100);
             let attr = |r: &mut Rng| 750 + r.below(501) as i32;
-            let mut skills = vec![
-                Skill { id: "DODGING".into(), rating: 1 + r.below(4) as i32, xp: 0 },
-                Skill { id: "ARMOR".into(), rating: 1 + r.below(4) as i32, xp: 0 },
-                Skill { id: "MELEE_COMBAT".into(), rating: 1 + r.below(4) as i32, xp: 0 },
-            ];
+            let mut skills = if calibrated && armed && !monster {
+                // [war9] r6 goblins: dodging, armor, shield and awareness about 4, melee 3.6.
+                vec![
+                    Skill { id: "DODGING".into(), rating: 2 + r.below(5) as i32, xp: 0 },
+                    Skill { id: "ARMOR".into(), rating: 2 + r.below(5) as i32, xp: 0 },
+                    Skill { id: "SHIELD".into(), rating: 2 + r.below(5) as i32, xp: 0 },
+                    Skill { id: "SITUATIONAL_AWARENESS".into(), rating: 2 + r.below(5) as i32, xp: 0 },
+                    Skill { id: "MELEE_COMBAT".into(), rating: 1 + r.below(6) as i32, xp: 0 },
+                ]
+            } else {
+                vec![
+                    Skill { id: "DODGING".into(), rating: 1 + r.below(4) as i32, xp: 0 },
+                    Skill { id: "ARMOR".into(), rating: 1 + r.below(4) as i32, xp: 0 },
+                    Skill { id: "MELEE_COMBAT".into(), rating: 1 + r.below(4) as i32, xp: 0 },
+                ]
+            };
             if armed && !monster {
-                skills.push(Skill { id: skill.into(), rating: 2 + r.below(6) as i32, xp: 0 });
+                // [war9] r6: regular weapon skill about 6 (3-9), masters 10-14.
+                let rating = if master {
+                    10 + r.below(5) as i32
+                } else if calibrated {
+                    3 + r.below(7) as i32
+                } else {
+                    2 + r.below(6) as i32
+                };
+                skills.push(Skill { id: skill.into(), rating, xp: 0 });
             }
             if kind.sneaks() {
                 skills.push(Skill { id: "SNEAK".into(), rating: 3 + r.below(6) as i32, xp: 0 });
@@ -246,6 +357,7 @@ impl Sim {
                 (RaidKind::Thief, _) => ("THIEF".into(), "thief".into()),
                 (RaidKind::Snatcher, _) => ("THIEF".into(), "snatcher".into()),
                 (RaidKind::Ambush, _) => (prof.to_ascii_uppercase(), format!("{prof} ambusher")),
+                _ if master => (format!("MASTER_{}", prof.to_ascii_uppercase()), format!("master {prof}")), // [war9]
                 _ => (prof.to_ascii_uppercase(), prof.into()),
             };
             let unit = Unit {
@@ -256,7 +368,7 @@ impl Sim {
                 profession,
                 custom_profession: custom,
                 pos: p,
-                flags: UnitFlags { hostile: true, animal: monster && urace == "BEAK_DOG", ..Default::default() },
+                flags: UnitFlags { hostile: true, animal: mount || monster && urace == "BEAK_DOG", ..Default::default() },
                 civ_id: civ,
                 hist_fig_id: -1,
                 sex: r.below(2) as i8,
@@ -272,10 +384,15 @@ impl Sim {
                 ..Default::default()
             };
             let gear = armed && !monster;
-            let mail = gear && r.chance(70, 100);
-            let helm = gear && r.chance(60, 100);
-            let legs = gear && r.chance(40, 100);
-            kit.push((next_id, gear, wtok, metal, mail, helm, legs, tile, monster));
+            // [war9] r6 gear shares: torso 31 % (breastplate or mail), helm 54 %, greaves or
+            // leggings 31 %, shield 34 % (r8 before: mail 70 %, helm 60 %, leggings 40 %).
+            let (mail, helm, legs, shield) = if calibrated {
+                (gear && r.chance(31, 100), gear && r.chance(54, 100), gear && r.chance(31, 100), gear && r.chance(34, 100))
+            } else {
+                (gear && r.chance(70, 100), gear && r.chance(60, 100), gear && r.chance(40, 100), false)
+            };
+            let heavy = r.chance(60, 100);
+            kit.push((next_id, gear, wtok, metal, mail, helm, legs, tile, monster, shield, heavy, calibrated));
             self.world.units.push(unit);
             next_id += 1;
         }
@@ -285,17 +402,21 @@ impl Sim {
         let sid = self.combat.inv.next_id;
         let mut members = Vec::new();
         let mut regulars = Vec::new();
-        for (uid, gear, wtok, metal, mail, helm, legs, tile, monster) in kit {
+        for (uid, gear, wtok, metal, mail, helm, legs, tile, monster, shield, heavy, cal) in kit {
             if gear {
                 self.give_item(uid, "WEAPON", wtok, metal, 0);
+                let am = if cal { "INORGANIC:IRON" } else { metal }; // [war9]
                 if mail {
-                    self.give_item(uid, "ARMOR", "ITEM_ARMOR_MAIL_SHIRT", metal, 0);
+                    self.give_item(uid, "ARMOR", if cal && heavy { "ITEM_ARMOR_BREASTPLATE" } else { "ITEM_ARMOR_MAIL_SHIRT" }, am, 0);
                 }
                 if helm {
-                    self.give_item(uid, "HELM", "ITEM_HELM_HELM", metal, 0);
+                    self.give_item(uid, "HELM", if cal { "ITEM_HELM_CAP" } else { "ITEM_HELM_HELM" }, am, 0);
                 }
                 if legs {
-                    self.give_item(uid, "PANTS", "ITEM_PANTS_LEGGINGS", metal, 0);
+                    self.give_item(uid, "PANTS", if cal && heavy { "ITEM_PANTS_GREAVES" } else { "ITEM_PANTS_LEGGINGS" }, am, 0);
+                }
+                if shield {
+                    self.give_item(uid, "SHIELD", if heavy { "ITEM_SHIELD_SHIELD" } else { "ITEM_SHIELD_BUCKLER" }, am, 0);
                 }
             }
             let Some(&s) = self.unit_slot.get(&uid) else { continue };
@@ -350,6 +471,7 @@ impl Sim {
                 st.sieges += 1;
                 st.invaders_spawned += members.len() as u64;
                 st.monsters_spawned += monsters as u64;
+                st.mounts_spawned += mounts as u64; // [war9]
                 if camp > 0 {
                     st.siege_camps += 1;
                 }
@@ -367,7 +489,10 @@ impl Sim {
         match kind {
             RaidKind::Siege => {
                 self.announce(now, "A vile force of darkness has arrived!".into(), Some(p), AnnouncementKind::Warning);
-                let extra = if monsters > 0 { format!(" and {monsters} monsters") } else { String::new() };
+                let mut extra = if monsters > 0 { format!(" and {monsters} monsters") } else { String::new() };
+                if mounts > 0 {
+                    extra.push_str(&format!(", {mounts} mounts")); // [war9]
+                }
                 self.combat.log_line(format!("A vile force of darkness has arrived! ({} {rname}s{extra})", regulars.len()));
                 if camp > 0 {
                     self.combat.log_line(format!("The {rname}s are gathering at the edge of the map."));
@@ -814,18 +939,26 @@ impl Sim {
         let mut r = Rng::for_unit(self.seed, 1, now, 0x51E6);
         let pop = self.world.citizens().count();
         let army = self.combat.inv.sieges.iter().any(|g| matches!(g.kind, RaidKind::Siege | RaidKind::Ambush));
-        if !army && r.chance(1, 3) {
-            let tier = crate::invasion::invasion_tier(pop, self.created_wealth(), self.exported_wealth());
-            let siege = if pop >= crate::invasion::SIEGE_POPULATION { self.siege_size() } else { None };
-            match siege {
-                Some(n) if r.chance(1, 4) => {
-                    let monsters = crate::invasion::siege_force(pop, self.created_wealth(), self.exported_wealth()).map(|f| f.1).unwrap_or(0);
-                    let camp = camp_ticks("GOBLIN", &mut r);
-                    self.spawn_raid(RaidKind::Siege, "GOBLIN", n, monsters, camp);
+        if !army && r.chance(2, 3) {
+            // [war9] Siege when eligible (tier, population, raids since the last siege) and
+            // SIEGE_FREQUENCY percent; otherwise a raid (ambush squads), counted per civ.
+            let tier = self.invasion_tier_now();
+            let civ = self.war_enemy_civ();
+            let first = Self::war_count(&self.world.fort_history.sieges, civ) == 0;
+            let need = if first { self.war_setting("MIN_RAIDS_BEFORE_SIEGE", 0, 2) } else { self.war_setting("MIN_RAIDS_BETWEEN_SIEGES", 0, 3) } as i32;
+            let raids = Self::war_count(&self.world.fort_history.raids, civ);
+            let freq = self.war_setting("SIEGE_FREQUENCY", 0, 25).clamp(0, 100) as u32;
+            let plan = if pop >= crate::invasion::SIEGE_POPULATION && raids >= need { self.siege_plan() } else { None };
+            match plan {
+                Some(p) if r.chance(freq, 100) => {
+                    self.war_spawn_siege(&p, now, &mut r, true);
                 }
                 _ if tier >= 1 => {
                     let n = self.ambush_size(&mut r);
-                    self.spawn_raid(RaidKind::Ambush, "GOBLIN", n, 0, 0);
+                    let extra = crate::warcal::RaidExtra { civ: Some(civ), ..Default::default() };
+                    if self.spawn_raid_ex(RaidKind::Ambush, "GOBLIN", n, 0, 0, extra) > 0 {
+                        Self::war_bump(&mut self.world.fort_history.raids, civ, None, 1);
+                    }
                 }
                 _ => {}
             }
@@ -870,6 +1003,35 @@ impl Sim {
                 _ => {}
             }
         }
+    }
+}
+
+/// [war9] Weapons of Gordon's 137 sieging goblins (r6 export): token, profession, skill, count.
+const WAR_WEAPONS: &[(&str, &str, &str, u32)] = &[
+    ("ITEM_WEAPON_PIKE", "pikeman", "PIKE", 15),
+    ("ITEM_WEAPON_SWORD_LONG", "swordsman", "SWORD", 14),
+    ("ITEM_WEAPON_SPEAR", "spearman", "SPEAR", 12),
+    ("ITEM_WEAPON_SWORD_SHORT", "swordsman", "SWORD", 12),
+    ("ITEM_WEAPON_MAUL", "hammerman", "HAMMER", 12),
+    ("ITEM_WEAPON_MACE", "maceman", "MACE", 11),
+    ("ITEM_WEAPON_HAMMER_WAR", "hammerman", "HAMMER", 11),
+    ("ITEM_WEAPON_SCOURGE", "lasher", "WHIP", 9),
+    ("ITEM_WEAPON_WHIP", "lasher", "WHIP", 8),
+    ("ITEM_WEAPON_SCIMITAR", "swordsman", "SWORD", 7),
+    ("ITEM_WEAPON_SWORD_2H", "swordsman", "SWORD", 7),
+    ("ITEM_WEAPON_MORNINGSTAR", "maceman", "MACE", 3),
+    ("ITEM_WEAPON_HALBERD", "pikeman", "PIKE", 3),
+    ("ITEM_WEAPON_AXE_BATTLE", "axeman", "AXE", 3),
+];
+
+/// Weapon skill of an r8 goblin weapon token.
+fn weapon_skill(t: &str) -> &'static str {
+    match t {
+        "ITEM_WEAPON_SPEAR" => "SPEAR",
+        "ITEM_WEAPON_SWORD_SHORT" => "SWORD",
+        "ITEM_WEAPON_MACE" => "MACE",
+        "ITEM_WEAPON_AXE_BATTLE" => "AXE",
+        _ => "WHIP",
     }
 }
 

@@ -799,6 +799,16 @@ pub fn load_export(dir: &Path) -> Result<(World, ImportReport), ImportError> {
         // keeps this compiling when other rounds add World fields
         ..Default::default()
     };
+    // [war9] DF's per-civ siege count (`siege_tier` in entities.json) sets the strength of the
+    // next siege (wiki Difficulty: "invasion difficulties" of consecutive sieges).
+    #[derive(Deserialize, Default)]
+    #[serde(default)]
+    struct SiegeTier {
+        id: i32,
+        siege_tier: i32,
+    }
+    let tiers: Vec<SiegeTier> = optional(dir, "entities.json", "entities", &mut Warnings::default());
+    world.fort_history.sieges = tiers.iter().filter(|t| t.siege_tier > 0).map(|t| (t.id, t.siege_tier)).collect();
     round8::check_counts(&world, &manifest, &mut w);
     validate(&mut world, &manifest, &mut w);
     round8::repair(&mut world, r8_present, &mut w);

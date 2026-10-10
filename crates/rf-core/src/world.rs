@@ -139,6 +139,30 @@ pub struct World {
     /// [r8] Hauling routes.
     #[serde(default)]
     pub haul_routes: Vec<HaulRoute>,
+    /// [war9] Running fortress history (created/exported wealth, sieges per civ, forgotten
+    /// beasts per cavern layer) that DF keeps in its own save.
+    #[serde(default)]
+    pub fort_history: FortHistory,
+}
+
+/// [war9] Fortress history counters that decide invasions (wiki Difficulty: "created wealth",
+/// "exported wealth", invasion strength per consecutive siege, one forgotten beast per
+/// underground region).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FortHistory {
+    /// Set once the counters were seeded from the imported fort.
+    pub seeded: bool,
+    /// Created wealth (DF "production"): value of everything the fort made.
+    pub created_wealth: i64,
+    /// Exported wealth (DF "trade"): value of the goods sold to caravans.
+    pub exported_wealth: i64,
+    /// Sieges each civilization sent so far: (entity id, count) (DF `entity.siege_tier`).
+    pub sieges: Vec<(i32, i32)>,
+    /// Raids (ambush squads) each civilization sent since its last siege: (entity id, count).
+    pub raids: Vec<(i32, i32)>,
+    /// Cavern layers (1 = topmost) whose forgotten beast has already come.
+    pub beast_layers: Vec<u8>,
 }
 
 impl World {
