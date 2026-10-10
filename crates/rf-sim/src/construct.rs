@@ -31,7 +31,9 @@
 //!   obsidian, feature stone and ice walls and floors become the SMOOTH tiletypes. Smoothed and
 //!   constructed walls connect to each other with DF's direction strings (`N-S-W-E-`). Soil and
 //!   constructions cannot be smoothed.
-//! - **Engraving**: only on smoothed natural tiles. The quality comes from the engraver's skill
+//! - **Engraving**: on smoothed natural stone and on constructed walls and floors (wiki
+//!   "Engraving": constructions are already smooth); removing a construction removes its
+//!   engraving. The quality comes from the engraver's skill
 //!   (DF item quality levels 0..5); engravings are kept in `World::engravings`, and
 //!   [`Sim::engraving_value`] / [`Sim::engraving_value_in`] give their value for room value.
 //! - **Carve fortification**: smoothed natural walls become a fortification of the same stone.
@@ -506,7 +508,13 @@ impl Sim {
                         tt.find(Shape::Floor, m, TtSpecial::Smooth, 0).map(|t| tt.get(t).special == TtSpecial::Smooth).unwrap_or(false)
                     }
             }
-            CK::Engrave => stone_like(m) && matches!(sh, Shape::Wall | Shape::Floor) && sp == TtSpecial::Smooth && !self.cx.engr_at.contains_key(&(i as u32)),
+            // [audit-eco] w:Engraving: smoothed natural stone, and constructed walls and floors
+            // (already smooth; "a constructed wood/glass wall can be engraved").
+            CK::Engrave => {
+                ((stone_like(m) && sp == TtSpecial::Smooth) || m == TtMaterial::Construction)
+                    && matches!(sh, Shape::Wall | Shape::Floor)
+                    && !self.cx.engr_at.contains_key(&(i as u32))
+            }
             CK::CarveFort => {
                 stone_like(m) && sh == Shape::Wall && sp == TtSpecial::Smooth && tt.find(Shape::Fortification, m, TtSpecial::None, 0).map(|t| tt.get(t).shape == Shape::Fortification).unwrap_or(false)
             }
@@ -1550,6 +1558,7 @@ impl Sim {
                 }
             }
         }
+        self.cx_drop_engraving(i); // [audit-eco] constructions can be engraved
         let mut above_changed = false;
         if was_ramp && i + layer < self.world.tiles.len() && self.shape_at(i + layer) == Shape::RampTop {
             self.set_tile(i + layer, Shape::Empty, TtMaterial::Air, 0, NO_MAT);
@@ -1819,9 +1828,13 @@ mod tests {
         assert!(b.flags.construction && !b.flags.on_ground && b.pos == site, "DF 53 keeps the boulder in the wall");
         assert!(!sim.world.buildings.iter().any(|b| b.kind == "Construction"), "planned construction is gone");
         assert_eq!(sim.construct_report().built, 1);
+        // [audit-eco] Constructed walls are smooth and can be engraved (w:Engraving).
+        assert_eq!(sim.designate_detail(site, site, DetailKind::Engrave), 1);
+        assert!(run_until(&mut sim, 20_000, |s| s.engraving_at(site).is_some()), "constructed wall engraved");
         // Remove it again: the tile is floor again and the boulder comes back.
         assert_eq!(sim.build_construction(CKind::Remove, site, site), 1);
         assert!(run_until(&mut sim, 20_000, |s| s.world.shape(site) == Shape::Floor), "wall removed");
+        assert!(sim.engraving_at(site).is_none() && sim.world.engravings.is_empty(), "the engraving goes with the wall");
         assert!(sim.is_walkable(site));
         let b = sim.world.items.iter().find(|i| i.id == 5000).unwrap();
         assert!(!b.flags.construction && b.flags.on_ground);
