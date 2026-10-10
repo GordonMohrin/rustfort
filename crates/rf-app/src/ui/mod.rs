@@ -8,15 +8,19 @@ pub mod alerts;
 pub mod build;
 pub mod building;
 pub mod burrows;
+pub mod devices; // [round 4]
 pub mod labor;
 pub mod military;
+pub mod nobles; // [round 4]
 pub mod orders;
 pub mod overlay;
 pub mod panels;
 pub mod psyche;
 pub mod reports;
+pub mod round4; // [round 4]
 pub mod toolbar;
 pub mod topbar;
+pub mod trade; // [round 4]
 
 use crate::font::{Font, GH, GW};
 use crate::render::MapRenderer;

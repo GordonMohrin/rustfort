@@ -19,9 +19,67 @@ pub struct MapRenderer {
     tex: Vec<Option<Texture2D>>,
     tried: Vec<bool>,
     pub buf: Vec<Sprite>,
+    /// [round 4] DF Premium liquid sprites (looked up once).
+    liquids: Option<LiquidSprites>,
+}
+
+/// [round 4] The `LIQUIDS` page of DF Premium (graphics_fluids.txt): one sprite per depth
+/// 1..=7 for water and magma (deeper = darker and opaque, 1-3 translucent), the same with the
+/// depth number (`_LABEL`), and the edge pieces where a pool meets dry ground.
+#[derive(Default)]
+pub struct LiquidSprites {
+    pub water: [Option<Sprite>; 8],
+    pub water_label: [Option<Sprite>; 8],
+    pub magma: [Option<Sprite>; 8],
+    pub magma_label: [Option<Sprite>; 8],
+    /// N, S, W, E, NW, NE, SW, SE.
+    pub water_edge: [Option<Sprite>; 8],
+    pub magma_edge: [Option<Sprite>; 8],
+    /// rf-gfx's own floor-page liquid overlays, replaced by the sprites above.
+    pub old: Vec<(u16, u16, u16)>,
+    pub ok: bool,
+}
+
+impl LiquidSprites {
+    pub fn load(gfx: &Gfx) -> LiquidSprites {
+        let mut l = LiquidSprites::default();
+        for d in 1..=7usize {
+            l.water[d] = gfx.named(&format!("UNDERWATER_{d}"));
+            l.water_label[d] = gfx.named(&format!("UNDERWATER_{d}_LABEL"));
+            l.magma[d] = gfx.named(&format!("UNDERMAGMA_{d}"));
+            l.magma_label[d] = gfx.named(&format!("UNDERMAGMA_{d}_LABEL"));
+        }
+        for (i, e) in ["N", "S", "W", "E", "NW", "NE", "SW", "SE"].iter().enumerate() {
+            l.water_edge[i] = gfx.named(&format!("UNDERWATER_EDGE_{e}"));
+            l.magma_edge[i] = gfx.named(&format!("UNDERMAGMA_EDGE_{e}"));
+        }
+        for n in ["WATER", "MAGMA_1", "MAGMA_2", "MAGMA_3"] {
+            if let Some(sp) = gfx.named(n) {
+                l.old.push((sp.page, sp.tx, sp.ty));
+            }
+        }
+        l.ok = l.water[7].is_some() && l.magma[7].is_some();
+        l
+    }
+
+    /// Liquid sprite for a depth (labels show the depth number like DF).
+    pub fn get(&self, magma: bool, depth: u8, label: bool) -> Option<Sprite> {
+        let d = (depth as usize).clamp(1, 7);
+        match (magma, label) {
+            (false, false) => self.water[d],
+            (false, true) => self.water_label[d].or(self.water[d]),
+            (true, false) => self.magma[d],
+            (true, true) => self.magma_label[d].or(self.magma[d]),
+        }
+    }
 }
 
 impl MapRenderer {
+    /// [round 4] The Premium liquid sprites (looked up on first use).
+    pub fn liquids(&mut self, gfx: &Gfx) -> &LiquidSprites {
+        self.liquids.get_or_insert_with(|| LiquidSprites::load(gfx))
+    }
+
     /// Texture of a gfx page, uploaded on first use (nearest filtering).
     pub fn texture(&mut self, gfx: &Gfx, page: u16) -> Option<Texture2D> {
         let i = page as usize;
@@ -325,6 +383,7 @@ pub fn draw_map(g: &mut Game) {
     }
     g.rend.buf = sprites;
     crate::ui::build::draw_ghost(g);
+    crate::ui::devices::draw_map_overlay(g); // [round 4] lever links, link targets
     draw_selection_and_cursor(g);
 }
 
@@ -356,12 +415,16 @@ fn draw_terrain(g: &mut Game, sprites: &mut Vec<Sprite>, p: Pos, r: Rect) {
             }
             sprites.clear();
             g.gfx.terrain(w, q, sprites);
+            let liq = bt.liquid_depth() > 0 && strip_gfx_liquid(&mut g.rend, &g.gfx, sprites);
             let mut ok = false;
             for s in sprites.iter() {
                 ok |= g.rend.draw_sprite(&g.gfx, s, r.x, r.y, tp);
             }
             if !ok {
                 fallback_terrain(&g.font, w, q, &bt, r, false);
+            }
+            if liq {
+                draw_liquid(&mut g.rend, &g.gfx, w, q, &bt, r, tp, false); // [round 4]
             }
             draw_rectangle(r.x, r.y, r.w, r.h, Color::new(0.03, 0.05, 0.10, FOG[d as usize]));
             drawn = true;
@@ -378,17 +441,87 @@ fn draw_terrain(g: &mut Game, sprites: &mut Vec<Sprite>, p: Pos, r: Rect) {
     if shape != Shape::Empty {
         g.gfx.terrain(w, p, sprites);
     }
+    // [round 4] Liquids with DF Premium's depth sprites instead of rf-gfx's tinted overlay.
+    let liq = t.liquid_depth() > 0 && strip_gfx_liquid(&mut g.rend, &g.gfx, sprites);
     let mut ok = false;
     for s in sprites.iter() {
         ok |= g.rend.draw_sprite(&g.gfx, s, r.x, r.y, tp);
     }
+    if liq {
+        draw_liquid(&mut g.rend, &g.gfx, w, p, &t, r, tp, true);
+        if !ok && shape == Shape::Empty {
+            // Water in open space (falling, or a channel seen from above): the sprite is it.
+            draw_designation(&g.font, w, &t, r);
+            return;
+        }
+    }
+    if !liq && shape != Shape::Wall {
+        draw_shore(&mut g.rend, &g.gfx, w, p, r, tp);
+    }
     if !ok {
         fallback_terrain(&g.font, w, p, &t, r, open);
         draw_designation(&g.font, w, &t, r);
+        if liq {
+            draw_liquid(&mut g.rend, &g.gfx, w, p, &t, r, tp, true);
+        }
     } else if t.desig != 0 {
         // rf-gfx drew the tile (and normally its designation sprite); keep a thin marker so
         // designations stay visible either way.
         draw_rectangle_lines(r.x + 1.0, r.y + 1.0, r.w - 2.0, r.h - 2.0, 1.0, Color::new(1.0, 0.82, 0.22, 0.55));
+    }
+}
+
+/// [round 4] Remove rf-gfx's liquid overlay from a tile's sprites when the Premium liquid
+/// sprites are available (then `draw_liquid` draws the liquid). Returns whether it will.
+fn strip_gfx_liquid(rend: &mut MapRenderer, gfx: &Gfx, sprites: &mut Vec<Sprite>) -> bool {
+    let l = rend.liquids(gfx);
+    if !l.ok {
+        return false;
+    }
+    sprites.retain(|s| !l.old.contains(&(s.page, s.tx, s.ty)));
+    true
+}
+
+/// [round 4] Water or magma like DF Premium: the depth sprite (1-7, with the depth number).
+#[allow(clippy::too_many_arguments)]
+fn draw_liquid(rend: &mut MapRenderer, gfx: &Gfx, _w: &World, _p: Pos, t: &Tile, r: Rect, tp: f32, label: bool) {
+    let sp = rend.liquids(gfx).get(t.is_magma(), t.liquid_depth(), label && tp >= 16.0);
+    if let Some(sp) = sp {
+        rend.draw_sprite(gfx, &sp, r.x, r.y, tp);
+    }
+}
+
+/// [round 4] Shore foam: the `UNDERWATER_EDGE_*` pieces frame a pool from the outside, so a
+/// dry tile next to liquid gets the piece for its side (EDGE_N on the tile north of the
+/// water, and so on).
+fn draw_shore(rend: &mut MapRenderer, gfx: &Gfx, w: &World, p: Pos, r: Rect, tp: f32) {
+    let liq = |dx: i16, dy: i16| -> Option<bool> {
+        w.tile(Pos::new(p.x + dx, p.y + dy, p.z)).filter(|n| n.liquid_depth() > 0 && !n.hidden()).map(|n| n.is_magma())
+    };
+    // (neighbor offset, edge index: N, S, W, E, NW, NE, SW, SE)
+    const NB: [(i16, i16, usize); 8] = [(0, 1, 0), (0, -1, 1), (1, 0, 2), (-1, 0, 3), (1, 1, 4), (-1, 1, 5), (1, -1, 6), (-1, -1, 7)];
+    let mut todo: [Option<Sprite>; 8] = [None; 8];
+    let mut any = false;
+    {
+        let l = rend.liquids(gfx);
+        if !l.ok {
+            return;
+        }
+        for (k, (dx, dy, e)) in NB.iter().enumerate() {
+            if let Some(m) = liq(*dx, *dy) {
+                // Corners only where the two sides are dry (else the side pieces cover it).
+                if k >= 4 && (liq(*dx, 0).is_some() || liq(0, *dy).is_some()) {
+                    continue;
+                }
+                todo[k] = if m { l.magma_edge[*e] } else { l.water_edge[*e] };
+                any = true;
+            }
+        }
+    }
+    if any {
+        for sp in todo.iter().flatten() {
+            rend.draw_sprite(gfx, sp, r.x, r.y, tp);
+        }
     }
 }
 

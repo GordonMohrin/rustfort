@@ -533,6 +533,25 @@ pub fn draw_citizens(g: &mut Game, top: f32, bottom: f32) {
         g.font.draw(&t, r.x + r.w - pad - g.font.width(&t, s), y + 3.0 * s, s, c);
     }
     y += GH * s + 12.0 * s;
+    // [round 4] Population header like DF's creatures screen (cap, migrants, caravan).
+    if tab == 0 {
+        let p = g.sim.population_info();
+        let cap = if p.population_cap > 0 { format!("cap {}", p.population_cap) } else { "no cap".into() };
+        let wave = p.next_wave_in.map(|t| format!("migrants in {}", super::round4::ticks_span(t))).unwrap_or_else(|| "no migrants expected".into());
+        let car = p.caravan_expected.clone().map(|c| format!("caravan: {c}")).unwrap_or_default();
+        let mut t = format!("{} citizens, {} children, {cap}; {wave}", p.citizens, p.children);
+        if !car.is_empty() {
+            t.push_str(&format!("; {car}"));
+        }
+        let maxc = ((r.w - 2.0 * pad) / (8.0 * s)) as usize;
+        let hr = Rect::new(x, y - 2.0 * s, r.w - 2.0 * pad, lh);
+        g.font.draw(&clip(&t, maxc), x, y, s, col::TEXT_DIM);
+        if g.ui.hovered(hr) {
+            let lines = super::round4::population_lines(g);
+            g.ui.tooltip = Some((lines.join("\n"), vec2(hr.x, hr.y - 4.0)));
+        }
+        y += lh + 4.0 * s;
+    }
     let rows = (((r.y + r.h - pad) - y) / (lh * 2.0)).floor().max(1.0) as usize;
     // Scroll with the wheel while hovering the list.
     if g.ui.hovered(r) && g.input.wheel != 0 {

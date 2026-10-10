@@ -27,15 +27,19 @@ pub fn draw_ui(g: &mut Game) {
     super::labor::draw_labor(g);
     super::military::draw_military(g);
     super::reports::draw_reports(g);
+    super::trade::draw_trade(g); // [round 4]
+    super::nobles::draw_nobles(g); // [round 4]
     draw_status(g, toolbar_top.min(tb_y));
     if g.menu_open {
         draw_menu(g);
     }
     super::alerts::draw_alert(g);
-    // Button tooltips win over the map tooltip.
+    super::round4::draw_popup(g); // [round 4]
+    // Button tooltips win over the map tooltip (multi-line with '\n').
     if let Some((t, p)) = g.ui.tooltip.take() {
-        tooltip_box(g, &[(t, col::TEXT)], p, true);
-    } else if !g.ui.over_ui && !g.menu_open && g.alert.is_none() && g.screen == Screen::None && !matches!(g.tool, Tool::Build(_)) {
+        let lines: Vec<(String, Color)> = t.split('\n').map(|l| (l.to_string(), col::TEXT)).collect();
+        tooltip_box(g, &lines, p, true);
+    } else if !g.ui.over_ui && !g.menu_open && g.alert.is_none() && g.r4.popup.is_none() && g.screen == Screen::None && !matches!(g.tool, Tool::Build(_)) {
         map_tooltip(g);
     }
 }
@@ -93,6 +97,25 @@ fn map_tooltip(g: &mut Game) {
         }
     }
     lines.push((desc, col::TEXT_DIM));
+    // [round 4] Liquid depth like DF's look mode: "Water 4/7".
+    if let Some(t) = w.tile(p).filter(|t| t.liquid_depth() > 0 && !t.hidden()) {
+        let what = if t.is_magma() { "Magma" } else { "Water" };
+        let mut extra = Vec::new();
+        if t.flags & rf_core::tile_flags::SALT != 0 {
+            extra.push("salty");
+        }
+        if t.flags & rf_core::tile_flags::STAGNANT != 0 {
+            extra.push("stagnant");
+        }
+        let deep = match t.liquid_depth() {
+            1..=2 => "shallow",
+            3..=4 => "wading depth",
+            _ => "deep, dangerous",
+        };
+        extra.push(deep);
+        let c = if t.is_magma() { Color::from_rgba(255, 140, 60, 255) } else { col::TEXT_CYAN };
+        lines.push((format!("{what} depth {}/7 ({})", t.liquid_depth(), extra.join(", ")), c));
+    }
     // Only show after the mouse rests a moment would be nicer; keep it immediate like DF's hover box.
     let m = g.mouse();
     let off = if g.tool != Tool::None { 34.0 } else { 18.0 };
@@ -182,8 +205,10 @@ fn draw_menu(g: &mut Game) {
     g.ui.block(Rect::new(0.0, 0.0, sw, sh));
     if g.menu.page == MenuPage::Load {
         draw_load_menu(g);
+    } else if g.menu.page == MenuPage::Settings {
+        super::round4::draw_settings(g); // [round 4]
     } else {
-        let (w, h) = (380.0 * s, 270.0 * s);
+        let (w, h) = (380.0 * s, 308.0 * s);
         let r = Rect::new((sw - w) / 2.0, (sh - h) / 2.0, w, h);
         panel(&mut g.ui, r);
         let title = "Rustfort";
@@ -206,6 +231,11 @@ fn draw_menu(g: &mut Game) {
         by += bh + 10.0 * s;
         if text_button(&mut g.ui, &g.font, Rect::new(bx, by, bw, bh), "Load game", BtnState::Normal) {
             g.open_load_menu();
+        }
+        by += bh + 10.0 * s;
+        // [round 4] Population cap and invasions.
+        if text_button(&mut g.ui, &g.font, Rect::new(bx, by, bw, bh), "Settings", BtnState::Normal) {
+            g.menu.page = MenuPage::Settings;
         }
         by += bh + 10.0 * s;
         if text_button(&mut g.ui, &g.font, Rect::new(bx, by, bw, bh), "Quit to desktop", BtnState::Normal) {

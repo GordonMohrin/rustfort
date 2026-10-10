@@ -27,6 +27,8 @@ pub fn building_title(g: &Game, b: &Building) -> String {
         "Weaponrack" => "Weapon rack".into(),
         "Armorstand" => "Armor stand".into(),
         "Box" => "Chest".into(),
+        "Trap" => super::devices::trap_name(&b.subtype), // [round 4]
+        "TradeDepot" => "Trade depot".into(),
         k => words(k),
     }
 }
@@ -140,6 +142,7 @@ pub fn building_sheet(g: &mut Game, id: i32, r: Rect) {
     let mat = if has_mat { g.sim.world.material(b.mat).map(|m| m.name.clone()).unwrap_or_default() } else { String::new() };
     let what = match b.kind.as_str() {
         "Civzone" => "Zone".to_string(),
+        "Trap" => super::devices::trap_name(&b.subtype), // [round 4]
         k => words(k),
     };
     let title = building_title(g, &b);
@@ -327,6 +330,26 @@ pub fn building_sheet(g: &mut Game, id: i32, r: Rect) {
             g.font.draw(&format!("{n} items stored"), x, y + 4.0 * s, s, col::TEXT_DIM);
         }
         _ => {
+            // [round 4] Doors, levers, bridges, traps; the trade depot.
+            if super::devices::is_device(&b) {
+                y = super::devices::sheet_section(g, &b, x, y, bw, bottom) + 4.0 * s;
+            }
+            if b.kind == "TradeDepot" && b.built {
+                let bh = GH * s + 8.0 * s;
+                let caravan = g.r4.trade.is_some();
+                let t = if caravan { "A caravan is at the depot." } else { "No caravan at the depot." };
+                g.font.draw(t, x, y, s, if caravan { col::TEXT_GOOD } else { col::TEXT_DIM });
+                y += lh + 2.0 * s;
+                let half = (bw - 6.0 * s) / 2.0;
+                if text_button(&mut g.ui, &g.font, Rect::new(x, y, half, bh), "Trade", if caravan { BtnState::Normal } else { BtnState::Disabled }) {
+                    super::round4::open_trade(g);
+                }
+                if text_button(&mut g.ui, &g.font, Rect::new(x + half + 6.0 * s, y, half, bh), "Move goods to depot", BtnState::Normal) {
+                    super::round4::open_trade(g);
+                    g.r4.depot_open = true;
+                }
+                y += bh + 8.0 * s;
+            }
             let mut lines: Vec<String> = Vec::new();
             if b.owner >= 0 {
                 let o = g.sim.world.unit(b.owner).map(super::panels::unit_name).unwrap_or_else(|| format!("unit #{}", b.owner));
@@ -337,7 +360,8 @@ pub fn building_sheet(g: &mut Game, id: i32, r: Rect) {
                 lines.push(format!("{furn} pieces of furniture inside"));
             }
             if !b.items.is_empty() {
-                lines.push(format!("{} items inside", b.items.len()));
+                let n = b.items.len();
+                lines.push(format!("{n} item{} inside", if n == 1 { "" } else { "s" }));
             }
             for l in lines {
                 g.font.draw(&clip(&l, maxc), x, y, s, col::TEXT);

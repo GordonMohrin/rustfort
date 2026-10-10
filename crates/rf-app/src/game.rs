@@ -65,6 +65,8 @@ pub enum Tool {
     SquadStation(i32),
     /// Click a creature for this squad to kill.
     SquadKill(i32),
+    /// [round 4] Click a bridge/door/floodgate/hatch/... to link it to this lever or plate.
+    Link(i32),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -95,6 +97,10 @@ pub enum Screen {
     Military,
     /// Reports / announcement history (DF `Shift+n`).
     Reports,
+    /// [round 4] Trade screen at the depot.
+    Trade,
+    /// [round 4] Nobles and administrators.
+    Nobles,
 }
 
 /// Sort order of the citizens list.
@@ -191,6 +197,8 @@ pub enum MenuPage {
     #[default]
     Main,
     Load,
+    /// [round 4] Population cap, invasions.
+    Settings,
 }
 
 /// Esc menu state.
@@ -304,7 +312,8 @@ pub enum ZClass {
 }
 
 pub struct Game {
-    pub sim: Sim,
+    /// [round 4] The simulation; runs on a worker thread between frames (see `simthread`).
+    pub sim: crate::simthread::SimHandle,
     pub gfx: Gfx,
     pub font: Font,
     pub binds: Bindings,
@@ -380,6 +389,12 @@ pub struct Game {
     pub hostile_cycle: usize,
     /// Tab of the creatures list: 0 citizens, 1 pets/livestock, 2 others.
     pub creatures_tab: usize,
+    // [round 4] sim worker thread bookkeeping, devices, trade, nobles, settings.
+    /// Sim tick when the sim was handed to the worker (to book the ticks it ran).
+    released_at_tick: u64,
+    /// Worker busy time at the last frame (seconds).
+    busy_prev: f64,
+    pub r4: crate::ui::round4::R4Ui,
 }
 
 pub fn ordinal(d: i32) -> String {
@@ -457,7 +472,8 @@ impl Game {
         gfx.prepare(&world);
         let zclass = compute_zclass(&world);
         let cam = initial_camera(&world);
-        let sim = Sim::new(world, args.seed);
+        let threaded = !args.sim_inline && std::env::var("RUSTFORT_SIM_THREAD").map(|v| v != "0").unwrap_or(true);
+        let sim = crate::simthread::SimHandle::new(Sim::new(world, args.seed), threaded);
         let mut g = Game {
             sim,
             gfx,
@@ -519,6 +535,9 @@ impl Game {
             civ_alert: None,
             hostile_cycle: 0,
             creatures_tab: 0,
+            released_at_tick: 0,
+            busy_prev: 0.0,
+            r4: Default::default(),
         };
         g.reset_hostiles();
         g.build_opts = g.sim.build_options();
@@ -717,6 +736,32 @@ impl Game {
                     self.reports.filter = v.parse::<usize>().unwrap_or(0);
                 }
                 "spawn-hostile" => crate::ui::alerts::debug_spawn_hostile(self),
+                // [round 4] screens for screenshots/tests
+                "trade" => crate::ui::round4::open_trade(self),
+                "fake-caravan" => crate::ui::round4::debug_caravan(self),
+                "depot" => {
+                    crate::ui::round4::open_trade(self);
+                    self.r4.depot_open = true;
+                    self.r4.depot_filter = v.to_string();
+                }
+                "nobles" => self.screen = Screen::Nobles,
+                "appoint" => {
+                    self.screen = Screen::Nobles;
+                    let tok = if v.is_empty() { self.sim.world.nobles.iter().find(|n| crate::ui::nobles::filled_by(&n.token) == crate::ui::nobles::Filled::ByFort).map(|n| n.token.clone()) } else { Some(v.to_string()) };
+                    self.r4.appoint = tok;
+                }
+                "settings" => {
+                    self.menu_open = true;
+                    self.menu.page = MenuPage::Settings;
+                }
+                "link" => {
+                    if let Selected::Building(id) = self.selected {
+                        self.tool = Tool::Link(id);
+                    }
+                }
+                "caravan-popup" => {
+                    self.r4.popup = Some(crate::ui::round4::Popup { title: "Caravan".into(), text: "A caravan from the mountainhomes has arrived.".into(), trade: true, pos: None });
+                }
                 "tile" => {
                     let c = self.cam;
                     self.selected = Selected::Tile(Pos::new(c.x as i16, c.y as i16, c.z as i16));
@@ -748,9 +793,50 @@ impl Game {
 
     // ---------------------------------------------------------------- simulation
 
+    /// Ticks run this frame (the game is not paused by the player, a menu or a pop-up).
+    pub fn sim_running(&self) -> bool {
+        !self.paused && !self.menu_open && self.alert.is_none() && self.r4.popup.is_none()
+    }
+
+    /// [round 4] Called right after the sim came back from the worker: book the ticks it ran.
+    pub fn after_acquire(&mut self) {
+        if !self.sim.threaded() {
+            return;
+        }
+        let ran = self.sim.ticks().saturating_sub(self.released_at_tick);
+        self.tick_accum = (self.tick_accum - ran as f64).max(0.0);
+        let busy = self.sim.busy_secs();
+        self.sim_ms = (busy - self.busy_prev) * 1000.0;
+        self.busy_prev = busy;
+    }
+
+    /// [round 4] End of the frame: hand the sim to the worker with this frame's allowance.
+    pub fn release_sim(&mut self, dt: f32) {
+        if !self.sim.threaded() {
+            return;
+        }
+        let allow = if self.sim_running() {
+            match self.speed.tps() {
+                Some(tps) => {
+                    self.tick_accum = (self.tick_accum + dt as f64 * tps).min(tps * 0.25);
+                    self.tick_accum.floor() as u64
+                }
+                None => {
+                    self.tick_accum = 0.0;
+                    u64::MAX
+                }
+            }
+        } else {
+            self.tick_accum = 0.0;
+            0
+        };
+        self.released_at_tick = self.sim.ticks();
+        self.sim.release(allow);
+    }
+
     fn update_sim(&mut self, dt: f32) {
         let t0 = Instant::now();
-        if !self.paused && !self.menu_open && self.alert.is_none() {
+        if !self.sim.threaded() && self.sim_running() {
             match self.speed.tps() {
                 Some(tps) => {
                     self.tick_accum = (self.tick_accum + dt as f64 * tps).min(tps * 0.25);
@@ -775,7 +861,9 @@ impl Game {
                 }
             }
         }
-        self.sim_ms = t0.elapsed().as_secs_f64() * 1000.0;
+        if !self.sim.threaded() {
+            self.sim_ms = t0.elapsed().as_secs_f64() * 1000.0;
+        }
         let now = get_time();
         self.tps_hist.push_back((now, self.sim.ticks()));
         while self.tps_hist.len() > 2 && now - self.tps_hist[0].0 > 1.0 {
@@ -795,7 +883,9 @@ impl Game {
         }
         self.poll_save();
         let date = date_string(&self.sim.world.calendar);
-        for a in self.sim.drain_announcements() {
+        let fresh = self.sim.drain_announcements();
+        crate::ui::round4::on_announcements(self, &fresh); // [round 4]
+        for a in fresh {
             self.log.push(LogLine::new(a.text, a.pos, a.kind, now, date.clone()));
         }
         // [round 3] The Reports screen keeps a long history.
@@ -803,6 +893,7 @@ impl Game {
             self.log.drain(..self.log.len() - LOG_KEEP);
         }
         self.update_hostiles();
+        crate::ui::round4::update(self); // [round 4] caravan arrival
     }
 
     /// Keep each `run_ticks` call around 1 ms so the frame budget is respected.
@@ -827,6 +918,10 @@ impl Game {
         // [round 3] Enter closes a pop-up alert, like DF.
         if self.alert.is_some() && inp.fired.contains(&KeyCode::Enter) {
             self.alert = None;
+            return;
+        }
+        if self.r4.popup.is_some() && inp.fired.contains(&KeyCode::Enter) {
+            self.r4.popup = None;
             return;
         }
         if self.menu_open || self.typing() {
@@ -882,6 +977,8 @@ impl Game {
             self.open_burrows();
         } else if inp.hit(b, "D_ANNOUNCE") {
             self.toggle_screen(Screen::Reports);
+        } else if inp.hit(b, "D_NOBLES") {
+            self.toggle_screen(Screen::Nobles); // [round 4]
         }
     }
 
@@ -895,7 +992,7 @@ impl Game {
 
     /// A text field has keyboard focus: hotkeys and WASD are off.
     pub fn typing(&self) -> bool {
-        self.screen == Screen::Labor && self.labor.typing
+        (self.screen == Screen::Labor && self.labor.typing) || (self.screen == Screen::Trade && self.r4.depot_open && self.r4.depot_typing)
     }
 
     pub fn toggle_screen(&mut self, s: Screen) {
@@ -1016,7 +1113,8 @@ impl Game {
                 }
                 let seed = if info.header.seed != 0 { info.header.seed } else { self.seed };
                 self.seed = seed;
-                self.sim = Sim::new(world, seed);
+                *self.sim = Sim::new(world, seed);
+                self.r4 = Default::default();
                 let file = path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
                 self.label = format!("{} - loaded {file}", self.sim.world.meta.fort_name);
                 self.selected = Selected::None;
@@ -1081,6 +1179,15 @@ impl Game {
     pub fn escape(&mut self) {
         if self.alert.is_some() {
             self.alert = None;
+        } else if self.r4.popup.is_some() {
+            self.r4.popup = None;
+        } else if self.screen == Screen::Trade && self.r4.depot_open {
+            self.r4.depot_open = false;
+            self.r4.depot_typing = false;
+        } else if self.screen == Screen::Nobles && self.r4.appoint.is_some() {
+            self.r4.appoint = None;
+        } else if matches!(self.tool, Tool::Link(_)) {
+            self.tool = Tool::None;
         } else if self.menu_open {
             if self.menu.page != MenuPage::Main {
                 self.menu.page = MenuPage::Main;
@@ -1227,6 +1334,8 @@ impl Game {
             } else if matches!(self.tool, Tool::SquadStation(_) | Tool::SquadKill(_)) {
                 self.tool = Tool::None;
                 self.screen = Screen::Military;
+            } else if matches!(self.tool, Tool::Link(_)) {
+                self.tool = Tool::None;
             } else if self.tool != Tool::None || self.submenu != Submenu::None {
                 self.tool = Tool::None;
                 self.submenu = Submenu::None;
@@ -1268,6 +1377,11 @@ impl Game {
                     self.set_status(format!("{name}: station at {}, {}, z {}", h.x, h.y, h.z));
                     self.tool = Tool::None;
                     self.screen = Screen::Military;
+                }
+            }
+            Tool::Link(lever) => {
+                if lp {
+                    crate::ui::devices::link_click(self, lever, h);
                 }
             }
             Tool::SquadKill(sq) => {
@@ -1338,7 +1452,7 @@ impl Game {
                 self.burrow_ui.selected = Some(id);
                 self.tool = Tool::None;
             }
-            Tool::SquadStation(_) | Tool::SquadKill(_) => {}
+            Tool::SquadStation(_) | Tool::SquadKill(_) | Tool::Link(_) => {}
             Tool::Build(i) => {
                 let Some(o) = self.build_opts.get(i).cloned() else { return };
                 let (lo, hi) = crate::ui::build::footprint(&o, a, Pos::new(b.x, b.y, a.z));
@@ -1420,6 +1534,13 @@ pub async fn run(args: Args, loaded: Loaded) {
     let mut g = Game::new(&args, loaded);
     let mut frame: u32 = 0;
     let mut deadline = Instant::now();
+    // [round 4] Average speed since the first frame (screenshot runs report it).
+    let mut started: Option<(Instant, u64, f64)> = None;
+    let measure: Option<(u64, u64)> = std::env::var("RUSTFORT_MEASURE").ok().and_then(|v| {
+        let p: Vec<u64> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+        (p.len() == 2 && p[1] > p[0]).then(|| (p[0], p[1]))
+    });
+    let mut window: (Option<(Instant, u64)>, Option<f64>) = (None, None);
     // Scripted input (screenshot tests); `--mouse` alone is a script that only parks the mouse.
     let mut script = match (&args.script, args.mouse) {
         (Some(s), m) => match crate::script::Script::parse(s, m) {
@@ -1433,6 +1554,27 @@ pub async fn run(args: Args, loaded: Loaded) {
         (None, None) => None,
     };
     loop {
+        // [round 4] Take the sim back from the worker thread for this frame.
+        g.sim.acquire();
+        g.after_acquire();
+        if started.is_none() && frame == 2 {
+            started = Some((Instant::now(), g.sim.ticks(), g.sim.busy_secs()));
+        }
+        // `RUSTFORT_MEASURE=a,b`: real time from sim tick a to tick b (same game span in any
+        // mode), printed once and at the screenshot.
+        if let Some((a, b)) = measure {
+            let t = g.sim.ticks();
+            if window.0.is_none() && t >= a {
+                window.0 = Some((Instant::now(), t));
+            }
+            if let (Some((t0, k0)), None) = (window.0, window.1) {
+                if t >= b {
+                    let secs = t0.elapsed().as_secs_f64();
+                    window.1 = Some((t - k0) as f64 / secs.max(1e-6));
+                    eprintln!("measure: ticks {k0}..{t} in {secs:.2}s = {:.0} ticks/s ({})", window.1.unwrap_or(0.0), if g.sim.threaded() { "sim thread" } else { "inline" });
+                }
+            }
+        }
         let f0 = Instant::now();
         let dt = get_frame_time().min(0.1);
         g.fps = g.fps * 0.95 + (1.0 / dt.max(1e-4)) * 0.05;
@@ -1463,20 +1605,32 @@ pub async fn run(args: Args, loaded: Loaded) {
         frame += 1;
         if let Some(path) = &args.screenshot {
             if frame >= args.frames.max(1) {
-                let img = get_screen_data();
+                let mut img = get_screen_data();
+                // [round 4] The window ignores framebuffer alpha; so does the screenshot
+                // (translucent UI layers would otherwise look washed out in image viewers).
+                for px in img.bytes.chunks_exact_mut(4) {
+                    px[3] = 255;
+                }
                 if let Some(dir) = path.parent() {
                     let _ = std::fs::create_dir_all(dir);
                 }
                 img.export_png(&path.to_string_lossy());
                 println!(
-                    "saved {} ({}x{}) after {frame} frames, sim tick {}, {:.0} fps, frame {:.2} ms (cpu), {:.0} ticks/s",
+                    "saved {} ({}x{}) after {frame} frames, sim tick {}, {:.0} fps, frame {:.2} ms (cpu), {:.0} ticks/s, avg {:.0} ticks/s ({})",
                     path.display(),
                     img.width,
                     img.height,
                     g.sim.ticks(),
                     g.fps,
                     g.frame_ms,
-                    g.tps
+                    g.tps,
+                    started.map(|(t, k, _)| (g.sim.ticks() - k) as f64 / t.elapsed().as_secs_f64().max(1e-3)).unwrap_or(0.0),
+                    if g.sim.threaded() {
+                        let (el, b0) = started.map(|(t, _, b)| (t.elapsed().as_secs_f64(), b)).unwrap_or((1.0, 0.0));
+                        format!("sim thread, worker busy {:.0}%", 100.0 * (g.sim.busy_secs() - b0) / el.max(1e-3))
+                    } else {
+                        "inline".to_string()
+                    }
                 );
                 break;
             }
@@ -1485,6 +1639,8 @@ pub async fn run(args: Args, loaded: Loaded) {
             g.finish_save();
             break;
         }
+        // [round 4] The worker simulates while the GPU flushes and we wait for vsync.
+        g.release_sim(dt);
         if !args.vsync && args.gfps > 0 {
             // Own frame pacing (DF's G_FPS_CAP) when vsync is off.
             let period = std::time::Duration::from_secs_f64(1.0 / args.gfps as f64);
