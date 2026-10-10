@@ -1,5 +1,37 @@
 # Rustfort: progress
 
+## v0.6.0 (2026-10-10): fidelity audit, title screen with live DF import, visual polish
+
+**New since 0.5:**
+- **Fidelity audit:** `docs/FIDELITY.md` checks every sim module against the DF v50 wiki (OK / WRONG / MISSING / ESTIMATE / FIXED). Fixed this round:
+  - Brewing uses the whole plant stack, as in DF.
+  - Room value tiers were one tier too high; room value now counts floor, walls and engravings.
+  - Melt jobs at the smelter return bars per the wiki table.
+  - Carve designations survive save/load; constructions can be engraved.
+  - Caravans stay 30-40k ticks.
+  - Soldiers notice lurking hostiles; wounded soldiers rest and get care.
+  - Weapon traps jam (a mechanic cleans them); forgotten beasts get venom, breath and webs.
+- **Title screen** with DF's own art:
+  - Continue, Load game (saves and DF exports), **Import from Dwarf Fortress**, Settings, Quit.
+  - Import runs a read-only probe plus the exporter in your running DF, without pausing it: about 1 min for your fort, then loading takes about 2 s.
+  - Autosave each season (keeps the last 3), help overlay (F1 / ?) built from your DF keys, first-time hints, `rustfort.cmd` launcher, and a German "how to play" section in README.md.
+- **Graphics:**
+  - engravings, item markers (melt etc.)
+  - seasonal trees (autumn colors, bare winter branches, blossoms, fruit)
+  - per-plant grass (teal cave moss), webs, caste sprites
+  - procedural beasts and demons with DF's BEAST_* sprites; unbuilt furniture faded
+  - **0 missing sprites on all 150 levels** of your fort
+- **Result:**
+  - 2 years headless with `--standdown`: 88 -> 96 citizens, about 63k ticks/s.
+  - 488 citizens: about 28-32k ticks/s (machine busy).
+
+**Known gaps (see docs/FIDELITY.md for the full lists):**
+- DF's existing engravings (16,233 in your fort) are not exported yet, so room value relies on DF's reported level.
+- Civilian alert blocks all work, but DF allows work inside the burrow.
+- No cave-ins, no recover-wounded carrying.
+- Siege size does not yet depend on wealth.
+- No meal quality from cook skill, no miasma, no temperature, pumps or minecarts, and no rivers or brooks (your map has none).
+
 ## v0.5.0 (2026-10-10): fast at high population, constructions, moods, health, caverns
 
 **New since 0.4:**
