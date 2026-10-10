@@ -187,6 +187,14 @@ pub(crate) struct PlantGfx {
     pub growths: Vec<(String, Sprite)>,
     /// Index into `PlantTables::trees` (0 = standard set).
     pub tree: u16,
+    /// [gfx6] Grass plants: `GRASS_1..4` (the floor look by tiletype variant 1..4).
+    pub grass: [Option<Sprite>; 4],
+    /// [gfx6] `CUSTOM_EDGING:n` (0 = none; lower n wins, all win over regular grass) and its
+    /// `CUSTOM_EDGE_<dir>` pieces in order N, S, W, E, NW, NE, SW, SE (cavern grasses).
+    pub edging: u8,
+    pub edges: [Option<Sprite>; 8],
+    /// [gfx6] `CUSTOM_RAMP`: ramps are the plant's `GRASS_1` plus the ramp overlay.
+    pub custom_ramp: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -234,6 +242,28 @@ impl PlantTables {
                     "CROP" => pg.crop = pg.crop.or(sp(g, tok, 0)),
                     "CROP_SPROUT" => pg.crop_sprout = pg.crop_sprout.or(sp(g, tok, 0)),
                     "SAPLING" => pg.sapling = pg.sapling.or(sp(g, tok, 0)),
+                    "GRASS_1" | "GRASS_2" | "GRASS_3" | "GRASS_4" => {
+                        let i = (tok.name.as_bytes()[6] - b'1') as usize;
+                        pg.grass[i] = pg.grass[i].or(sp(g, tok, 0));
+                    }
+                    "CUSTOM_EDGING" => pg.edging = tok.arg_i32(0).unwrap_or(0).clamp(0, 255) as u8,
+                    "CUSTOM_RAMP" => pg.custom_ramp = true,
+                    n if n.starts_with("CUSTOM_EDGE_") => {
+                        let i = match &n[12..] {
+                            "N" => 0,
+                            "S" => 1,
+                            "W" => 2,
+                            "E" => 3,
+                            "NW" => 4,
+                            "NE" => 5,
+                            "SW" => 6,
+                            "SE" => 7,
+                            _ => 8,
+                        };
+                        if i < 8 {
+                            pg.edges[i] = pg.edges[i].or(sp(g, tok, 0));
+                        }
+                    }
                     "GROWTH" => growth = Some(tok.arg(0).to_string()),
                     "GROWTH_PICKED" => {
                         if let (Some(gid), Some(s)) = (&growth, sp(g, tok, 0)) {

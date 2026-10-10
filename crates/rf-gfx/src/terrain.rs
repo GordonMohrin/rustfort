@@ -239,6 +239,9 @@ pub(crate) struct Tables {
     /// [gfx6] Item designation markers: forbidden, dump, forbidden+dump, melt,
     /// forbidden+melt, hidden (`DESIGNATION_ITEM_*`).
     pub item_marks: [Option<Sprite>; 6],
+    /// [gfx6] Spider webs (THREAD items described as "... web"): harmless and thick (giant
+    /// cave spider), 4 variants each (`ITEM_WEB_HARMLESS:1..4`, `ITEM_WEB_THICK:1..4`).
+    pub webs: [[Option<Sprite>; 4]; 2],
     pub wood_floor: Option<Sprite>,
     pub metal_floor: Option<Sprite>,
     pub block_floor: Option<Sprite>,
@@ -337,7 +340,7 @@ const WALL_PAGES: &[&str] = &[
     "WALL_SAND",
 ];
 
-const RAMP_PAGES: &[&str] = &["STONE_RAMPS", "SOIL_RAMPS", "GRASS_RAMPS", "SAND_BEIGE_RAMPS", "SAND_RED_RAMPS"];
+const RAMP_PAGES: &[&str] = &["STONE_RAMPS", "SOIL_RAMPS", "GRASS_RAMPS", "SAND_BEIGE_RAMPS", "SAND_RED_RAMPS", "RAMP_OVERLAY"];
 
 impl Tables {
     pub(crate) fn build(g: &Gfx) -> Tables {
@@ -483,6 +486,14 @@ impl Tables {
         }
         t.bld = b;
         t.remains = n("ITEM_REMAINS");
+        for (k, name) in ["ITEM_WEB_HARMLESS", "ITEM_WEB_THICK"].iter().enumerate() {
+            for td in g.db.tiles_named(name) {
+                let v = td.extra.first().and_then(|e| e.trim().parse::<usize>().ok()).unwrap_or(1);
+                if let (Some(page), true) = (g.page_id(&td.page), (1..=4).contains(&v)) {
+                    t.webs[k][v - 1].get_or_insert(Sprite::simple(page, td.x, td.y));
+                }
+            }
+        }
         let sides = [("N", "NW", "NE"), ("S", "SW", "SE"), ("W", "NW", "SW"), ("E", "NE", "SE")];
         for (i, (d, a, b2)) in sides.iter().enumerate() {
             t.shadows.straight[i] = n(&format!("WALL_SHADOW_STRAIGHT_{d}"));
@@ -880,6 +891,16 @@ fn match_shape(g: &Gfx, world: &World, p: Pos, tile: &rf_core::Tile, tt: &rf_cor
             if !s && !e && o(1, 1) {
                 mask |= SE
             }
+            // Cavern grasses with `CUSTOM_RAMP`: their GRASS_1 under the ramp overlay.
+            if tt.material.is_grass() {
+                if let Some(base) = g.plant_of_mat(tile.mat).filter(|pg| pg.custom_ramp).and_then(|pg| pg.grass[0]) {
+                    if let Some(sp) = t.ramps.get("RAMP_OVERLAY").and_then(|rs| rs.get(mask)) {
+                        out.push(base);
+                        out.push(sp);
+                        return;
+                    }
+                }
+            }
             if let Some(rs) = t.ramps.get(fam) {
                 if let Some(sp) = rs.get(mask) {
                     out.push(sp);
@@ -935,8 +956,15 @@ fn overlays(g: &Gfx, _world: &World, tile: &rf_core::Tile, tt: &rf_core::Tiletyp
 fn floor(g: &Gfx, world: &World, p: Pos, mat: u16, tt: &rf_core::TiletypeInfo, h: u32, out: &mut Vec<Sprite>) {
     let t = &g.terrain_t;
     let class = mat_class(world.material(mat));
+    let my_plant = if tt.material.is_grass() { g.plant_index_of_mat(mat) } else { u16::MAX };
+    let my_edging = if my_plant != u16::MAX { g.plants_t.plants[my_plant as usize].edging } else { 0 };
     let base: Option<Sprite> = match tt.material {
-        m if m.is_grass() => t.grass.center(tt.variant, h),
+        // The grass plant's own GRASS_1..4 (cavern mosses, blue grasses, ...), by variant.
+        m if m.is_grass() => {
+            let v = if (1..=4).contains(&tt.variant) { tt.variant as usize - 1 } else { (h % 4) as usize };
+            let own = if my_plant != u16::MAX { g.plants_t.plants[my_plant as usize].grass[v] } else { None };
+            own.or_else(|| t.grass.center(tt.variant, h))
+        }
         TtMaterial::Soil => {
             if tt.special == TtSpecial::Furrowed && !t.furrowed.is_empty() {
                 Some(t.furrowed[(h as usize) % t.furrowed.len()])
@@ -994,6 +1022,8 @@ fn floor(g: &Gfx, world: &World, p: Pos, mat: u16, tt: &rf_core::TiletypeInfo, h
     // One pass over the 8 neighbors (index (dy+1)*3 + (dx+1), 4 = this tile).
     let mine = floor_kind(world, p);
     let mut walls = [false; 9];
+    // Custom grass edges (cavern grasses) by neighbor: N, S, W, E, NW, NE, SW, SE.
+    let mut cust: [Option<Sprite>; 8] = [None; 8];
     for dy in -1..=1i16 {
         for dx in -1..=1i16 {
             if dx == 0 && dy == 0 {
@@ -1013,9 +1043,34 @@ fn floor(g: &Gfx, world: &World, p: Pos, mat: u16, tt: &rf_core::TiletypeInfo, h
             let cls = g.tree_tt(nt.tt);
             // Tree trunks cast their own (base) shadows, not wall shadows.
             walls[ni] = cls == TreeTt::None && matches!(ntt.shape, Shape::Wall | Shape::None);
+            // Grasses with CUSTOM_EDGING print their own edge pieces onto other tiles (lower
+            // number first; all of them win over regular grass, which never covers them).
+            let mut custom_nb = false;
+            if k == FloorKind::Grass {
+                let np = g.plant_index_of_mat(nt.mat);
+                if np != u16::MAX && np != my_plant {
+                    let e = g.plants_t.plants[np as usize].edging;
+                    if e > 0 {
+                        custom_nb = true;
+                        if my_edging == 0 || e < my_edging {
+                            let di = match (dx, dy) {
+                                (0, -1) => 0,
+                                (0, 1) => 1,
+                                (-1, 0) => 2,
+                                (1, 0) => 3,
+                                (-1, -1) => 4,
+                                (1, -1) => 5,
+                                (-1, 1) => 6,
+                                _ => 7,
+                            };
+                            cust[di] = g.plants_t.plants[np as usize].edges[di];
+                        }
+                    }
+                }
+            }
             // Edge bleeding from higher-priority neighbor floors (grass over dirt over stone):
             // the piece of the neighbor's 3x3 that lies on this tile.
-            if k > mine && k != FloorKind::None {
+            if k > mine && k != FloorKind::None && my_edging == 0 && !custom_nb {
                 let set = match k {
                     FloorKind::Grass => &t.grass,
                     FloorKind::Dirt => &t.dirt,
@@ -1033,6 +1088,15 @@ fn floor(g: &Gfx, world: &World, p: Pos, mat: u16, tt: &rf_core::TiletypeInfo, h
                     out.push(s);
                 }
             }
+        }
+    }
+    // Custom grass edges: sides, then corners whose two sides carry no edge of their own.
+    for s in cust.iter().take(4).flatten() {
+        out.push(*s);
+    }
+    for (i, (a, b)) in [(0usize, 2usize), (0, 3), (1, 2), (1, 3)].into_iter().enumerate() {
+        if cust[a].is_none() && cust[b].is_none() {
+            out.extend(cust[4 + i]);
         }
     }
     wall_shadows(g, &walls, out);
@@ -1235,6 +1299,15 @@ pub(crate) fn item(g: &Gfx, world: &World, it: &Item, out: &mut Vec<Sprite>) {
                 _ => g.mat_growth.get(it.mat as usize).copied().flatten(),
             };
             if let Some(s) = s {
+                out.push(s);
+                return;
+            }
+        }
+        // Webs are THREAD items in DF ("cave spider silk web"), drawn as webs.
+        "THREAD" if it.desc.ends_with(" web") => {
+            let k = it.desc.starts_with("giant ") as usize;
+            let v = (hash_pos(it.pos, 7) >> 5) as usize % 4;
+            if let Some(s) = g.terrain_t.webs[k][v].or(g.terrain_t.webs[k][0]).or(g.terrain_t.webs[0][0]) {
                 out.push(s);
                 return;
             }

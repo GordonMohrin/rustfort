@@ -368,6 +368,12 @@ impl Gfx {
         world.idx(p).and_then(|i| self.engr_at.get(&(i as u32)).copied())
     }
 
+    /// Plant graphics index of a world material (`u16::MAX` = none; needs `prepare`).
+    #[inline]
+    pub(crate) fn plant_index_of_mat(&self, mat: u16) -> u16 {
+        self.mat_plant.get(mat as usize).copied().unwrap_or(u16::MAX)
+    }
+
     /// Plant graphics of a world material (needs `prepare`).
     #[inline]
     pub(crate) fn plant_of_mat(&self, mat: u16) -> Option<&plants::PlantGfx> {
