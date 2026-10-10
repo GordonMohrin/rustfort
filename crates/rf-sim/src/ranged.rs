@@ -211,7 +211,14 @@ fn default_launcher(token: &str) -> Option<Launcher> {
     Some(Launcher { skill: skill.into(), class: class.into(), force, maxvel })
 }
 
+/// Projectile penetration relative to the combat module's melee convention (estimate: the wiki
+/// calls penetration "poorly understood"). With x12 a bolt (penetration 1000) goes 120 mm deep,
+/// so an iron bolt that is not stopped by armor goes through skin, fat, muscle and bone of a
+/// goblin's chest into the lungs or heart, as DF's combat reports show.
+const PROJ_PEN_K: f32 = 12.0;
+
 fn ammo_atk(contact: f32, pen: f32, edge: bool) -> AtkT {
+    let pen = pen * PROJ_PEN_K;
     AtkT {
         verb2: "strike".into(),
         verb3: "strikes".into(),
@@ -634,6 +641,17 @@ impl Sim {
         found
     }
 
+    fn adjacent_enemy(&self, s: usize, me: Pos) -> Option<u32> {
+        let hostile = self.combat.f[s].role == Role::Hostile;
+        let list = if hostile { &self.combat.fort } else { &self.combat.hostiles };
+        list.iter().copied().find(|&t| {
+            t as usize != s && self.alive(t) && {
+                let tp = self.upos(t as usize);
+                tp.z == me.z && (tp.x as i32 - me.x as i32).abs() <= 1 && (tp.y as i32 - me.y as i32).abs() <= 1 && self.can_fight(t as usize, self.ticks)
+            }
+        })
+    }
+
     fn release_target(&mut self, s: usize) {
         if let Some(k) = self.ranged.s[s].train.take() {
             if let Some(t) = self.ranged.targets.get_mut(k) {
@@ -664,6 +682,15 @@ impl Sim {
         }
         let skill = self.shooter_skill(s, l);
         let me = self.upos(s);
+        // An enemy next to us: fight it in melee (bash with the launcher).
+        if let Some(e) = self.adjacent_enemy(s, me) {
+            self.combat.f[s].target = e;
+            if !self.ranged.s[s].melee {
+                self.ranged.s[s].melee = true;
+                self.ranged.stats.melee_fallbacks += 1;
+            }
+            return None;
+        }
         let valid = |sim: &Sim, t: u32| {
             sim.alive(t) && !sim.world.units[sim.ai[t as usize].uidx].flags.inactive && {
                 let tp = sim.upos(t as usize);
