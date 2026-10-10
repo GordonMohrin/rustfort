@@ -185,6 +185,8 @@ pub struct Gfx {
     creature_names: Vec<(String, String)>,
     /// Item id -> corpse/remains sprite (filled by `prepare`).
     pub(crate) corpse_cache: HashMap<i32, Sprite>,
+    /// Engraved tiles (tile index -> engraved floor?), rebuilt by `prepare` from `World::engravings`.
+    pub(crate) engr_at: HashMap<u32, bool>,
     /// Non-vanilla mods whose graphics were loaded (`id:numeric_version`, load order).
     pub mods_loaded: Vec<String>,
     /// Mod list entries that could not be matched exactly (see [`Gfx::load_with_mods`]).
@@ -279,6 +281,16 @@ impl Gfx {
         for (name, (page, x0, y0, x1, y1, _, _)) in parts {
             g.named.entry(name).or_insert(Sprite { page, tx: x0, ty: y0, tw: x1 - x0 + 1, th: y1 - y0 + 1, tint: [255; 4], dx: 0, dy: 0 });
         }
+        // [gfx6] Rectangles `[TILE_GRAPHICS_RECTANGLE:PAGE:x:y:w:h:NAME]` (procedural beasts).
+        for o in raws.of_kind("TILE_GRAPHICS_RECTANGLE") {
+            let h = o.header();
+            let Some(&page) = g.page_ids.get(h.arg(0)) else { continue };
+            let (Some(x), Some(y), Some(w), Some(hh)) = (h.arg_i32(1), h.arg_i32(2), h.arg_i32(3), h.arg_i32(4)) else { continue };
+            if x < 0 || y < 0 || w < 1 || hh < 1 || o.id.is_empty() {
+                continue;
+            }
+            g.named.entry(o.id.clone()).or_insert(Sprite { page, tx: x as u16, ty: y as u16, tw: w as u16, th: hh as u16, tint: [255; 4], dx: 0, dy: 0 });
+        }
         g.db = db;
         g.terrain_t = terrain::Tables::build(&g);
         g.plants_t = plants::PlantTables::build(&g, raws);
@@ -344,6 +356,22 @@ impl Gfx {
             Some(t) if !t.hidden() => self.tree_tt(t.tt),
             _ => plants::TreeTt::None,
         }
+    }
+
+    /// Is the tile at `p` engraved? `Some(true)` = engraved floor, `Some(false)` = engraved
+    /// wall (needs `prepare`, which indexes `World::engravings`).
+    #[inline]
+    pub(crate) fn engraved_at(&self, world: &World, p: Pos) -> Option<bool> {
+        if self.engr_at.is_empty() {
+            return None;
+        }
+        world.idx(p).and_then(|i| self.engr_at.get(&(i as u32)).copied())
+    }
+
+    /// Plant graphics index of a world material (`u16::MAX` = none; needs `prepare`).
+    #[inline]
+    pub(crate) fn plant_index_of_mat(&self, mat: u16) -> u16 {
+        self.mat_plant.get(mat as usize).copied().unwrap_or(u16::MAX)
     }
 
     /// Plant graphics of a world material (needs `prepare`).
@@ -461,6 +489,19 @@ impl Gfx {
         world.material(mat).map(|m| self.std_row_for_rgb(m.rgb)).unwrap_or(0)
     }
 
+    /// Recolor a sprite with a standard palette row (baked variant page if `prepare` made one,
+    /// else unchanged).
+    #[inline]
+    pub(crate) fn recolor_row(&self, s: Sprite, row: u16) -> Sprite {
+        match self.std_pal {
+            Some(pal) if row != 0 => match self.variant(s.page, pal, row) {
+                Some(v) => Sprite { page: v, ..s },
+                None => s,
+            },
+            _ => s,
+        }
+    }
+
     /// Recolor a sprite with a world material through the standard palette: uses the baked
     /// variant page if `prepare` made one, else a multiply tint (approximation).
     pub(crate) fn recolor(&self, s: Sprite, world: &World, mat: u16) -> Sprite {
@@ -516,6 +557,13 @@ impl Gfx {
                 self.mat_growth.push(growth);
             }
         }
+        // Engravings (DF keeps the smooth tiletype; the engraving lies on top).
+        self.engr_at.clear();
+        for e in &world.engravings {
+            if let Some(i) = world.idx(e.pos) {
+                self.engr_at.insert(i as u32, e.floor);
+            }
+        }
         // Crops: planted seeds inside farm plots.
         self.crops_at.clear();
         let has_farms = world.buildings.iter().any(|b| b.kind == "FarmPlot");
@@ -562,6 +610,26 @@ impl Gfx {
         for (p, row) in pages_for {
             self.make_variant(p, pal, row);
         }
+        // [gfx6] Blossom and fruit colors of the world's trees (palette pages per growth color).
+        let mut seen: HashSet<u16> = HashSet::new();
+        let mut want: Vec<(u16, u16)> = Vec::new();
+        for &pi in &self.mat_plant {
+            if pi == u16::MAX || !seen.insert(pi) {
+                continue;
+            }
+            let pg = &self.plants_t.plants[pi as usize];
+            let Some(ss) = self.plants_t.season.get(pg.tree as usize).or(self.plants_t.season.first()) else { continue };
+            for row in [pg.flowers.as_ref().map(|f| f.1.row), pg.fruit.as_ref().map(|f| f.1.row)].into_iter().flatten() {
+                if row != 0 {
+                    for &p in &ss.pages {
+                        want.push((p, row));
+                    }
+                }
+            }
+        }
+        for (p, row) in want {
+            self.make_variant(p, pal, row);
+        }
         // Corpses, body parts and remains: the creature's own sprite.
         for it in world.items.iter().filter(|i| matches!(i.kind.as_str(), "CORPSE" | "CORPSEPIECE" | "REMAINS")) {
             if self.corpse_cache.contains_key(&it.id) {
@@ -589,6 +657,13 @@ impl Gfx {
         // Unit looks.
         for u in &world.units {
             if self.looks.contains_key(&u.id) {
+                continue;
+            }
+            if !self.creatures.contains_key(&u.race) {
+                // [gfx6] Procedural creatures (forgotten beasts, demons, ...): DF's beast sprites.
+                if let Some(sprites) = creature::procedural_look(self, world, u) {
+                    self.looks.insert(u.id, creature::UnitLook { sprites });
+                }
                 continue;
             }
             if let Some(layers) = creature::evaluate(self, world, u) {
@@ -642,6 +717,23 @@ impl Gfx {
         };
         let s = self.terrain_t.bld.cage_occupied[fam].or(self.terrain_t.bld.cage_occupied[0])?;
         Some(self.recolor(s, world, mat))
+    }
+
+    /// The item designation marker DF draws over an item (`DESIGNATION_ITEM_*`): forbidden,
+    /// dump, melt, the forbidden+dump / forbidden+melt combinations, or hidden. `None` for an
+    /// unmarked item. Draw it on top of the item's sprites.
+    pub fn item_marker(&self, it: &Item) -> Option<Sprite> {
+        let m = &self.terrain_t.item_marks;
+        let f = &it.flags;
+        match (f.forbid, f.dump, f.melt) {
+            (true, true, _) => m[2].or(m[0]),
+            (true, false, true) => m[4].or(m[0]),
+            (true, false, false) => m[0],
+            (false, true, _) => m[1],
+            (false, false, true) => m[3],
+            _ if f.hidden => m[5],
+            _ => None,
+        }
     }
 
     /// Footprint (w, h) in tiles of a building kind/subtype as DF builds it: 3x3 workshops and
@@ -845,5 +937,83 @@ mod tests {
         assert_eq!(g.building_size("TradeDepot", ""), (5, 5));
         assert_eq!(g.building_size("Workshop", "Quern"), (1, 1));
         assert!(!g.building_ghost("Bed", "").is_empty());
+    }
+
+    /// Round 6: engravings, item markers, seasons, procedural beasts, caste sprites, webs.
+    #[test]
+    fn round6_lookups() {
+        let dir = df_dir();
+        if !dir.join("data").join("vanilla").exists() {
+            eprintln!("DF install not found, skipping");
+            return;
+        }
+        let mut g = Gfx::load(&dir).expect("load");
+        let mut w = World::synthetic(32, 32, 12);
+        // A smoothed floor and wall pair in the hall, both engraved.
+        let hall = w.units[0].pos;
+        let fl = Pos::new(hall.x, hall.y + 1, hall.z);
+        let wall = (0..32).map(|x| Pos::new(x, fl.y, fl.z)).find(|&p| w.shape(p) == rf_core::Shape::Wall && w.shape(p.offset(1, 0, 0)) == rf_core::Shape::Floor).expect("hall wall");
+        let smooth_floor = w.tiletypes.by_name("StoneFloorSmooth").unwrap();
+        w.tile_mut(fl).unwrap().tt = smooth_floor;
+        let mut infos = w.tiletypes.infos.clone();
+        let id = infos.len() as u16;
+        infos.push(rf_core::TiletypeInfo { id, name: "StoneWallSmoothUD".into(), shape: rf_core::Shape::Wall, material: rf_core::TtMaterial::Stone, special: rf_core::TtSpecial::Smooth, variant: 0, direction: String::new() });
+        w.tiletypes = rf_core::TiletypeTable::new(infos);
+        w.tile_mut(wall).unwrap().tt = id;
+        w.engravings.push(rf_core::Engraving { pos: fl, quality: 2, floor: true, mat: 0, engraver: -1, skill: 3 });
+        w.engravings.push(rf_core::Engraving { pos: wall, quality: 2, floor: false, mat: 0, engraver: -1, skill: 3 });
+        // A procedural beast and a hen.
+        let mut fb = w.units[0].clone();
+        fb.id = 900;
+        fb.race = "FORGOTTEN_BEAST_3".into();
+        fb.flags.animal = true;
+        w.units.push(fb);
+        let mut hen = w.units.iter().find(|u| u.race == "CAT").unwrap().clone();
+        hen.id = 901;
+        hen.race = "BIRD_CHICKEN".into();
+        hen.caste = "FEMALE".into();
+        w.units.push(hen.clone());
+        hen.id = 902;
+        hen.caste = "MALE".into();
+        w.units.push(hen);
+        g.prepare(&w);
+        let mut out = Vec::new();
+        g.terrain(&w, fl, &mut out);
+        let eng_pages = [g.page_by_token("FLOOR_STONE_ENGRAVED_PALETTE"), g.page_by_token("FLOOR_STONE_ENGRAVED_NON_PALETTE")];
+        let base = |p: u16| g.pages[p as usize].token.split('#').next().unwrap().to_string();
+        assert!(out.iter().any(|s| eng_pages.iter().flatten().any(|&e| base(s.page) == base(e))), "engraved floor sprite expected: {out:?}");
+        out.clear();
+        g.terrain(&w, wall, &mut out);
+        assert!(out.iter().any(|s| base(s.page) == "WALL_STONE_ENGRAVED"), "engraved wall pieces expected");
+        // Melt marker.
+        let mut it = w.items[0].clone();
+        assert!(g.item_marker(&it).is_none());
+        it.flags.melt = true;
+        assert_eq!(g.item_marker(&it), g.named("DESIGNATION_ITEM_MELT"));
+        it.flags.forbid = true;
+        assert_eq!(g.item_marker(&it), g.named("DESIGNATION_ITEM_FORBIDDEN_MELT"));
+        // Webs.
+        it.kind = "THREAD".into();
+        it.desc = "cave spider silk web".into();
+        out.clear();
+        g.item(&w, &it, &mut out);
+        assert_eq!(out.first().map(|s| g.pages[s.page as usize].token.as_str()), Some("ITEM_WEBS"));
+        // Seasons of an oak: green in spring, autumn colors, bare in winter.
+        let oak = &g.plants_t.plants[g.plants_t.by_id["OAK"] as usize];
+        assert_eq!(oak.season(100_000).leaves, 0);
+        assert!((1..=3).contains(&oak.season(250_000).leaves));
+        assert_eq!(oak.season(350_000).leaves, 4);
+        let cherry = &g.plants_t.plants[g.plants_t.by_id["CHERRY"] as usize];
+        assert!(cherry.season(80_000).flowers > 0, "cherry blossoms in spring");
+        assert!(cherry.season(150_000).fruit > 0, "cherries in summer");
+        // Procedural beast: a 3x2 BEAST sprite; chickens by caste.
+        out.clear();
+        g.unit(&w, w.units.iter().find(|u| u.id == 900).unwrap(), &mut out);
+        assert!(out.iter().any(|s| s.tw == 3 && s.th == 2), "beast sprite expected: {out:?}");
+        let mut a = Vec::new();
+        let mut b = Vec::new();
+        g.unit(&w, w.units.iter().find(|u| u.id == 901).unwrap(), &mut a);
+        g.unit(&w, w.units.iter().find(|u| u.id == 902).unwrap(), &mut b);
+        assert!(!a.is_empty() && !b.is_empty() && a != b, "hen and rooster differ");
     }
 }

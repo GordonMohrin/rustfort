@@ -103,7 +103,7 @@ fn main() {
     let get = |k: &str| args.iter().position(|a| a == k).and_then(|i| args.get(i + 1)).cloned();
     let flag = |k: &str| args.iter().any(|a| a == k);
     let out = PathBuf::from(get("--out").unwrap_or_else(|| "target/preview.png".into()));
-    let (world, default_z) = match get("--export") {
+    let (mut world, default_z) = match get("--export") {
         Some(dir) => {
             let w = load_export(&PathBuf::from(dir));
             let z = w.units.iter().find(|u| u.flags.citizen).map(|u| u.pos.z).unwrap_or(w.dims.z as i16 / 2);
@@ -111,6 +111,15 @@ fn main() {
         }
         None => synthetic_plus(),
     };
+    // Season: `--month 0..11` (0 = Granite, spring) or `--tick <year tick>` sets the calendar
+    // (trees show spring flowers, summer leaves, autumn colors, bare winter branches).
+    if let Some(m) = get("--month").and_then(|s| s.parse::<i32>().ok()) {
+        world.calendar.year_tick = m.clamp(0, 11) * TICKS_PER_MONTH + TICKS_PER_MONTH / 2;
+    }
+    if let Some(t) = get("--tick").and_then(|s| s.parse::<i32>().ok()) {
+        world.calendar.year_tick = t.clamp(0, TICKS_PER_YEAR - 1);
+    }
+    eprintln!("calendar: year tick {} ({} {})", world.calendar.year_tick, world.calendar.month_name(), world.calendar.season_name());
     // Mods: `--mods a:1,b:2` overrides the world's list; `--mods none` = vanilla only.
     let mods: Vec<String> = match get("--mods") {
         Some(s) if s == "none" => Vec::new(),
@@ -140,7 +149,9 @@ fn main() {
     if args.iter().any(|a| a == "--debug-units") {
         let mut v = Vec::new();
         eprintln!("DWARF: {:?}\nCAT: {:?}", gfx.creature_info("DWARF"), gfx.creature_info("CAT"));
-        for u in world.units.iter().take(12) {
+        // `--race R` limits the listing to one race (e.g. DEMON_2).
+        let race = get("--race");
+        for u in world.units.iter().filter(|u| race.as_deref().map(|r| u.race == r).unwrap_or(true)).take(12) {
             v.clear();
             gfx.unit(&world, u, &mut v);
             eprintln!("unit {} {} {} {} at {:?}: {} sprites {:?}", u.id, u.race, u.caste, u.profession, u.pos, v.len(), v.first());
@@ -186,6 +197,8 @@ fn main() {
                         if let Some(v) = items_at.get(&(x, y)) {
                             for it in v {
                                 gfx.item(&world, it, &mut sprites);
+                                // Like the app: forbidden / dump / melt / hidden markers on top.
+                                sprites.extend(gfx.item_marker(it));
                             }
                         }
                     }
@@ -485,6 +498,31 @@ fn synthetic_plus() -> (World, i16) {
         }
         w.units.push(u);
     }
+    // Engravings in the smoothed room: the west wall and two floor tiles.
+    for y in cy + 1..cy + 6 {
+        w.engravings.push(Engraving { pos: Pos::new(cx + 9, y, hall_z), quality: 3, floor: false, mat: 0, engraver: -1, skill: 5 });
+    }
+    for x in [cx + 11, cx + 12] {
+        w.engravings.push(Engraving { pos: Pos::new(x, cy + 2, hall_z), quality: 4, floor: true, mat: 0, engraver: -1, skill: 8 });
+    }
+    // A bar marked for melting and a forbidden one.
+    if let Some(it) = w.items.iter_mut().find(|i| i.kind == "BAR") {
+        it.flags.melt = true;
+    }
+    // A forgotten beast (no raws: the sim makes them) and a caste-specific animal.
+    let mut fb = w.units[0].clone();
+    fb.id = 400;
+    fb.race = "FORGOTTEN_BEAST_1".into();
+    fb.caste = "NEUTER".into();
+    fb.flags = UnitFlags { hostile: true, animal: true, ..Default::default() };
+    fb.pos = Pos::new(cx - 2, cy - 3, hall_z);
+    w.units.push(fb);
+    let mut hen = w.units.iter().find(|u| u.race == "CAT").unwrap().clone();
+    hen.id = 401;
+    hen.race = "BIRD_CHICKEN".into();
+    hen.caste = "FEMALE".into();
+    hen.pos = Pos::new(cx + 1, cy + 3, hall_z);
+    w.units.push(hen);
     let mut dog = w.units.iter().find(|u| u.race == "CAT").unwrap().clone();
     dog.id = 300;
     dog.race = "DOG".into();
@@ -536,6 +574,13 @@ fn load_export(dir: &std::path::Path) -> World {
         manifest["mods"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
     let plant_raws: Vec<PlantRaw> =
         fs::read_to_string(dir.join("plant_raws.json")).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    let creature_raws: Vec<CreatureRaw> =
+        fs::read_to_string(dir.join("creature_raws.json")).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    // The export's calendar (`manifest.json` `year` / `year_tick`, if present).
+    let calendar = Calendar {
+        year: manifest["year"].as_i64().unwrap_or(0) as i32,
+        year_tick: manifest["year_tick_end"].as_i64().or(manifest["year_tick_start"].as_i64()).unwrap_or(0) as i32,
+    };
     World {
         meta: Meta {
             fort_name: manifest["fort_name"].as_str().unwrap_or("").into(),
@@ -544,6 +589,8 @@ fn load_export(dir: &std::path::Path) -> World {
             ..Default::default()
         },
         plant_raws,
+        creature_raws,
+        calendar,
         dims,
         tiles,
         tiletypes: TiletypeTable::new(infos),
