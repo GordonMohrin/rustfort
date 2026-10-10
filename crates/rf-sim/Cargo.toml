@@ -9,7 +9,7 @@ publish.workspace = true
 [dependencies]
 rf-core.workspace = true
 rayon = "1"
-serde.workspace = true # [saves10] module state in World::sim_state
+serde = { workspace = true, features = ["rc"] } # [saves10] module state in World::sim_state; rc: Arc<str> in combat layers
 serde_json.workspace = true # [saves10]
 rmp-serde = "1" # [saves11] exact runtime snapshot (MessagePack, named fields)
 

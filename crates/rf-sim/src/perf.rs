@@ -188,7 +188,7 @@ impl std::ops::Index<&i32> for IdMap {
 /// navigation grid changes (`Nav::version`). Freed pile space, released reservations and
 /// expired path blocks are only seen after the TTL, so a haul can start up to that much later
 /// (DF also queues stockpile hauls periodically, not every tick).
-#[derive(Clone, Default)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)] // [saves11]
 pub(crate) struct HaulFail {
     v: Vec<(u32, u32, u64, u64, u64)>, // (component, category mask, until, epoch_haul, nav version)
 }

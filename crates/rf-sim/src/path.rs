@@ -48,7 +48,7 @@ impl Goals {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)] // [saves11] flows are saved
 struct Entry {
     f: u32,
     h: u32,
@@ -82,7 +82,7 @@ impl PartialOrd for Entry {
 /// drops below the last popped f because the heuristic is consistent (one step changes each
 /// coordinate by at most 1 and costs at least `min_cost`). The per-f heaps are much smaller
 /// than one big heap and compare a single integer.
-#[derive(Default)]
+#[derive(Default, Clone, serde::Serialize, serde::Deserialize)] // [saves11]
 struct Queue {
     base: u32,
     cur: usize,
@@ -150,7 +150,7 @@ const CLOSED: u32 = 1 << 31;
 const MIN_BITS: u32 = 12;
 
 /// [perf] One hash table slot with all fields of a node (four slots per cache line).
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, serde::Serialize, serde::Deserialize)] // [saves11]
 struct Node {
     stamp: u32,
     key: u32,
@@ -395,6 +395,7 @@ impl AStar {
 /// from a tile is a cheapest path from it to the goal with A*'s cost (sum of the entered
 /// tiles' costs), possibly another one of equal cost. The search only grows as far as the
 /// farthest chaser asked so far (`settle`), and it is resumable: settled tiles stay final.
+#[derive(Clone, serde::Serialize, serde::Deserialize)] // [saves11] exact continuation keeps siege flows
 pub struct Flow {
     pub goal: u32,
     /// Tick it was made, last used, and `Nav::rebuilds` then (a component rebuild retires it).

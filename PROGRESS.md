@@ -1,5 +1,32 @@
 # Rustfort: progress
 
+## v0.11.0 (2026-10-10): calibration against Gordon's history, exact save continuation, faster sieges
+
+- **Stress:**
+  - "Hardened" dwarves feel nothing about corpses and witnessed deaths; DF's exports show exactly that (ANYTHING reactions), and the hardening grows with every horror.
+  - The strongest grief memory keeps its own slot and is relived.
+  - A calm year (r3 -> r4) now ends with 11 stressed dwarves (6-13 over seeds; DF 6), not 29.
+  - A siege year comes out at mean stress -22k (DF -26k).
+- **Masterpieces:** "X has created a masterpiece ...!" announcements (log only) and MakeMasterwork thoughts.
+- **Migrants follow DF's rules:** none in winter, the wave holds until a siege ends, danger after many deaths turns migrants away, and waves shrink near the cap.
+  - The r5 -> r6 fall now brings 5 migrants (DF 1), down from 26.
+  - Consequence: a fort that loses many dwarves is no longer refilled.
+- **Animal births** are counted and happen (r4 -> r5: 10 vs DF 12). Creatures sharing a cage breed.
+- **Food under alert:** work orders and production inside the alert burrow keep running. r4 -> r5 drinks and meals are now within DF's range.
+- **Exact continuation:** save, load and continue gives a **bit-identical** state hash with uninterrupted play (checked for N = M = 100, 20k and 403k ticks on several snapshots). The sim snapshot is stored compactly in the save, which is now about 3.4 MB.
+- **Siege speed:**
+  - shared flow fields per goal for charging raiders (A* nodes 13x fewer)
+  - cheaper wound bookkeeping
+  - a 133-goblin siege costs 198 instead of 615 Mcyc per 1k ticks, about 3x faster
+  - validate r5 -> r6: median 64 citizens lost (DF 73), now "close"
+- **Result:** 2 years headless with `--standdown` (simple player emulation) on r5: 87 -> 47-52 citizens through several DF-sized sieges without migrant refills. About 103-106k ticks/s, the same hash with 1 and N threads.
+- **Known gaps:**
+  - craft quality is still low (1.6-1.8 vs DF 2.6)
+  - invaders do not climb yet (v50 climbing)
+  - combat log lines are still formatted per blow
+  - 487 citizens about 22k ticks/s (target 40k)
+- **Build note:** `cargo build --workspace --examples` does NOT rebuild `rustfort.exe`; use `--bins` (or `--all-targets`).
+
 ## v0.10.0 (2026-10-10): update-proof saves, crash hunting, Gordon's playtest feedback, Maeander engravings
 
 **Gordon's v0.9 feedback, implemented:**

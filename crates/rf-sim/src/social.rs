@@ -602,6 +602,7 @@ pub(crate) struct Social {
     has_dining: bool,
     /// [calib11-social] Stress actually applied per thought (sum, events); "(decay)" is the
     /// daily return towards 0, "(recall)" relived memories. Statistics only (not saved).
+    #[serde(skip)]
     stress_by: BTreeMap<&'static str, (i64, u64)>,
     /// Social simulation switched off (A/B measurements; `Sim::set_social_enabled`).
     off: bool,
