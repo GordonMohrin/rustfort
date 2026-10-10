@@ -36,11 +36,13 @@ use crate::{Kind, Sim};
 
 /// A* node limit of one climbing search (no landmark heuristic: kept below the walkers' 400k).
 pub(crate) const CLIMB_MAX_NODES: u32 = 150_000;
-/// The climbing net is rebuilt after map changes at most this often (a day), at once after a
-/// walk-component rebuild.
+/// The climbing net is built when a climber finds nobody to walk to, then rebuilt after map
+/// changes at most this often (a day); a build that led no climber to a target doubles the wait
+/// (up to `NET_PERIOD_MAX`), one that did resets it.
 const NET_PERIOD: u64 = 1200;
-/// The net is kept up to date while a climber thought within this many ticks.
-const NET_ACTIVE: u64 = 1200;
+const NET_PERIOD_MAX: u64 = 8 * 1200;
+/// The net is kept up to date while a climber wanted it within this many ticks.
+const NET_ACTIVE: u64 = 600;
 /// Climbing step time and cost factor (estimate, see the module docs).
 pub(crate) const CLIMB_SPEED: u64 = 6;
 /// Losing hold per climbing step in the air next to a wall, unskilled (per mille).
@@ -76,6 +78,12 @@ pub(crate) struct Climbing {
     pub net: ClimbNet,
     /// Last tick a climber thought.
     pub seen: u64,
+    /// Last tick a climber found nobody it could walk to (wants the net).
+    pub need: u64,
+    /// Current wait between builds, and whether a climber found a target only by climbing
+    /// since the last build.
+    pub period: u64,
+    pub useful: bool,
     pub stats: ClimbStats,
 }
 
@@ -90,8 +98,17 @@ impl Sim {
             return;
         }
         let net = &c.net;
-        let stale = !net.built || net.rebuilds != self.nav.rebuilds || (net.version != self.nav.version && now >= net.built_at + NET_PERIOD);
+        let period = c.period.max(NET_PERIOD);
+        // A walk-component rebuild renames the components: rebuild at once unless the last
+        // build was useless; other map changes wait for the period.
+        let split = net.rebuilds != self.nav.rebuilds && (c.useful || c.period <= NET_PERIOD || now >= net.built_at + period);
+        let changed = net.version != self.nav.version && now >= net.built_at + period;
+        let stale = c.need > 0 && now <= c.need + NET_ACTIVE && (!net.built || split || changed);
         if stale {
+            // Back off while builds lead nobody anywhere (a sealed fort, a siege without prey).
+            let useful = c.useful || !net.built;
+            self.combat.climb.period = if useful { NET_PERIOD } else { (period * 2).min(NET_PERIOD_MAX) };
+            self.combat.climb.useful = false;
             let t0 = std::time::Instant::now();
             let g = ClimbGraph { nav: &self.nav, tiles: &self.world.tiles, cls: &self.combat.climb.cls };
             let mut net = std::mem::take(&mut self.combat.climb.net);
@@ -114,6 +131,26 @@ impl Sim {
                     self.combat.climb.stats.dropped += 1;
                     self.climb_fall(s, now, "falls");
                 }
+            }
+        }
+    }
+
+    /// [siege12] The climbing net matches the current walk components.
+    #[inline]
+    pub(crate) fn climb_net_ok(&self) -> bool {
+        let n = &self.combat.climb.net;
+        n.built && n.rebuilds == self.nav.rebuilds
+    }
+
+    /// [siege12] After a climber's target search: none found -> it wants the climbing net; one
+    /// it cannot walk to -> the net was useful.
+    pub(crate) fn climb_note_target(&mut self, s: usize, t: u32, now: u64) {
+        if t == crate::NONE {
+            self.combat.climb.need = now;
+        } else {
+            let c = self.nav.comp_near(self.ai[s].pos as usize);
+            if c == 0 || self.nav.comp_near(self.ai[t as usize].pos as usize) != c {
+                self.combat.climb.useful = true;
             }
         }
     }
@@ -362,6 +399,10 @@ mod tests {
     fn reach(sim: &mut Sim, d: usize, g: usize, limit: u32) -> Option<u32> {
         for t in 0..limit / 10 {
             sim.run_ticks(10);
+            if std::env::var_os("CLIMB_DEBUG").is_some() && t % 5 == 0 {
+                let ai = &sim.ai[g];
+                eprintln!("t={} g={:?} task={:?} target={} path {}/{} dorm={} net_ok={} rb={} {:?}", sim.ticks, sim.upos(g), ai.task, sim.combat.f[g].target, ai.path_i, ai.path.len(), sim.combat.f[g].dormant_until, sim.climb_net_ok(), sim.nav.rebuilds, sim.climb_stats());
+            }
             if sim.upos(g).dist(sim.upos(d)) <= 1 || sim.combat.stats.attacks > 0 {
                 return Some(t * 10);
             }

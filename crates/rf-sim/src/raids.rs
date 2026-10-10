@@ -469,7 +469,7 @@ impl Sim {
             .copied()
             .max_by_key(|&s| {
                 let u = &self.world.units[self.ai[s as usize].uidx];
-                (u.skills.iter().filter(|k| !matches!(k.id.as_str(), "DODGING" | "ARMOR" | "MELEE_COMBAT" | "SNEAK")).map(|k| k.rating).max().unwrap_or(0), std::cmp::Reverse(s))
+                (u.skills.iter().filter(|k| !matches!(k.id.as_str(), "DODGING" | "ARMOR" | "MELEE_COMBAT" | "SNEAK" | "CLIMBING")).map(|k| k.rating).max().unwrap_or(0), std::cmp::Reverse(s)) // [siege12] CLIMBING
             })
             .unwrap_or(NONE);
         let charge_at = now + camp;

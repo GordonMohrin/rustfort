@@ -998,7 +998,14 @@ impl<'a> ClimbGraph<'a> {
     }
 
     /// All moves from tile `i` with their costs (walking moves first, in `Nav::neighbors` order).
+    #[inline]
     pub fn edges(&self, i: usize, out: &mut [(u32, u32); CLIMB_MAXN]) -> usize {
+        self.edges_h(i, out, |q| self.hold(q))
+    }
+
+    /// `edges` with a given hanging-tile test (the net build passes a precomputed bit set).
+    #[inline]
+    pub fn edges_h(&self, i: usize, out: &mut [(u32, u32); CLIMB_MAXN], hold: impl Fn(usize) -> bool) -> usize {
         let nav = self.nav;
         let f = nav.flags[i];
         let walk_i = f & WALK != 0;
@@ -1011,7 +1018,7 @@ impl<'a> ClimbGraph<'a> {
                 n += 1;
             }
         }
-        let hold_i = !walk_i && self.hold(i);
+        let hold_i = !walk_i && hold(i);
         if !walk_i && !hold_i {
             return n;
         }
@@ -1022,10 +1029,10 @@ impl<'a> ClimbGraph<'a> {
             out[*n] = (q as u32, nav.cost(q) * mult);
             *n += 1;
         };
-        if z + 1 < dz && self.hold(i + layer) {
+        if z + 1 < dz && hold(i + layer) {
             push(i + layer, CLIMB_COST, &mut n);
         }
-        if hold_i && z > 0 && self.node(i - layer) {
+        if hold_i && z > 0 && (nav.flags[i - layer] & WALK != 0 || hold(i - layer)) {
             push(i - layer, CLIMB_COST, &mut n);
         }
         for &(ddx, ddy) in &DIRS8 {
@@ -1036,7 +1043,7 @@ impl<'a> ClimbGraph<'a> {
             }
             let h = (i as isize + ddy * dx as isize + ddx) as usize;
             let walk_h = nav.flags[h] & WALK != 0;
-            let hold_h = !walk_h && self.hold(h);
+            let hold_h = !walk_h && hold(h);
             if (hold_i && (walk_h || hold_h)) || (walk_i && hold_h) {
                 push(h, CLIMB_COST, &mut n);
             }
@@ -1044,7 +1051,7 @@ impl<'a> ClimbGraph<'a> {
             if z + 1 < dz {
                 let q = h + layer;
                 let walk_q = nav.flags[q] & WALK != 0;
-                let hold_q = !walk_q && self.hold(q);
+                let hold_q = !walk_q && hold(q);
                 if (walk_q || hold_q) && self.diag_ok(i, q, hold_i, hold_q, walk_q) {
                     push(q, CLIMB_COST, &mut n);
                 }
@@ -1053,7 +1060,7 @@ impl<'a> ClimbGraph<'a> {
             if z > 0 {
                 let q = h - layer;
                 let walk_q = nav.flags[q] & WALK != 0;
-                let hold_q = !walk_q && self.hold(q);
+                let hold_q = !walk_q && hold(q);
                 if (walk_q || hold_q) && self.diag_ok(q, i, hold_q, hold_i, walk_i) {
                     push(q, CLIMB_COST, &mut n);
                 }
@@ -1140,6 +1147,14 @@ impl ClimbNet {
         let mut holds = 0u64;
         let mut buf = [(0u32, 0u32); CLIMB_MAXN];
         let layer = nav.layer;
+        // Hanging tiles first, as a bit set (the edge rules look at them many times).
+        let mut hb = vec![0u64; n / 64 + 1];
+        for i in 0..n {
+            if nav.flags[i] & (SOLID | WALK) == 0 && g.hold(i) {
+                hb[i / 64] |= 1 << (i % 64);
+            }
+        }
+        let is_hold = |q: usize| hb[q / 64] & (1 << (q % 64)) != 0;
         for i in 0..n {
             let f = nav.flags[i];
             if f & SOLID != 0 {
@@ -1187,14 +1202,14 @@ impl ClimbNet {
                     }
                 }
             }
-            if !g.hold(i) {
+            if !is_hold(i) {
                 continue;
             }
             holds += 1;
             let id = uf.len() as u32;
             uf.push(id);
             ring[i % ring_n] = (i as u32, id);
-            let k = g.edges(i, &mut buf);
+            let k = g.edges_h(i, &mut buf, is_hold);
             for &(q, _) in &buf[..k] {
                 let q = q as usize;
                 if nav.flags[q] & WALK != 0 {
