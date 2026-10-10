@@ -96,9 +96,12 @@ const LT_MIN: i32 = -50_000;
 const LT_MAX: i32 = 120_000;
 const FOCUS_MAX: i32 = 400;
 const FOCUS_MIN: i32 = -200_000; // lowest focus level seen in the export
-/// [skills9] Daily chance (1 in this) to relive the strongest bad memory, and its share.
+/// [skills9] Daily chance (1 in this) to relive the strongest bad memory, and its share
+/// ([calib11-social] full strength: DF relives the emotion, w:Memory (thought)).
 const RECALL_IN: u32 = 6;
-const RECALL_DIV: i32 = 2;
+const RECALL_DIV: i32 = 1;
+/// [calib11-social] Hardening per horror thought felt (estimate).
+const HARDEN_STEP: u8 = 3;
 
 /// DF `need_type` names in enum order (subthought of `NeedsUnfulfilled`).
 pub const NEED_NAMES: [&str; 30] = [
@@ -499,6 +502,13 @@ pub(crate) struct Psy {
     /// Overall focus in percent (100 = undistracted).
     focus: i32,
     ready: bool,
+    /// [calib11-social] Hardened to death (DF's personality `combat_hardened`, 0..=100): the
+    /// chance in percent to feel nothing about a dead body or a death seen.
+    hardened: u8,
+    /// [calib11-social] The strongest grief / horror memory (strength, divider, calendar tick):
+    /// DF keeps strong memories in their own slots (w:Memory (thought)), so they are not lost
+    /// when the thought log turns over.
+    grief: (i32, i32, i64),
 }
 
 impl Default for Psy {
@@ -519,6 +529,8 @@ impl Default for Psy {
             without_eustress: 0,
             focus: 100,
             ready: false,
+            hardened: 0,
+            grief: (0, 0, 0),
         }
     }
 }
@@ -553,6 +565,9 @@ pub struct SocialReport {
     /// Dining seats (chair next to a table in a dining hall or tavern) and owned bedrooms.
     pub seats: usize,
     pub bedrooms: usize,
+    /// [calib11-social] Stress applied per thought (name, sum, events), largest stress gain
+    /// first; "(decay)" = the daily return towards 0, "(recall)" = relived memories.
+    pub stress_by_thought: Vec<(String, i64, u64)>,
 }
 
 #[derive(Default)]
@@ -580,6 +595,9 @@ pub(crate) struct Social {
     prayers: u64,
     conversations: u64,
     has_dining: bool,
+    /// [calib11-social] Stress actually applied per thought (sum, events); "(decay)" is the
+    /// daily return towards 0, "(recall)" relived memories. Statistics only (not saved).
+    stress_by: BTreeMap<&'static str, (i64, u64)>,
     /// Social simulation switched off (A/B measurements; `Sim::set_social_enabled`).
     off: bool,
 }
@@ -880,6 +898,7 @@ impl Sim {
             }
             let p = &mut self.social.psy[s];
             p.facets = f;
+            p.hardened = hardened_of(&u.emotions); // [calib11-social]
             p.ready = true;
             p.next_admire = (s as u64 % 7) * DAY as u64;
             p.focus = focus_of(&u.needs);
@@ -906,13 +925,26 @@ impl Sim {
             .rev()
             .find(|e| e.thought == thought)
             .and_then(|e| known_emotion(&e.emotion));
-        let emotion = match known {
+        let mut emotion = match known {
             Some(e) => e,
             None => match pick_emotion(class, &f, &mut r) {
                 Some(e) => e,
                 None => "ANYTHING",
             },
         };
+        // [calib11-social] Hardened dwarves feel nothing about corpses and deaths they see
+        // (DF "felt nothing after seeing ..."), and grief at a loss comes as sadness: all of the
+        // r3-r5 exports' dead-body / witnessed-death emotions are ANYTHING and all 70 "Death"
+        // emotions in r5 are SADNESS. Each horror makes the unit harder (estimate: +3).
+        if class == Class::Horror {
+            let h = self.social.psy[s].hardened;
+            if h >= 100 || (h > 0 && r.below(100) < h as u32) {
+                emotion = "ANYTHING";
+            }
+            self.social.psy[s].hardened = h.saturating_add(HARDEN_STEP).min(100);
+        } else if class == Class::Grief && known.is_none() && self.social.psy[s].hardened >= 50 && divider(emotion) > 0 && divider(emotion) < 4 {
+            emotion = "SADNESS";
+        }
         let div = divider(emotion);
         *self.social.counts.entry(thought).or_default() += 1;
         let (year, year_tick) = (self.world.calendar.year, self.world.calendar.year_tick);
@@ -945,6 +977,15 @@ impl Sim {
                 });
             }
         }
+        if div > 0 && matches!(thought, "Death" | "WitnessDeath" | "SawDeadBody" | "LostPet") {
+            // [calib11-social] keep the strongest memory (an older one counts half per year)
+            let t = year as i64 * rf_core::TICKS_PER_YEAR as i64 + year_tick as i64;
+            let g = self.social.psy[s].grief;
+            let age_years = ((t - g.2) / rf_core::TICKS_PER_YEAR as i64).clamp(0, 30) as u32;
+            if strength >= g.0 >> age_years {
+                self.social.psy[s].grief = (strength, div, t);
+            }
+        }
         if div == 0 {
             return;
         }
@@ -966,6 +1007,9 @@ impl Sim {
             p.without_eustress = 0;
         }
         u.stress = u.stress.clamp(ST_MIN, ST_MAX);
+        let e = self.social.stress_by.entry(thought).or_default(); // [calib11-social]
+        e.0 += (u.stress - st) as i64;
+        e.1 += 1;
     }
 
     fn satisfy(&mut self, s: usize, need: &str) -> i32 {
@@ -1340,6 +1384,7 @@ impl Sim {
             let (wd, we) = (p.without_distress, p.without_eustress);
             let u = &mut self.world.units[uidx];
             let st = u.stress;
+            let st0 = st; // [calib11-social]
             if st > 0 {
                 // ANXIETY_PROPENSITY: how fast stress dissipates (wiki), x1.5 .. x0.5.
                 let rate = (500 * (150 - f.anxiety) / 100) as i64 * (806_400 + 2 * wd as i64) / 806_400; // per 100 000
@@ -1351,6 +1396,10 @@ impl Sim {
             let lt = u.longterm_stress;
             let step = ((u.stress - lt) / 8).clamp(-130, 60);
             u.longterm_stress = (lt + step).clamp(LT_MIN, LT_MAX);
+            let d = (u.stress - st0) as i64;
+            let e = self.social.stress_by.entry("(decay)").or_default(); // [calib11-social]
+            e.0 += d;
+            e.1 += 1;
         }
         let mut r = Rng::for_unit(self.seed, s, now, 0x50c1a1);
         // --- body
@@ -1493,11 +1542,24 @@ impl Sim {
             })
             .filter(|&(_, d)| d > 0)
             .max();
+        // [calib11-social] the memory slot (survives the turnover of the thought log)
+        let g = self.social.psy[s].grief;
+        let g_age = t_now - g.2;
+        let stored = if g.0 > 0 && g.1 > 0 && g_age <= 2 * rf_core::TICKS_PER_YEAR as i64 {
+            Some((if g_age <= rf_core::TICKS_PER_YEAR as i64 { g.0 } else { g.0 / 2 }, g.1))
+        } else {
+            None
+        };
+        let best = best.max(stored);
         let Some((strength, div)) = best else { return };
         let cap = 100_000 / div;
         let delta = strength * STRESS_K / div / RECALL_DIV * (150 - f.bravery) / 100;
         if u.stress < cap && delta > 0 {
+            let before = u.stress;
             u.stress = (u.stress + delta).min(cap).clamp(ST_MIN, ST_MAX);
+            let e = self.social.stress_by.entry("(recall)").or_default(); // [calib11-social]
+            e.0 += (u.stress - before) as i64;
+            e.1 += 1;
             self.social.psy[s].without_distress = 0;
             self.skills.recalls += 1;
         }
@@ -1823,6 +1885,11 @@ impl Sim {
             conversations: self.social.conversations,
             seats: self.social.seats.len(),
             bedrooms: self.social.rooms.iter().filter(|r| r.kind == RoomKind::Bedroom && r.owner >= 0).count(),
+            stress_by_thought: {
+                let mut v: Vec<(String, i64, u64)> = self.social.stress_by.iter().map(|(k, (a, n))| (k.to_string(), *a, *n)).collect();
+                v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+                v
+            },
         }
     }
 
@@ -1902,6 +1969,17 @@ impl Sim {
                 .replace(']', ""),
         };
         format!("felt {word} {text}")
+    }
+}
+
+/// [calib11-social] Hardening a unit brings from its exported memories: 100 if it already
+/// felt nothing about a dead body or a death it saw (DF's hardened dwarves), else 0.
+fn hardened_of(emotions: &[Emotion]) -> u8 {
+    let hard = emotions.iter().any(|e| matches!(e.thought.as_str(), "SawDeadBody" | "WitnessDeath") && e.emotion == "ANYTHING");
+    if hard {
+        100
+    } else {
+        0
     }
 }
 

@@ -46,6 +46,10 @@ struct PsyS {
     next_injury: u64,
     without_distress: i32,
     without_eustress: i32,
+    /// [calib11-social] hardening to death (0..=100); 0 in older saves
+    hardened: u8,
+    /// [calib11-social] strongest grief memory (strength, divider, calendar tick)
+    grief: (i32, i32, i64),
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -97,6 +101,8 @@ impl Sim {
                 next_injury: p.next_injury,
                 without_distress: p.without_distress,
                 without_eustress: p.without_eustress,
+                hardened: p.hardened, // [calib11-social]
+                grief: p.grief,
             })
             .collect();
         let s = SocialS {
@@ -142,6 +148,10 @@ impl Sim {
             p.next_injury = ps.next_injury;
             p.without_distress = ps.without_distress;
             p.without_eustress = ps.without_eustress;
+            p.hardened = p.hardened.max(ps.hardened); // [calib11-social] older saves: from the memories
+            if ps.grief.0 > 0 {
+                p.grief = ps.grief;
+            }
         }
         let so = &mut self.social;
         so.last_month = s.last_month;

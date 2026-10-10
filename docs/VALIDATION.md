@@ -565,6 +565,77 @@ Reading it:
    mounts.
 7. **Furniture and digging** remain player-driven (Gordon's orders); not a sim error.
 
+## Round 11: stress, masterpieces, meal quality ([calib11-social])
+
+Same tool and flags as round 10, 6 seeds, 3 sims side by side on a machine shared with three
+other builds. r3 -> r4 `--standing-orders`, r4 -> r5 `--standing-orders --restore-schedules`.
+New rows: `quality.meal_new_*` (new prepared meals per item), `ev.masterpieces` (the sim's
+"has created a masterpiece" lines, the same text the gamelog census counts), `qmw.<KIND>`
+(new masterworks by item kind); `VALIDATE_STRESS=1` prints per seed the stress each thought
+applied (`SocialReport::stress_by_thought`).
+
+**Diagnosis.** The per-thought sums showed that in the calm r3 -> r4 window over 90 % of the stress gain
+came from witnessed deaths, dead bodies and their relived memories. In DF none of Gordon's
+dwarves feel anything about those any more: in the r3, r4 and r5 exports **all** `SawDeadBody`
+(1 636 / 2 597 / 11 578 records) and `WitnessDeath` emotions are `ANYTHING` ("felt nothing"),
+and all 70 `Death` (grief) emotions in r5 are `SADNESS`. The sim reused that emotion only while
+the old record was still in its 64-entry thought log, which turns over within weeks.
+
+**Changes** (`social.rs`, `social/saves10.rs`, `skills.rs`, `lifestyle.rs`, `rf-app` round9):
+
+- **Hardening** (DF's personality `combat_hardened`): a unit whose exported memories already
+  show `ANYTHING` for a dead body or a witnessed death starts hardened (100); every horror
+  thought adds 3 (estimate); the hardening value is the chance to feel nothing about a corpse or
+  a death seen. Hardened units (>= 50) grieve with SADNESS (divider 4) instead of GRIEF. Saved
+  with the social state (older saves re-infer it from the memories).
+- **Grief memory slot** (w:Memory (thought): strong memories keep their own slots): the
+  strongest grief / horror memory is kept apart from the thought log, so `social_recall` still
+  finds it after the log turned over; it is relived at **full** strength (w: dwarves "dwell
+  upon / relive" their strongest events and get an additional stress change), half in the
+  second year.
+- **Masterpieces**: every masterwork (workshop products and meals) announces
+  "<name> has created a masterpiece <item>!" (DF MASTERPIECE_CRAFTED; in the game its own
+  announcement type "Masterpiece made", a log line, not the artifact pop-up) and gives the maker
+  the `MakeMasterwork` thought ("after producing a masterwork").
+- Meal quality: unchanged (see below).
+
+| metric | DF | before (median, min-max) | after | half-strength recall (tried) |
+|---|---|---|---|---|
+| r3 -> r4 stressed or worse | **6** | 29 (21-53) | **11** (6-13) | 4 (0-6) |
+| r3 -> r4 mean stress | **-42 328** | +3 080 (-12 668..17 873) | **-23 240** (-31 155..-21 969) | -32 739 |
+| r3 -> r4 breaking | 2 | 10 (5-22) | 3 (0-7) | 0 |
+| r4 -> r5 stressed or worse | **17** | 20 (7-24) | **10** (4-15) | 4 (1-8) |
+| r4 -> r5 mean stress | **-25 720** | -8 207 (-19 044..1 965) | **-22 306** (-41 063..-19 350), in range | -31 985 |
+| r4 -> r5 breaking | 5 | 7 (2-10) | 5 (0-7) | 0 |
+| citizens lost r3 -> r4 / r4 -> r5 | 2 / 14 | 9 / 18 | 8 / 12 | 7 / 12 |
+| "has created a masterpiece" r3 -> r4 / r4 -> r5 | 96 / 85 | 0 / 0 | **11 (3-12) / 13 (12-17)** | |
+| new meals: quality mean r3 -> r4 | 1.5 (88 meals) | 2.0 (5 meals) | 1.3 (4 meals) | |
+| new meals: quality mean r4 -> r5 | **1.3** (60) | **1.4** (61), in range | 1.3 (58), in range | |
+| new masterwork AMMO items r3 -> r4 / r4 -> r5 | 3 / 17 | | 181 / 113 | |
+
+Reading it:
+
+- The calm year is calm again (mean stress went from +3k to -23k; DF -42k) and the siege year
+  still stresses (10 stressed, mean in range; DF 17). Half-strength recall fits r3 -> r4 better
+  but leaves r4 -> r5 as calm as a peaceful year, so full strength (the wiki's rule) was kept.
+  The sim's r3 -> r4 is also less calm than DF's: it loses 8 citizens to the r3 siege (DF 2).
+- What the sim still lacks for DF's siege-year stress (stressed dwarves' negative thoughts in
+  r5): arguments (BITTERNESS / ANGER, the second most common), Decay, Trauma, CrowdedTables;
+  unmet needs are present.
+- **Meal quality is not too high**: new meals average 1.3-1.4 like DF's 1.3 (the 2.5 of
+  round 10 is `quality.new_mean`, which excludes meals). The durable-goods mean (2.2 vs 1.3) and
+  the masterworks (123 vs 76) are driven by **ammunition**: about 115-180 masterwork bolt items,
+  far more than the 50 ammo items made, i.e. stacks of masterwork bolts split into new items
+  (quivers, squads); DF's mean is also pulled down by 1 500 low-skill clothing items the sim
+  does not make. Not changed here (ammo / squads).
+- Masterpiece lines are 13 vs 85: DF's are mostly silk cloth (27), crafts and meals; the sim
+  makes no cloth and its crafts are worse (item 5).
+
+Checks: `rustfort bench --ticks 806400 --standdown` on r5 (seed 1): 87 -> 90 citizens,
+28 981 ticks/s (two benches side by side), state hash `40c3fc4ecf1f79a7` with the default
+thread count and with `RAYON_NUM_THREADS=1`; chaos 4 seeds x 1 year (war, save/load round
+trips): 0 panics, 0 new invariant violations.
+
 ## Limitations
 
 - One real history and a few seeds. Sieges dominate the deaths, so seeds vary a lot.

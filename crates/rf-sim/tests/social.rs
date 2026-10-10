@@ -246,3 +246,35 @@ fn room_value_counts_floor_walls_and_engravings() {
     let engraved = Sim::new(w, 1).room_value(zone).unwrap();
     assert_eq!(engraved - plain, 10 * 3 * (1 + 12), "ordinary (x1) and masterful (x12) engravings");
 }
+
+/// [calib11-social] Dwarves hardened to death (their exported memories show they felt nothing
+/// about a dead body, as all of Gordon's dwarves do) feel nothing about a death they witness;
+/// unhardened dwarves are horrified by the same death.
+#[test]
+fn hardened_dwarves_feel_nothing_about_deaths() {
+    let (w, ..) = world();
+    let run = |hardened: bool| -> (u64, i64) {
+        let mut w = w.clone();
+        if hardened {
+            for u in w.units.iter_mut().filter(|u| u.flags.citizen) {
+                u.emotions.push(Emotion { emotion: "ANYTHING".into(), thought: "SawDeadBody".into(), subthought: -1, ..Default::default() });
+            }
+        }
+        let mut sim = Sim::new(w, 11);
+        sim.set_invasions(false);
+        sim.run_ticks(600);
+        let victim = sim.world.citizens().map(|u| u.id).next().unwrap();
+        assert!(sim.kill_unit(victim, "has been found dead"));
+        sim.run_ticks(600);
+        let rep = sim.social_report();
+        let seen = rep.thoughts.iter().find(|(t, _)| t == "WitnessDeath").map(|t| t.1).unwrap_or(0);
+        let stress = rep.stress_by_thought.iter().find(|(t, ..)| t == "WitnessDeath").map(|t| t.1).unwrap_or(0);
+        (seen, stress)
+    };
+    let (seen_h, stress_h) = run(true);
+    let (seen_n, stress_n) = run(false);
+    println!("hardened: {seen_h} witnessed, stress {stress_h}; unhardened: {seen_n} witnessed, stress {stress_n}");
+    assert!(seen_h > 0 && seen_n > 0, "the others saw the death");
+    assert_eq!(stress_h, 0, "hardened dwarves feel nothing");
+    assert!(stress_n > 0, "unhardened dwarves are horrified");
+}
