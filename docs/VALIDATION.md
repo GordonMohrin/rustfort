@@ -631,6 +631,11 @@ Reading it:
 - Masterpiece lines are 13 vs 85: DF's are mostly silk cloth (27), crafts and meals; the sim
   makes no cloth and its crafts are worse (item 5).
 
+Checks: `rustfort bench --ticks 806400 --standdown` on r5 (seed 1): 87 -> 90 citizens,
+28 981 ticks/s (two benches side by side), state hash `40c3fc4ecf1f79a7` with the default
+thread count and with `RAYON_NUM_THREADS=1`; chaos 4 seeds x 1 year (war, save/load round
+trips): 0 panics, 0 new invariant violations.
+
 ## Limitations
 
 - One real history and a few seeds. Sieges dominate the deaths, so seeds vary a lot.
