@@ -31,6 +31,28 @@ pub const DIRS8: [(isize, isize); 8] = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1,
 
 pub const MAX_NEIGHBORS: usize = 26;
 
+/// [perf] Division by a fixed divisor `d` (1..2^16) as `(n * m) >> s`, exact for n < 2^31
+/// (Granlund-Montgomery: s = 31 + ceil(log2 d), m = ceil(2^s / d), so n * m < 2^63).
+#[derive(Clone, Copy, Debug)]
+pub struct Magic {
+    m: u64,
+    s: u32,
+}
+
+impl Magic {
+    pub fn new(d: u32) -> Magic {
+        let d = d.max(1);
+        let l = 32 - (d - 1).leading_zeros(); // ceil(log2 d), 0 for d = 1
+        let s = 31 + l;
+        let m = ((1u64 << s) + d as u64 - 1) / d as u64;
+        Magic { m, s }
+    }
+    #[inline]
+    pub fn div(self, n: u32) -> u32 {
+        ((n as u64 * self.m) >> self.s) as u32
+    }
+}
+
 pub struct Nav {
     pub dx: usize,
     pub dy: usize,
@@ -49,6 +71,9 @@ pub struct Nav {
     blocked: Vec<u64>,
     any_blocked: bool,
     pub rebuilds: u64,
+    /// [perf] Exact division by dx and dy (for `xyz`).
+    mdx: Magic,
+    mdy: Magic,
     /// [perf] Bumped on every change of flags or components (cache key for derived data).
     pub version: u64,
     // [defense] Building overrides (bit sets, allocated on first use): lowered bridges and
@@ -88,6 +113,8 @@ impl Nav {
             blocked,
             any_blocked: !blocked_tiles.is_empty(),
             rebuilds: 0,
+            mdx: Magic::new(dx as u32), // [perf]
+            mdy: Magic::new(dy as u32), // [perf]
             version: 0, // [perf]
             floor_force: Vec::new(), // [defense]
             novert: Vec::new(),      // [defense]
@@ -114,10 +141,13 @@ impl Nav {
 
     #[inline]
     pub fn xyz(&self, i: usize) -> (usize, usize, usize) {
-        // u32 division is much cheaper than u64 on x86; maps are far below 2^32 tiles.
+        // [perf] Divisions by dx and dy as multiply + shift (exact for all i < 2^31, see
+        // `Magic`); a hardware division costs several times as much and A* calls this for
+        // every neighbour it looks at.
         let (i, dx, dy) = (i as u32, self.dx as u32, self.dy as u32);
-        let row = i / dx;
-        ((i - row * dx) as usize, (row % dy) as usize, (row / dy) as usize)
+        let row = self.mdx.div(i);
+        let z = self.mdy.div(row);
+        ((i - row * dx) as usize, (row - z * dy) as usize, z as usize)
     }
 
     #[inline]
@@ -450,5 +480,31 @@ impl Nav {
 
     pub fn component_count(&self) -> usize {
         (1..self.parent.len()).filter(|&c| self.parent[c] == c as u32).count()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Magic;
+
+    #[test]
+    fn magic_division_is_exact() {
+        for d in [1u32, 2, 3, 5, 7, 16, 48, 96, 100, 144, 191, 192, 193, 255, 256, 1000, 36864, 65535] {
+            let m = Magic::new(d);
+            let mut n = 0u32;
+            while n < (1u32 << 31) - 1 {
+                assert_eq!(m.div(n), n / d, "{n} / {d}");
+                for k in 1..4 {
+                    let a = n.saturating_add(d * k - 1).min((1 << 31) - 1);
+                    assert_eq!(m.div(a), a / d, "{a} / {d}");
+                }
+                n = n.saturating_add(n / 7 + d).min((1 << 31) - 1);
+            }
+            for n in 0..200_000u32 {
+                assert_eq!(m.div(n), n / d);
+            }
+            let top = (1u32 << 31) - 1;
+            assert_eq!(m.div(top), top / d);
+        }
     }
 }
