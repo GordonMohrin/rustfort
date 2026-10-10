@@ -63,18 +63,27 @@ pub const PRESETS: &[Preset] = &[
         only: &[],
         except: &[],
     },
-    Preset { label: "Empty cages", icon: "CUSTOM_STOCKPILE_EMPTY_CAGE_ON", cats: &["animals"], only: &["animals/cages/"], except: &[] },
-    Preset { label: "Empty animal traps", icon: "CUSTOM_STOCKPILE_EMPTY_ANIMAL_TRAP_ON", cats: &["animals"], only: &["animals/traps/"], except: &[] },
-    Preset { label: "Prepared food", icon: "CUSTOM_STOCKPILE_PREPARED_FOOD_ON", cats: &["food"], only: &["food/prepared_meals/"], except: &[] },
-    Preset { label: "Usable weapons", icon: "CUSTOM_STOCKPILE_USABLE_WEAPON_ON", cats: &["weapons"], only: &[], except: &["/UNUSABLE"] },
-    Preset { label: "Unusable weapons", icon: "CUSTOM_STOCKPILE_UNUSABLE_WEAPON_ON", cats: &["weapons"], only: &[], except: &["/USABLE"] },
-    Preset { label: "Usable armor", icon: "CUSTOM_STOCKPILE_USABLE_ARMOR_ON", cats: &["armor"], only: &[], except: &["/UNUSABLE"] },
-    Preset { label: "Unusable armor", icon: "CUSTOM_STOCKPILE_UNUSABLE_ARMOR_ON", cats: &["armor"], only: &[], except: &["/USABLE"] },
+    Preset { label: "Empty cages", icon: "CUSTOM_STOCKPILE_EMPTY_CAGE_ON", cats: &["animals"], only: &["animals/options/empty_cages"], except: &[] },
+    Preset { label: "Empty animal traps", icon: "CUSTOM_STOCKPILE_EMPTY_ANIMAL_TRAP_ON", cats: &["animals"], only: &["animals/options/empty_traps"], except: &[] },
+    Preset { label: "Prepared food", icon: "CUSTOM_STOCKPILE_PREPARED_FOOD_ON", cats: &["food"], only: &["food/options/prepared_meals"], except: &[] },
+    Preset { label: "Usable weapons", icon: "CUSTOM_STOCKPILE_USABLE_WEAPON_ON", cats: &["weapons"], only: &[], except: &["/options/unusable"] },
+    Preset { label: "Unusable weapons", icon: "CUSTOM_STOCKPILE_UNUSABLE_WEAPON_ON", cats: &["weapons"], only: &[], except: &["/options/usable"] },
+    Preset { label: "Usable armor", icon: "CUSTOM_STOCKPILE_USABLE_ARMOR_ON", cats: &["armor"], only: &[], except: &["/options/unusable"] },
+    Preset { label: "Unusable armor", icon: "CUSTOM_STOCKPILE_UNUSABLE_ARMOR_ON", cats: &["armor"], only: &[], except: &["/options/usable"] },
     Preset { label: "Corpses", icon: "CUSTOM_STOCKPILE_CORPSES_ON", cats: &["corpses"], only: &[], except: &[] },
     Preset { label: "Nothing", icon: "STOCKPILE_ICON_BLANK", cats: &[], only: &[], except: &[] },
 ];
 
-const QUALITY: &[&str] = &["Ordinary", "Well-crafted", "Finely-crafted", "Superior", "Exceptional", "Masterful", "Artifact"];
+/// DF `item_quality` names and labels.
+const QUALITY: &[(&str, &str)] = &[
+    ("Ordinary", "Ordinary"),
+    ("WellCrafted", "Well-crafted"),
+    ("FinelyCrafted", "Finely-crafted"),
+    ("Superior", "Superior"),
+    ("Exceptional", "Exceptional"),
+    ("Masterful", "Masterful"),
+    ("Artifact", "Artifact"),
+];
 const FURNITURE: &[&str] = &[
     "ARMORSTAND", "BED", "CHAIR", "COFFIN", "DOOR", "FLOODGATE", "HATCH_COVER", "GRATE", "CABINET", "BOX", "BIN", "BARREL", "BUCKET", "CAGE", "TABLE",
     "STATUE", "SLAB", "QUERN", "MILLSTONE", "WEAPONRACK", "WINDOW", "ANVIL", "TRACTION_BENCH", "BAR", "BLOCKS", "PIPE_SECTION", "CHAIN", "BOOKCASE",
@@ -99,7 +108,9 @@ fn economic(m: &rf_core::MaterialInfo) -> bool {
         || ["BITUMINOUS_COAL", "LIGNITE", "KAOLINITE", "RAW_ADAMANTINE", "ALUNITE", "SALTPETER", "CRYOLITE", "PERICLASE", "ILMENITE", "RUTILE", "TALC"].iter().any(|t| m.token.ends_with(t))
 }
 
-/// Leaves of a category built from the save's data (used while the sim offers none).
+/// Leaves of a category built from the save's data (used while the sim offers none). The
+/// paths follow the exporter's DF names (`food/plants/PLANT:BARLEY:STRUCTURAL`,
+/// `stone/mats/INORGANIC:HEMATITE`, `weapons/options/usable`, `*` = whole group).
 pub fn fallback_options(w: &World, cat: &str) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
     let mut add = |group: &str, tok: &str, label: String| out.push((format!("{cat}/{group}/{tok}"), label));
@@ -109,40 +120,43 @@ pub fn fallback_options(w: &World, cat: &str) -> Vec<(String, String)> {
     let stones = mat_names(w, |m| m.is_stone);
     let gems = mat_names(w, |m| m.is_gem);
     let quality = |add: &mut dyn FnMut(&str, &str, String)| {
-        for q in QUALITY {
-            add("quality_core", q, q.to_string());
-        }
-        for q in QUALITY {
-            add("quality_total", q, q.to_string());
+        for g in ["quality_core", "quality_total"] {
+            for (q, l) in QUALITY {
+                add(g, q, l.to_string());
+            }
         }
     };
-    let material_groups = |add: &mut dyn FnMut(&str, &str, String)| {
-        for (k, l) in [("STONE", "stone"), ("METAL", "metal"), ("WOOD", "wood"), ("GLASS", "glass"), ("BONE", "bone"), ("SHELL", "shell"), ("LEATHER", "leather"), ("CLOTH", "cloth"), ("OTHER", "other materials")] {
-            add("material", k, l.to_string());
+    let other_mats = |add: &mut dyn FnMut(&str, &str, String)| {
+        for (k, l) in [("WOOD", "wood"), ("PLANT_CLOTH", "plant cloth"), ("BONE", "bone"), ("TOOTH", "ivory/tooth"), ("HORN", "horn/hoof"), ("PEARL", "pearl"), ("SHELL", "shell"), ("LEATHER", "leather"), ("SILK", "silk"), ("AMBER", "amber"), ("CORAL", "coral"), ("GREEN_GLASS", "green glass"), ("CLEAR_GLASS", "clear glass"), ("CRYSTAL_GLASS", "crystal glass"), ("YARN", "yarn"), ("WAX", "wax")] {
+            add("other_mats", k, l.to_string());
         }
+    };
+    let dyed = |add: &mut dyn FnMut(&str, &str, String)| {
+        add("options", "dyed", "Dyed".into());
+        add("options", "undyed", "Undyed".into());
     };
     match cat {
         "animals" => {
-            add("cages", "EMPTY_CAGES", "Empty cages".into());
-            add("traps", "EMPTY_ANIMAL_TRAPS", "Empty animal traps".into());
+            add("options", "empty_cages", "Empty cages".into());
+            add("options", "empty_traps", "Empty animal traps".into());
             for (t, n) in &creatures {
-                add("creatures", t, n.clone());
+                add("animals", t, n.clone());
             }
         }
         "food" => {
-            add("prepared_meals", "FOOD", "Prepared food".into());
+            add("options", "prepared_meals", "Prepared food".into());
             for (t, n) in &creatures {
                 add("meat", &format!("CREATURE:{t}:MUSCLE"), format!("{n} meat"));
             }
             for (t, n) in &creatures {
-                add("eggs", &format!("CREATURE:{t}:EGG"), format!("{n} eggs"));
+                add("fish", &format!("CREATURE:{t}:MUSCLE"), format!("{n} (fish)"));
             }
             for (t, n) in &creatures {
-                add("fat", &format!("CREATURE:{t}:FAT"), format!("{n} fat"));
+                add("egg", &format!("CREATURE:{t}:EGG"), format!("{n} eggs"));
             }
             for p in &w.plant_raws {
                 let n = plant_name(&p.token);
-                if p.edible_raw || p.edible_cooked || p.brewable {
+                if p.edible_raw || p.edible_cooked || p.brewable || p.millable || p.threshable {
                     add("plants", &format!("PLANT:{}:STRUCTURAL", p.token), n.clone());
                 }
                 if p.brewable {
@@ -155,7 +169,10 @@ pub fn fallback_options(w: &World, cat: &str) -> Vec<(String, String)> {
                     add("powder_plant", &format!("PLANT:{}:MILL", p.token), format!("{n} flour"));
                 }
             }
-            add("drink_animal", "CREATURE:MEAD", "mead".into());
+            for (t, n) in &creatures {
+                add("glob", &format!("CREATURE:{t}:FAT"), format!("{n} fat"));
+            }
+            add("drink_animal", "CREATURE_MAT:MEAD", "mead".into());
             add("cheese_animal", "CHEESE", "cheese".into());
             add("liquid_misc", "LIQUID_MISC", "milk and other liquids".into());
         }
@@ -163,36 +180,32 @@ pub fn fallback_options(w: &World, cat: &str) -> Vec<(String, String)> {
             for f in FURNITURE {
                 add("type", f, pretty(f));
             }
-            material_groups(&mut add);
+            for (t, n) in stones.iter().chain(metals.iter()) {
+                add("mats", t, n.clone());
+            }
+            other_mats(&mut add);
             quality(&mut add);
         }
         "corpses" => {
             for (t, n) in &creatures {
-                add("creatures", t, n.clone());
+                add("corpses", t, n.clone());
             }
         }
         "refuse" => {
             for t in REFUSE_TYPES {
                 add("type", t, pretty(t));
             }
-            for g in ["corpses", "body_parts", "skulls", "bones", "shells", "teeth", "horns", "hair", "hides_fresh", "hides_rotten"] {
+            for g in ["corpses", "body_parts", "skulls", "bones", "hair", "shells", "teeth", "horns"] {
                 for (t, n) in &creatures {
                     add(g, t, n.clone());
                 }
             }
+            add("options", "fresh_raw_hide", "Fresh raw hide".into());
+            add("options", "rotten_raw_hide", "Rotten raw hide".into());
         }
         "stone" => {
-            for (t, n) in mat_names(w, |m| m.is_ore) {
-                add("metal_ores", &t, n);
-            }
-            for (t, n) in mat_names(w, |m| m.is_stone && !m.is_ore && economic(m)) {
-                add("economic", &t, n);
-            }
-            for (t, n) in mat_names(w, |m| m.is_stone && !m.is_ore && !economic(m)) {
-                add("other", &t, n);
-            }
-            for (t, n) in mat_names(w, |m| m.tags.iter().any(|x| x == "IS_CLAY")) {
-                add("clay", &t, n);
+            for (t, n) in mat_names(w, |m| m.is_stone || m.is_ore || m.tags.iter().any(|x| x == "IS_CLAY")) {
+                add("mats", &t, n);
             }
         }
         "ammo" => {
@@ -200,70 +213,66 @@ pub fn fallback_options(w: &World, cat: &str) -> Vec<(String, String)> {
                 add("type", &wr.token, if wr.name.is_empty() { pretty(&wr.token) } else { wr.name.clone() });
             }
             for (t, n) in &metals {
-                add("material", t, n.clone());
+                add("mats", t, n.clone());
             }
-            for (k, l) in [("WOOD", "wood"), ("BONE", "bone"), ("OTHER", "other materials")] {
-                add("material", k, l.to_string());
-            }
+            other_mats(&mut add);
             quality(&mut add);
         }
         "coins" => {
             for (t, n) in &metals {
-                add("material", t, n.clone());
+                add("mats", t, n.clone());
             }
         }
         "bars_blocks" => {
             for (t, n) in &metals {
-                add("bars_metal", t, format!("{n} bars"));
+                add("bars_mats", t, format!("{n} bars"));
             }
             for (k, l) in [("COAL", "coal"), ("POTASH", "potash"), ("ASH", "ash"), ("PEARLASH", "pearlash"), ("SOAP", "soap")] {
-                add("bars_other", k, l.to_string());
+                add("bars_other_mats", k, l.to_string());
             }
-            for (t, n) in &stones {
-                add("blocks_stone", t, format!("{n} blocks"));
+            for (t, n) in stones.iter().chain(metals.iter()) {
+                add("blocks_mats", t, format!("{n} blocks"));
             }
-            for (t, n) in &metals {
-                add("blocks_metal", t, format!("{n} blocks"));
-            }
-            for (k, l) in [("WOOD", "wooden blocks"), ("GLASS", "glass blocks")] {
-                add("blocks_other", k, l.to_string());
+            for (k, l) in [("GREEN_GLASS", "green glass blocks"), ("CLEAR_GLASS", "clear glass blocks"), ("CRYSTAL_GLASS", "crystal glass blocks"), ("WOOD", "wooden blocks")] {
+                add("blocks_other_mats", k, l.to_string());
             }
         }
         "gems" => {
             for (t, n) in &gems {
-                add("rough_gems", t, format!("rough {n}"));
+                add("rough_mats", t, format!("rough {n}"));
             }
-            for (k, l) in [("GLASS_GREEN", "rough green glass"), ("GLASS_CLEAR", "rough clear glass"), ("GLASS_CRYSTAL", "rough crystal glass")] {
-                add("rough_glass", k, l.to_string());
+            for (k, l) in [("GLASS_GREEN", "raw green glass"), ("GLASS_CLEAR", "raw clear glass"), ("GLASS_CRYSTAL", "raw crystal glass")] {
+                add("rough_other_mats", k, l.to_string());
             }
-            for (t, n) in &gems {
-                add("cut_gems", t, format!("cut {n}"));
+            for (t, n) in gems.iter().chain(stones.iter()) {
+                add("cut_mats", t, format!("cut {n}"));
             }
             for (k, l) in [("GLASS_GREEN", "cut green glass"), ("GLASS_CLEAR", "cut clear glass"), ("GLASS_CRYSTAL", "cut crystal glass")] {
-                add("cut_glass", k, l.to_string());
-            }
-            for (t, n) in &stones {
-                add("cut_stone", t, format!("cut {n}"));
+                add("cut_other_mats", k, l.to_string());
             }
         }
         "finished_goods" => {
             for f in FINISHED {
                 add("type", f, pretty(f));
             }
-            material_groups(&mut add);
+            for (t, n) in stones.iter().chain(metals.iter()).chain(gems.iter()) {
+                add("mats", t, n.clone());
+            }
+            other_mats(&mut add);
             quality(&mut add);
+            dyed(&mut add);
         }
         "leather" => {
             for (t, n) in &creatures {
-                add("creatures", t, format!("{n} leather"));
+                add("mats", &format!("CREATURE:{t}:LEATHER"), format!("{n} leather"));
             }
+            dyed(&mut add);
         }
         "cloth" => {
-            for (g, l) in [("thread", "thread"), ("cloth", "cloth")] {
-                for (k, m) in [("SILK", "silk"), ("PLANT", "plant fiber"), ("YARN", "yarn"), ("METAL", "metal")] {
-                    add(g, k, format!("{m} {l}"));
-                }
+            for (g, l) in [("thread_silk", "silk thread"), ("thread_plant", "plant fiber thread"), ("thread_yarn", "yarn"), ("thread_metal", "metal thread"), ("cloth_silk", "silk cloth"), ("cloth_plant", "plant fiber cloth"), ("cloth_yarn", "yarn cloth"), ("cloth_metal", "metal cloth")] {
+                add(g, "*", l.to_string());
             }
+            dyed(&mut add);
         }
         "wood" => {
             let mut v: Vec<(String, String)> =
@@ -271,26 +280,24 @@ pub fn fallback_options(w: &World, cat: &str) -> Vec<(String, String)> {
             v.sort_by(|a, b| a.1.cmp(&b.1));
             v.dedup_by(|a, b| a.0 == b.0);
             for (t, n) in v {
-                add("type", &t, n);
+                add("mats", &t, n);
             }
         }
         "weapons" => {
             for wr in w.weapon_raws.iter().filter(|r| r.kind == "WEAPON" && r.token.starts_with("ITEM_")) {
-                add("weapons", &wr.token, if wr.name.is_empty() { pretty(&wr.token) } else { wr.name.clone() });
+                add("weapon_type", &wr.token, if wr.name.is_empty() { pretty(&wr.token) } else { wr.name.clone() });
             }
             for t in TRAPCOMP {
                 let n = w.weapon_raws.iter().find(|r| r.token == *t).map(|r| r.name.clone()).filter(|n| !n.is_empty()).unwrap_or_else(|| pretty(t.trim_start_matches("ITEM_TRAPCOMP_")).to_lowercase());
-                add("trap_comps", t, n);
+                add("trapcomp_type", t, n);
             }
-            for (t, n) in &metals {
-                add("material", t, n.clone());
+            for (t, n) in stones.iter().chain(metals.iter()) {
+                add("mats", t, n.clone());
             }
-            for (k, l) in [("STONE", "stone"), ("WOOD", "wood"), ("BONE", "bone"), ("OTHER", "other materials")] {
-                add("material", k, l.to_string());
-            }
+            other_mats(&mut add);
             quality(&mut add);
-            add("usable", "USABLE", "Usable".into());
-            add("usable", "UNUSABLE", "Unusable".into());
+            add("options", "usable", "Usable".into());
+            add("options", "unusable", "Unusable".into());
         }
         "armor" => {
             for (kind, group) in [("ARMOR", "body"), ("HELM", "head"), ("SHOES", "feet"), ("GLOVES", "hands"), ("PANTS", "legs"), ("SHIELD", "shield")] {
@@ -299,18 +306,17 @@ pub fn fallback_options(w: &World, cat: &str) -> Vec<(String, String)> {
                 }
             }
             for (t, n) in &metals {
-                add("material", t, n.clone());
+                add("mats", t, n.clone());
             }
-            for (k, l) in [("LEATHER", "leather"), ("CLOTH", "cloth"), ("BONE", "bone"), ("SHELL", "shell"), ("WOOD", "wood"), ("OTHER", "other materials")] {
-                add("material", k, l.to_string());
-            }
+            other_mats(&mut add);
             quality(&mut add);
-            add("usable", "USABLE", "Usable".into());
-            add("usable", "UNUSABLE", "Unusable".into());
+            add("options", "usable", "Usable".into());
+            add("options", "unusable", "Unusable".into());
+            dyed(&mut add);
         }
         "sheet" => {
-            add("paper", "PAPER", "paper".into());
-            add("parchment", "PARCHMENT", "parchment".into());
+            add("paper", "*", "paper".into());
+            add("parchment", "*", "parchment".into());
         }
         _ => {}
     }
@@ -330,9 +336,35 @@ pub fn options(g: &mut Game, cat: &str) -> Vec<(String, String)> {
     v
 }
 
+/// (category, group, token) of a path `category/group/token`.
+pub fn parts(path: &str) -> (&str, &str, &str) {
+    let mut it = path.splitn(3, '/');
+    (it.next().unwrap_or(""), it.next().unwrap_or(""), it.next().unwrap_or(""))
+}
+
 /// Group of a leaf path `category/group/token`.
 pub fn group_of(path: &str) -> &str {
-    path.split('/').nth(1).unwrap_or("")
+    parts(path).1
+}
+
+/// The group a leaf is shown in. Stone is one list in DF's data but DF Steam shows it as
+/// metal ores / economic / other stone / clay.
+pub fn display_group(w: &World, path: &str) -> String {
+    let (cat, grp, tok) = parts(path);
+    if cat == "stone" && grp == "mats" {
+        if let Some(m) = w.materials.iter().find(|m| m.token == tok) {
+            return if m.tags.iter().any(|t| t == "IS_CLAY") {
+                "clay".into()
+            } else if m.is_ore {
+                "metal_ores".into()
+            } else if economic(m) {
+                "economic".into()
+            } else {
+                "other_stone".into()
+            };
+        }
+    }
+    grp.to_string()
 }
 
 fn cat_filters<'a>(sp: &'a StockpileSettings, cat: &str) -> impl Iterator<Item = &'a String> + 'a {
@@ -340,57 +372,91 @@ fn cat_filters<'a>(sp: &'a StockpileSettings, cat: &str) -> impl Iterator<Item =
     sp.filters.iter().filter(move |f| f.starts_with(&pre))
 }
 
+/// A leaf is accepted: its category is on and either the category has no filters (everything),
+/// or a filter names it, its group (`cat/group/*`), or excludes others of its group only
+/// (`cat/group/!TOKEN`).
 pub fn leaf_on(sp: &StockpileSettings, cat: &str, path: &str) -> bool {
-    sp.categories.iter().any(|c| c == cat) && (cat_filters(sp, cat).next().is_none() || sp.filters.iter().any(|f| f == path))
+    if !sp.categories.iter().any(|c| c == cat) {
+        return false;
+    }
+    let (_, grp, tok) = parts(path);
+    let gpre = format!("{cat}/{grp}/");
+    let (mut any, mut neg) = (false, false);
+    for f in cat_filters(sp, cat) {
+        any = true;
+        if f == path {
+            return true;
+        }
+        if let Some(rest) = f.strip_prefix(&gpre) {
+            if rest == "*" {
+                return true;
+            }
+            if let Some(ex) = rest.strip_prefix('!') {
+                if ex == tok {
+                    return false;
+                }
+                neg = true;
+            }
+        }
+    }
+    !any || neg
 }
 
 /// 0 = off, 1 = partial, 2 = on (DF's STOCKPILE_OFF / _PARTIAL / _ON).
-pub fn cat_state(sp: &StockpileSettings, cat: &str) -> u8 {
+pub fn cat_state(sp: &StockpileSettings, cat: &str, all: &[(String, String)]) -> u8 {
     if !sp.categories.iter().any(|c| c == cat) {
         0
-    } else if cat_filters(sp, cat).next().is_some() {
-        1
-    } else {
+    } else if cat_filters(sp, cat).next().is_none() || (!all.is_empty() && all.iter().all(|(p, _)| leaf_on(sp, cat, p))) {
         2
+    } else {
+        1
     }
 }
 
-/// Set leaves `paths` of `cat` on or off; `all` are all leaves of the category.
+/// Set leaves `paths` of `cat` on or off; `all` are all leaves of the category. The result is
+/// written back compactly: `cat/group/*` for full groups, nothing for a full category; filters
+/// of groups this list does not know (dye colors, ...) are kept as they are.
 pub fn set_leaves(sp: &mut StockpileSettings, cat: &str, all: &[(String, String)], paths: &[String], on: bool) {
     let cat_on = sp.categories.iter().any(|c| c == cat);
+    if !cat_on && !on {
+        return;
+    }
+    let mut on_set: Vec<bool> = all.iter().map(|(p, _)| cat_on && leaf_on(sp, cat, p)).collect();
+    for (i, (p, _)) in all.iter().enumerate() {
+        if paths.contains(p) {
+            on_set[i] = on;
+        }
+    }
+    let mut groups: Vec<&str> = Vec::new();
+    for (p, _) in all {
+        let gname = group_of(p);
+        if !groups.contains(&gname) {
+            groups.push(gname);
+        }
+    }
     let pre = format!("{cat}/");
-    if !cat_on {
-        if !on {
-            return;
-        }
+    let keep: Vec<String> = cat_filters(sp, cat).filter(|f| !groups.contains(&group_of(f))).cloned().collect();
+    sp.filters.retain(|f| !f.starts_with(&pre));
+    let n_on = on_set.iter().filter(|b| **b).count();
+    if n_on == 0 && keep.is_empty() {
+        sp.categories.retain(|c| c != cat);
+        return;
+    }
+    if !sp.categories.iter().any(|c| c == cat) {
         sp.categories.push(cat.to_string());
-        sp.filters.retain(|f| !f.starts_with(&pre));
-        sp.filters.extend(paths.iter().cloned());
-    } else {
-        if cat_filters(sp, cat).next().is_none() {
-            if on {
-                return;
-            }
-            sp.filters.extend(all.iter().map(|(p, _)| p.clone()));
-        }
-        if on {
-            for p in paths {
-                if !sp.filters.contains(p) {
-                    sp.filters.push(p.clone());
-                }
-            }
+    }
+    if n_on == all.len() && keep.is_empty() {
+        return;
+    }
+    for gname in groups {
+        let idx: Vec<usize> = (0..all.len()).filter(|&i| group_of(&all[i].0) == gname).collect();
+        if idx.iter().all(|&i| on_set[i]) {
+            sp.filters.push(format!("{cat}/{gname}/*"));
         } else {
-            sp.filters.retain(|f| !paths.contains(f));
-        }
-        let n = cat_filters(sp, cat).count();
-        if n == 0 {
-            sp.categories.retain(|c| c != cat);
+            sp.filters.extend(idx.into_iter().filter(|&i| on_set[i]).map(|i| all[i].0.clone()));
         }
     }
-    // Compact: every leaf on = no filters for the category.
-    if !all.is_empty() && all.iter().all(|(p, _)| sp.filters.contains(p)) {
-        sp.filters.retain(|f| !f.starts_with(&pre));
-    }
+    sp.filters.extend(keep);
 }
 
 pub fn toggle_cat(sp: &mut StockpileSettings, cat: &str) {
@@ -411,14 +477,12 @@ pub fn apply_preset(g: &mut Game, sp: &mut StockpileSettings, p: &Preset) {
         sp.categories.push(c.to_string());
         if !p.only.is_empty() || !p.except.is_empty() {
             let all = options(g, c);
-            let keep: Vec<String> = all
+            let off: Vec<String> = all
                 .iter()
                 .map(|(path, _)| path.clone())
-                .filter(|path| (p.only.is_empty() || p.only.iter().any(|o| path.starts_with(o))) && !p.except.iter().any(|e| path.ends_with(e)))
+                .filter(|path| !((p.only.is_empty() || p.only.iter().any(|o| path.starts_with(o))) && !p.except.iter().any(|e| path.ends_with(e))))
                 .collect();
-            if keep.len() < all.len() {
-                sp.filters.extend(keep);
-            }
+            set_leaves(sp, c, &all, &off, false);
         }
     }
 }
@@ -576,7 +640,8 @@ pub fn draw(g: &mut Game) {
             break;
         }
         let rr = Rect::new(c.x, ry, colw - 8.0 * s, row_h - 2.0 * s);
-        let st = cat_state(&sp, cat);
+        let opts_c = options(g, cat);
+        let st = cat_state(&sp, cat, &opts_c);
         let tr = Rect::new(rr.x + 2.0 * s, ry + 1.0 * s, 21.0 * s, row_h - 4.0 * s);
         let hit_toggle = g.ui.clicked(tr);
         if super::list_row(&mut g.ui, rr, g.r8.sp_cat == i) {
@@ -605,11 +670,12 @@ pub fn draw(g: &mut Game) {
     }
     let cat = ALL_STOCK_CATEGORIES[g.r8.sp_cat];
     let all = options(g, cat);
-    let mut groups: Vec<&str> = Vec::new();
-    for (p, _) in &all {
-        let gname = group_of(p);
-        if !groups.contains(&gname) {
-            groups.push(gname);
+    // Display groups (stone: ores / economic / other / clay) with their leaves.
+    let dgroups: Vec<String> = all.iter().map(|(p, _)| display_group(&g.sim.world, p)).collect();
+    let mut groups: Vec<String> = Vec::new();
+    for d in &dgroups {
+        if !groups.contains(d) {
+            groups.push(d.clone());
         }
     }
     let gx = c.x + colw;
@@ -622,7 +688,7 @@ pub fn draw(g: &mut Game) {
         if ry + row_h > bottom {
             break;
         }
-        let leaves: Vec<&String> = all.iter().filter(|(p, _)| group_of(p) == *gname).map(|(p, _)| p).collect();
+        let leaves: Vec<&String> = all.iter().zip(&dgroups).filter(|(_, d)| *d == gname).map(|((p, _), _)| p).collect();
         let on = leaves.iter().filter(|p| leaf_on(&sp, cat, p)).count();
         let st = if on == 0 { 0 } else if on < leaves.len() { 1 } else { 2 };
         let rr = Rect::new(gx, ry, colw - 8.0 * s, row_h - 2.0 * s);
@@ -649,14 +715,14 @@ pub fn draw(g: &mut Game) {
         }
     }
     if let Some((i, on)) = group_set {
-        let paths: Vec<String> = all.iter().filter(|(p, _)| group_of(p) == groups[i]).map(|(p, _)| p.clone()).collect();
+        let paths: Vec<String> = all.iter().zip(&dgroups).filter(|(_, d)| **d == groups[i]).map(|((p, _), _)| p.clone()).collect();
         set_leaves(&mut sp, cat, &all, &paths, on);
     }
     // Leaves of the selected group.
     let lx0 = gx + colw;
     draw_line(lx0 - 4.0 * s, y, lx0 - 4.0 * s, bottom, 1.0, col::BORDER);
-    if let Some(gname) = groups.get(g.r8.sp_group).copied() {
-        let leaves: Vec<(String, String)> = all.iter().filter(|(p, _)| group_of(p) == gname).cloned().collect();
+    if let Some(gname) = groups.get(g.r8.sp_group).cloned() {
+        let leaves: Vec<(String, String)> = all.iter().zip(&dgroups).filter(|(_, d)| **d == gname).map(|(l, _)| l.clone()).collect();
         let lw = c.x + c.w - lx0;
         let paths: Vec<String> = leaves.iter().map(|(p, _)| p.clone()).collect();
         let half = 14.0 * 8.0 * s;
@@ -736,6 +802,38 @@ pub fn draw(g: &mut Game) {
 fn group_label(g: &str) -> String {
     match g {
         "metal_ores" => "Metal ores".into(),
+        "other_stone" => "Other stone".into(),
+        "mats" => "Materials".into(),
+        "other_mats" => "Other materials".into(),
+        "options" => "Options".into(),
+        "egg" => "Eggs".into(),
+        "glob" => "Fat".into(),
+        "glob_paste" => "Paste".into(),
+        "glob_pressed" => "Pressed material".into(),
+        "leaves" => "Fruit/leaves".into(),
+        "powder_creature" => "Milled animal".into(),
+        "liquid_plant" => "Liquid (plant)".into(),
+        "liquid_animal" => "Liquid (animal)".into(),
+        "unprepared_fish" => "Unprepared fish".into(),
+        "bars_mats" => "Bars (metal)".into(),
+        "bars_other_mats" => "Bars (other)".into(),
+        "blocks_mats" => "Blocks".into(),
+        "blocks_other_mats" => "Blocks (other)".into(),
+        "rough_mats" => "Rough gems".into(),
+        "rough_other_mats" => "Rough glass".into(),
+        "cut_mats" => "Cut gems/stone".into(),
+        "cut_other_mats" => "Cut glass".into(),
+        "weapon_type" => "Weapons".into(),
+        "trapcomp_type" => "Trap components".into(),
+        "thread_silk" => "Thread (silk)".into(),
+        "thread_plant" => "Thread (plant)".into(),
+        "thread_yarn" => "Thread (yarn)".into(),
+        "thread_metal" => "Thread (metal)".into(),
+        "cloth_silk" => "Cloth (silk)".into(),
+        "cloth_plant" => "Cloth (plant)".into(),
+        "cloth_yarn" => "Cloth (yarn)".into(),
+        "cloth_metal" => "Cloth (metal)".into(),
+        "color" => "Dye color".into(),
         "quality_core" => "Core quality".into(),
         "quality_total" => "Total quality".into(),
         "prepared_meals" => "Prepared food".into(),
@@ -777,29 +875,45 @@ mod tests {
         let all = opts();
         let mut sp = StockpileSettings { categories: vec!["stone".into(), "wood".into()], ..Default::default() };
         assert!(leaf_on(&sp, "stone", "stone/ores/A"));
-        assert_eq!(cat_state(&sp, "stone"), 2);
-        // One leaf off: the others become explicit filters.
+        assert_eq!(cat_state(&sp, "stone", &all), 2);
+        // One leaf off: the rest of its group explicit, the other group as a wildcard.
         set_leaves(&mut sp, "stone", &all, &["stone/ores/A".into()], false);
+        assert_eq!(sp.filters, vec!["stone/ores/B".to_string(), "stone/other/*".to_string()]);
         assert!(!leaf_on(&sp, "stone", "stone/ores/A"));
-        assert!(leaf_on(&sp, "stone", "stone/ores/B"));
-        assert_eq!(cat_state(&sp, "stone"), 1);
+        assert!(leaf_on(&sp, "stone", "stone/ores/B") && leaf_on(&sp, "stone", "stone/other/C"));
+        assert_eq!(cat_state(&sp, "stone", &all), 1);
         // Wood stays "everything".
-        assert_eq!(cat_state(&sp, "wood"), 2);
+        assert_eq!(cat_state(&sp, "wood", &[]), 2);
         // Back on: compacted to no filters.
         set_leaves(&mut sp, "stone", &all, &["stone/ores/A".into()], true);
         assert!(sp.filters.is_empty());
-        assert_eq!(cat_state(&sp, "stone"), 2);
         // All off: the category goes off.
         let every: Vec<String> = all.iter().map(|(p, _)| p.clone()).collect();
         set_leaves(&mut sp, "stone", &all, &every, false);
-        assert_eq!(cat_state(&sp, "stone"), 0);
+        assert_eq!(cat_state(&sp, "stone", &all), 0);
         // A single leaf of an off category: only that one.
         set_leaves(&mut sp, "stone", &all, &["stone/other/C".into()], true);
-        assert_eq!(cat_state(&sp, "stone"), 1);
+        assert_eq!(cat_state(&sp, "stone", &all), 1);
         assert!(leaf_on(&sp, "stone", "stone/other/C") && !leaf_on(&sp, "stone", "stone/ores/B"));
         toggle_cat(&mut sp, "stone");
-        assert_eq!(cat_state(&sp, "stone"), 0);
+        assert_eq!(cat_state(&sp, "stone", &all), 0);
         assert!(sp.filters.is_empty());
+    }
+
+    #[test]
+    fn exporter_wildcards_and_exclusions() {
+        let all = opts();
+        // DF export style: a group wildcard, an exclusion, unknown groups kept.
+        let mut sp = StockpileSettings { categories: vec!["stone".into()], filters: vec!["stone/ores/!A".into(), "stone/color/*".into(), "misc/options/allow_organic".into()], ..Default::default() };
+        assert!(!leaf_on(&sp, "stone", "stone/ores/A"));
+        assert!(leaf_on(&sp, "stone", "stone/ores/B"));
+        assert!(!leaf_on(&sp, "stone", "stone/other/C"));
+        set_leaves(&mut sp, "stone", &all, &["stone/other/C".into()], true);
+        assert!(leaf_on(&sp, "stone", "stone/other/C") && !leaf_on(&sp, "stone", "stone/ores/A"));
+        assert!(sp.filters.contains(&"stone/color/*".to_string()) && sp.filters.contains(&"misc/options/allow_organic".to_string()));
+        let sp2 = StockpileSettings { categories: vec!["food".into()], filters: vec!["food/meat/*".into()], ..Default::default() };
+        assert!(leaf_on(&sp2, "food", "food/meat/CREATURE:COW:MUSCLE"));
+        assert!(!leaf_on(&sp2, "food", "food/plants/PLANT:BARLEY:STRUCTURAL"));
     }
 
     #[test]
