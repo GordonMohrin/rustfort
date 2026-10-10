@@ -15,19 +15,29 @@ No simulation changes; the 2-year bench on r5 keeps its state hash.
   `libraryfolders.vdf`; on Linux `~/.steam/steam`, `~/.local/share/Steam` and the Flatpak
   path), then common default paths. A folder counts when it has `data/vanilla`. Without DF the
   title screen says "Dwarf Fortress not found" instead of failing.
-- **First start without an export:** the default fort is `--export DIR`, else `RUSTFORT_EXPORT`,
-  else the newest export in `export/`, else the built-in synthetic test fort (and Rustfort says so).
+- **First start without an export:** `bench`, `savebench` and `play` runs that skip the title
+  screen use `--export DIR`, else `RUSTFORT_EXPORT`, else the newest complete export in
+  `export/`, else the built-in test fort (and say so). The rf-sim examples search the same way
+  but stop with "no export found" instead of falling back (`chaos` also takes `--synthetic`).
+  The title screen's Continue prefers the newest save, then the newest export in `export/`,
+  then `RUSTFORT_EXPORT`; it is greyed out with a hint on the first start.
 - **Exporter for any fort:** no fort-name check by default (`--expect NAME` is optional), and
   without an output folder it writes to `<DF folder>/rustfort-export/<native fort name in lower
   case>` and prints where.
 - **Documentation for new users:** English README, [docs/INSTALL.md](docs/INSTALL.md) (also
-  for AI coding agents), [CONTRIBUTING.md](CONTRIBUTING.md), licensed MIT OR Apache-2.0.
+  for AI coding agents: DF folder lookup into `$DF`, session-only PATH reloads, a
+  machine-checkable start line and a windowless smoke test), [CONTRIBUTING.md](CONTRIBUTING.md),
+  licensed MIT OR Apache-2.0. [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) credits DF's
+  thought captions (taken from DFHack's df-structures, zlib license) and the README
+  screenshots (DF's Premium graphics, not covered by the license).
 - **Title screen:** "RUSTFORT" with the note that it is a fan re-implementation, not affiliated
   with Bay 12 Games or Kitfox Games; DF's own logo is no longer drawn (the background art still
   comes from the DF install). "New synthetic fort (dev)" is now **Built-in test fort**.
-- **README:** screenshots and a speed comparison with DF on the same fort and PC (everyday life
-  about 170 ticks/s in DF vs about 100,000 headless and 66,000-90,000 in the game window; the
-  final siege 29 vs about 51,000).
+- **README:** screenshots (one of them a ballista placed for the picture, since the reference
+  fort has no siege engines) and a speed comparison with DF on the same fort and PC (everyday life
+  about 170 calendar ticks/s in DF vs about 100,000 headless and 66,400 on average
+  (88,000-90,000 while running) in the game window; the final siege about 107 calendar
+  ticks/s (29 simulated frames/s) vs about 51,000).
 - **Personal references removed** from code comments, tests and docs (the reference fort is
   just "the reference fort" now).
 
@@ -444,8 +454,10 @@ target\release\rustfort.exe play --export export\<folder>   # straight into a fo
 target\release\rustfort.exe bench --ticks 403200            # one game year headless
 ```
 
-Without `--export`, `bench` and the examples use `RUSTFORT_EXPORT`, else the
-newest export in `export\`, else the built-in synthetic fort.
+Without `--export`, `bench` uses `RUSTFORT_EXPORT`, else the newest export in `export\`, else
+the built-in test fort. The rf-sim examples search the same way but stop with "no export
+found" instead of using the test fort. The title screen's Continue prefers the newest save
+(details in [docs/INSTALL.md](docs/INSTALL.md)).
 
 Export a fort by hand while DF is running (read-only; see [tools/dfhack/README.md](tools/dfhack/README.md)):
 

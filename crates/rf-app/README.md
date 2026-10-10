@@ -5,7 +5,7 @@ font, keybindings read from your own DF `interface.txt`, z-levels with the level
 visible through open space, and a fast sim loop.
 
 ```
-rustfort.cmd                                                # repo root: build if needed, then the title screen
+.\rustfort.cmd                                              # repo root: build if needed, then the title screen
 cargo run --release -p rf-app                               # the title screen (same as `play` without a world)
 cargo run --release -p rf-app -- play --export export/<folder>
 cargo run --release -p rf-app -- play --synthetic --size 192,192,153
@@ -38,8 +38,10 @@ the app reads, at runtime only:
 
 ## Title screen (round 6, `menu.rs`)
 
-Like DF's title screen: DF's own background art and logo from the install (a plain gradient
-and text logo without them), "RUSTFORT" below, and a column of buttons:
+Laid out like DF's title screen: DF's background art from the install
+(`data/art/title_background.png`; a plain gradient without it), the "RUSTFORT" title with the
+note that it is a fan-made re-implementation, not affiliated with Bay 12 Games or Kitfox Games,
+and a column of buttons. DF's logo is not drawn. The buttons:
 
 - **Continue** loads the newest save in `saves/` (autosaves count), else the newest complete
   export in `export/`, else the export named by `RUSTFORT_EXPORT`; it is greyed out when there is
@@ -690,7 +692,9 @@ rustfort play --screenshot target/shots/a.png --frames 20 --view 48,48,22,1 \
   In screenshot runs a save started with F5 finishes within the frame.
 
 With a script, the real mouse and keyboard are ignored, so runs are reproducible. Keep
-screenshots under `target/`, never in git.
+screenshots under `target/`, never in git. The only exception is the maintainers' set of
+curated README screenshots in `docs/screenshots/` ([CONTRIBUTING.md](../../CONTRIBUTING.md),
+rule 3).
 
 ## Code map
 

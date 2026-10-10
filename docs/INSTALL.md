@@ -5,13 +5,16 @@ and then to playing your own fort in it. It is written for people and for AI cod
 Each step gives the command, how to check it worked (a command and the output to expect), and
 what to do if it failed. Do the steps in order and skip the ones that are already done.
 
+**AI agents:** read [Notes for AI agents](#notes-for-ai-agents) before step 1.
+
 Most of the time goes into downloads and the first build, so plan for about 20-40 minutes.
 
 **You need:**
 
 - Windows 10 or 11 (64-bit). Linux is untested, see [Linux (best effort)](#linux-best-effort).
 - **Dwarf Fortress v50 or newer, the Steam edition** (it includes the Premium graphics that
-  Rustfort draws with). Rustfort ships none of DF's files and reads them from your install.
+  Rustfort draws with). Rustfort ships no DF graphics, fonts or raws and reads them from your
+  install.
 - About 5 GB of free disk space: up to 3 GB for the C++ build tools, 2-4 GB for Rustfort's
   build folder, and about 70 MB per fort export.
 - An internet connection for the downloads.
@@ -25,25 +28,37 @@ after step 5 are run **in the Rustfort folder**.
 
 Rustfort needs the DF folder with the v50 layout, which means it contains `data\vanilla`.
 
-**Do:** find the folder. In Steam, right-click *Dwarf Fortress* > *Manage* > *Browse local
-files*. The folder that opens is the DF folder. With the default Steam library it is
+**Do:** find the folder and keep it in the variable `$DF`, which later steps use. This one line
+reads Steam's location from the registry, looks in every Steam library listed in
+`libraryfolders.vdf`, and picks the first `Dwarf Fortress` folder that contains `data\vanilla`.
+It only reads and changes nothing:
+
+```powershell
+$steam=(Get-ItemProperty HKCU:\Software\Valve\Steam).SteamPath; $DF=(Select-String "$steam\steamapps\libraryfolders.vdf" -Pattern '"path"\s+"(.+)"').Matches | % { $_.Groups[1].Value -replace '\\\\','\' } | % { Join-Path $_ 'steamapps\common\Dwarf Fortress' } | ? { Test-Path (Join-Path $_ 'data\vanilla') } | Select -First 1; $DF
+```
+
+Expected: the DF folder, for example
 `C:\Program Files (x86)\Steam\steamapps\common\Dwarf Fortress`.
+
+No output, or an error about the registry or `libraryfolders.vdf`, means Steam or DF was not
+found that way. Then find the folder in Steam: right-click *Dwarf Fortress* > *Manage* >
+*Browse local files*. The folder that opens is the DF folder. Set the variable to it, for
+example:
+
+```powershell
+$DF = "D:\Games\Dwarf Fortress"
+```
 
 **Check:**
 
 ```powershell
-Test-Path "C:\Program Files (x86)\Steam\steamapps\common\Dwarf Fortress\data\vanilla"
+Test-Path "$DF\data\vanilla"
 ```
 
-Expected: `True`. If your Steam library is somewhere else, use that path instead. To list
-every Steam library folder:
+Expected: `True`.
 
-```powershell
-$steam = (Get-ItemProperty HKCU:\Software\Valve\Steam).SteamPath
-Select-String -Path "$steam\steamapps\libraryfolders.vdf" -Pattern '"path"'
-```
-
-DF is then in `<library>\steamapps\common\Dwarf Fortress`.
+`$DF` only lives in the current terminal. In a new terminal, run the line above again before a
+step that uses `$DF` (9a, the manual export, troubleshooting).
 
 **If it fails:** install Dwarf Fortress from Steam and start it once. If the folder has no
 `data\vanilla`, the version is older than v50. Update it in Steam.
@@ -85,7 +100,13 @@ winget install --id Git.Git -e
 ```
 
 Then **close the terminal and open a new one** so that `git` is on the PATH, and run the check
-again.
+again. If you cannot open a new terminal (an AI agent, for example), reload the PATH in the
+current one instead. This reads the PATH the installer saved, for this session only, and
+changes no setting:
+
+```powershell
+$env:PATH = [Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH','User')
+```
 
 **If it fails:** if `winget` is not found, install or update *App Installer* from the
 Microsoft Store, or download Git from <https://git-scm.com/download/win> and install it with
@@ -94,17 +115,32 @@ the default options.
 ### Step 3: Install the Visual Studio 2022 Build Tools (C++)
 
 Rust on Windows uses Microsoft's linker (`link.exe`), and one dependency (the zstd compression
-library) is compiled from C. The linker and the C compiler both come with the free Build Tools. A full Visual Studio 2022 with the *Desktop development
-with C++* workload works too.
+library) is compiled from C. The linker and the C compiler both come with the free Build
+Tools. A full Visual Studio 2022 with the *Desktop development with C++* workload works too.
 
 **Check first:**
 
 ```powershell
-& "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property displayName
+$vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+& $vswhere -all -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property displayName
+& $vswhere -all -products * -find 'VC\Tools\MSVC\**\Hostx64\x64\link.exe'
 ```
 
-Expected: a line such as `Visual Studio Build Tools 2022`, or the name of your Visual Studio
-edition. No output, or "not recognized", means the C++ tools are missing.
+Expected: a line such as `Visual Studio Build Tools 2022` (or the name of your Visual Studio
+edition), and the path of a `link.exe` ending in `\bin\Hostx64\x64\link.exe`. No output, or
+"not recognized", means the C++ tools are missing. `-all` matters: without it, vswhere hides
+installations that the Visual Studio Installer marks as incomplete.
+
+To see whether an installation is marked incomplete:
+
+```powershell
+& $vswhere -all -products * -format text | Select-String '^(displayName|isComplete):'
+```
+
+`isComplete: 0` means incomplete. The C++ tools often work anyway, so if `link.exe` was found,
+go on and try the build (step 6) first. If the build then fails with errors about `link.exe` or
+`cl.exe`, open *Visual Studio Installer* from the Start menu and choose *Repair* on *Build
+Tools 2022* (or *Modify*, as below).
 
 **Do:**
 
@@ -116,7 +152,9 @@ This downloads a few GB and shows the Visual Studio installer's progress window.
 for administrator permission. Wait until the installer window closes, then run the check again.
 
 **If it fails:** start *Visual Studio Installer* from the Start menu. Then choose *Modify* on
-*Build Tools 2022*, tick *Desktop development with C++* and click *Modify*.
+*Build Tools 2022*, tick *Desktop development with C++* and click *Modify*. If the C++ tools
+are ticked already but the build reports `link.exe` or `cl.exe` errors, choose *Repair*
+instead.
 
 ### Step 4: Install Rust
 
@@ -127,8 +165,9 @@ cargo --version
 rustup show active-toolchain
 ```
 
-Expected: `cargo 1.` followed by numbers, and a toolchain ending in `-x86_64-pc-windows-msvc`
-(for example `stable-x86_64-pc-windows-msvc (default)`). If both are right, go to step 5.
+Expected: `cargo 1.` followed by numbers, and a toolchain whose name ends in
+`-x86_64-pc-windows-msvc` (for example `stable-x86_64-pc-windows-msvc (default)`). If both are
+right, go to step 5.
 
 **Do:**
 
@@ -136,7 +175,14 @@ Expected: `cargo 1.` followed by numbers, and a toolchain ending in `-x86_64-pc-
 winget install --id Rustlang.Rustup -e
 ```
 
-**Close the terminal and open a new one**, then:
+**Close the terminal and open a new one.** If you cannot, reload the PATH for this session as
+in step 2:
+
+```powershell
+$env:PATH = [Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH','User')
+```
+
+Then:
 
 ```powershell
 rustup default stable-msvc
@@ -146,9 +192,23 @@ Run the check again.
 
 **If it fails:**
 
-- `cargo` is not recognized: open a new terminal. If it is still missing, the installer did not
-  update the PATH. Add `%USERPROFILE%\.cargo\bin` to it, or run the installer from
-  <https://rustup.rs> instead.
+- `cargo` is not recognized: open a new terminal, or reload the PATH as above. If it is still
+  missing, check whether Rust is installed in its default place:
+
+  ```powershell
+  Test-Path "$env:USERPROFILE\.cargo\bin\cargo.exe"
+  ```
+
+  If that prints `True`, put the folder on the PATH for this terminal session only (this
+  changes no setting):
+
+  ```powershell
+  $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
+  ```
+
+  `rustfort.cmd` finds cargo in `%USERPROFILE%\.cargo\bin` by itself, so this is only needed
+  for running `cargo` and `rustup` by hand. If it prints `False`, the installation did not
+  finish: run the installer from <https://rustup.rs> instead.
 - The toolchain ends in `-gnu`: run `rustup default stable-msvc`.
 
 Rustfort builds with current stable Rust. It is tested with Rust 1.99.
@@ -198,6 +258,14 @@ Test-Path target\release\rustfort.exe
 Expected: `True`. The build itself ends with a line starting with `Finished` and mentioning
 `release`.
 
+If the environment variable `CARGO_TARGET_DIR` is set (check with `echo $env:CARGO_TARGET_DIR`),
+Cargo builds into that folder instead, and the program is
+`%CARGO_TARGET_DIR%\release\rustfort.exe` (check with
+`Test-Path "$env:CARGO_TARGET_DIR\release\rustfort.exe"`). `rustfort.cmd` only looks in
+`target\release`. In that case start the program from the Rustfort folder with
+`& "$env:CARGO_TARGET_DIR\release\rustfort.exe"`, or clear the variable for this terminal
+session (`Remove-Item Env:CARGO_TARGET_DIR`) and build again.
+
 **If it fails:** see [Troubleshooting](#troubleshooting). The most common cause is
 `link.exe not found` (step 3 is missing).
 
@@ -216,10 +284,26 @@ target\release\rustfort.exe
 `rustfort.cmd` rebuilds Rustfort when the code has changed, then starts it, and it always runs
 from its own folder. You can also double-click `rustfort.cmd` in Explorer. Rustfort keeps
 `saves\` and `export\` in the folder it was started from, so don't start `rustfort.exe` from
-another folder.
+another folder. The command keeps running, and the terminal waits, until the window is closed.
 
-**Check:** a window titled "Rustfort" opens with the title screen. Close it with **Quit** (or
-the window's close button).
+**Check:** a window titled "Rustfort" opens with the title screen. In the terminal, Rustfort
+prints one line at start that says which Dwarf Fortress folder it uses, and where that folder
+came from (`RUSTFORT_DF_DIR`, `settings`, `Steam` or `default path`):
+
+```text
+rustfort: Dwarf Fortress at <path> (<source>)
+```
+
+If it did not find DF, the line reads instead:
+
+```text
+rustfort: Dwarf Fortress not found: set its folder in Settings or RUSTFORT_DF_DIR. Without it there are no DF graphics, DF font, DF keys or import.
+```
+
+Close the window with **Quit** (or the window's close button).
+
+AI agents: the window blocks a foreground shell, so start the game without waiting for it and
+read that line, as described in [Notes for AI agents](#notes-for-ai-agents).
 
 **If it fails:** an error in the terminal names the problem. Also see
 [Troubleshooting](#troubleshooting).
@@ -256,8 +340,9 @@ A second line names the folder in use and where it came from, e.g. "Source: Stea
 **Back** (or Esc) saves the settings to `saves\settings.json`.
 
 To look around without your own fort, choose **Built-in test fort**: a small generated test
-fort. The headless tools (`rustfort.exe bench` and the examples) fall back to the same
-test fort when they find no fort export, and they say so.
+fort. `rustfort.exe bench` and `rustfort.exe savebench` use the same test fort when they find
+no fort export, and they say so. The rf-sim example tools stop instead, with "no export found
+(use --export <dir> or RUSTFORT_EXPORT)".
 
 In the game: **Space** pauses and resumes, **1**-**4** set the speed, the **mouse wheel** changes
 the z-level, **Ctrl+wheel** zooms, and **F1** shows all keys. **Esc** opens the menu with save,
@@ -276,10 +361,10 @@ Steam store for it and install it. It installs into the DF folder. Without Steam
 **Check:**
 
 ```powershell
-Test-Path "C:\Program Files (x86)\Steam\steamapps\common\Dwarf Fortress\hack\dfhack-run.exe"
+Test-Path "$DF\hack\dfhack-run.exe"
 ```
 
-(use your DF folder from step 1). Expected: `True`.
+(`$DF` is your DF folder from step 1; in a new terminal, set it again first). Expected: `True`.
 
 **9b. Start Dwarf Fortress** from Steam and load your fort in fortress mode. With DFHack
 installed, DF shows the DFHack version in a corner of its title screen. The game can keep
@@ -298,6 +383,7 @@ folder. Earlier exports are kept, and **Load game** > *DF exports* lists them.
 
 | message | what to do |
 |---|---|
+| "Dwarf Fortress was not found." with "No data/vanilla in <path>" | Set the DF folder in **Settings** (the dialog's Settings button opens it), then start the import again (Retry). |
 | "DFHack was not found." | Check the DF folder in Settings, and install DFHack (9a). |
 | "Dwarf Fortress is not running." | Start DF, load the fort, press Retry. |
 | "Dwarf Fortress is running, but DFHack does not answer." | Make sure DFHack is installed and enabled (its version shows on DF's title screen). See also [Troubleshooting](#troubleshooting). |
@@ -311,10 +397,9 @@ folder.
 #### Exporting by hand
 
 You can run the exporter yourself, for example from a script. In the Rustfort folder, with DF
-running and the fort loaded:
+running and the fort loaded, and `$DF` set as in step 1:
 
 ```powershell
-$DF = "C:\Program Files (x86)\Steam\steamapps\common\Dwarf Fortress"   # your DF folder
 & "$DF\hack\dfhack-run.exe" lua -f "$PWD\tools\dfhack\rustfort-export.lua" "$PWD\export\myfort"
 ```
 
@@ -326,7 +411,8 @@ failed. While it runs, `progress.json` in that folder shows the phase.
   loaded fort's native name is NAME.
 - Without an output folder, it writes to `<DF folder>\rustfort-export\<native fort name in
   lower case>` and prints where it wrote. Giving a folder under `export\`, as above, keeps
-  everything in the Rustfort folder, and Rustfort finds the export there by itself.
+  everything in the Rustfort folder, and Rustfort lists the export under **Load game** >
+  *DF exports* by itself.
 - All options, such as `--budget`, `--status` and `--cancel`, are in
   [tools/dfhack/README.md](../tools/dfhack/README.md).
 
@@ -336,11 +422,21 @@ Play the export with:
 target\release\rustfort.exe play --export export\myfort
 ```
 
-**Which export Rustfort uses by default:** the game (when started straight into play), `bench`
-and the example tools take `--export DIR` if given. Otherwise they use the environment variable
-`RUSTFORT_EXPORT`. Failing that, they use the most recently modified complete export in
-`export\` (a folder with the exporter's `manifest.json`). If there is none, they use the
-built-in synthetic test fort and say so.
+Or pick it on the title screen under **Load game** > *DF exports*.
+
+**Which export Rustfort uses by default:**
+
+- `rustfort.exe bench`, `savebench`, and `play` runs that skip the title screen (such as
+  screenshot runs) take `--export DIR` if given. Otherwise they use the environment variable
+  `RUSTFORT_EXPORT`. Failing that, they use the most recently modified complete export in
+  `export\` (a folder with the exporter's `manifest.json`). If there is none, they use the
+  built-in test fort and say so.
+- The rf-sim example tools (`cargo run -p rf-sim --release --example ...`) search the same way
+  but do not fall back: without an export they stop with "no export found (use --export <dir>
+  or RUSTFORT_EXPORT)". `chaos` also accepts `--synthetic`.
+- The title screen's **Continue** loads the newest save in `saves\` first, then the newest
+  complete export in `export\`, then the export named by `RUSTFORT_EXPORT`. Every other export
+  is listed in **Load game** > *DF exports*.
 
 ### Step 10: Update
 
@@ -383,8 +479,8 @@ Optionally, uninstall the tools in *Settings* > *Apps*: *Rustup* (or run `rustup
 
 - Check that the folder contains `data\vanilla` (step 1). An older DF (before v50) does not
   work.
-- Set the folder in **Settings** > *DF folder*. You can also set `RUSTFORT_DF_DIR` before
-  starting Rustfort. `setx RUSTFORT_DF_DIR "D:\Games\Dwarf Fortress"` stores it for new
+- Set the folder in **Settings** > *Dwarf Fortress folder*. You can also set `RUSTFORT_DF_DIR`
+  before starting Rustfort. `setx RUSTFORT_DF_DIR "D:\Games\Dwarf Fortress"` stores it for new
   terminals.
 - The variable wins over the Settings value. If Settings seems to have no effect, check that
   `RUSTFORT_DF_DIR` is not set to an old folder: `echo $env:RUSTFORT_DF_DIR`.
@@ -393,8 +489,11 @@ Optionally, uninstall the tools in *Settings* > *Apps*: *Rustup* (or run `rustup
 
 - The C++ Build Tools are missing or incomplete. Do step 3, then open a **new** terminal and
   build again.
-- Check that the Rust toolchain is the MSVC one: `rustup show active-toolchain` must end in
-  `-msvc`. If not, run `rustup default stable-msvc`.
+- If step 3 found the tools but marked them incomplete (`isComplete: 0`), open *Visual Studio
+  Installer* and choose *Repair* (or *Modify* and tick *Desktop development with C++*).
+- Check that the Rust toolchain is the MSVC one: the toolchain name that
+  `rustup show active-toolchain` prints must end in `-msvc` (e.g.
+  `stable-x86_64-pc-windows-msvc (default)`). If not, run `rustup default stable-msvc`.
 
 **DFHack does not answer**
 
@@ -406,8 +505,7 @@ Optionally, uninstall the tools in *Settings* > *Apps*: *Rustup* (or run `rustup
 - Check DFHack by hand with the read-only probe, from the Rustfort folder:
 
   ```powershell
-  $DF = "C:\Program Files (x86)\Steam\steamapps\common\Dwarf Fortress"   # your DF folder
-  & "$DF\hack\dfhack-run.exe" lua -f "$PWD\tools\dfhack\rustfort-probe.lua"
+  & "$DF\hack\dfhack-run.exe" lua -f "$PWD\tools\dfhack\rustfort-probe.lua"   # $DF from step 1
   ```
 
   Expected: one line of JSON starting with `{"ok":true` that names the loaded fort
@@ -474,18 +572,39 @@ Linux is **untested**, so expect rough edges. Reports and fixes are welcome.
 If you are an AI agent installing Rustfort for a user:
 
 - **Ask before installing any software** (Git, Build Tools, Rust, DFHack) **or changing any
-  setting** (environment variables, PATH, antivirus exclusions, firewall). Say what you want
-  to install and why, and wait for a yes.
+  setting** (stored environment variables such as `setx`, the stored PATH, antivirus
+  exclusions, firewall). Say what you want to install and why, and wait for a yes. Changes that
+  only last for your shell session, such as the PATH reloads in steps 2 and 4, change no
+  setting.
 - **Never modify the Dwarf Fortress installation or the user's DF saves.** Do not copy, move,
   rename or delete anything in the DF folder or in `%APPDATA%\Bay 12 Games\Dwarf Fortress`.
   Only read them. Leave DFHack's installation to the user, through Steam (step 9a).
 - Run the steps in order. Do the *Check* of each step, compare its output with the expected
   output, and stop and report when a step fails and its *If it fails* advice does not help.
-- Start the app normally (`.\rustfort.cmd` or `target\release\rustfort.exe`) with no special
-  flags. Don't use debug, test or screenshot options. Close it again with **Quit**, or let the
-  user do it.
+- **You cannot open a new terminal**, so after each `winget install` reload the PATH for your
+  session (steps 2 and 4) instead of "close the terminal and open a new one". If your tool
+  starts a fresh shell for every command, variables such as `$DF` (step 1) and the reloaded
+  PATH do not carry over: repeat them in the same command that needs them.
+- **Starting the game** (step 7): the window blocks a foreground shell until it is closed, so
+  start it without waiting for it. Use your tool's background-run feature, or:
+
+  ```powershell
+  Start-Process -FilePath .\rustfort.cmd -WorkingDirectory $PWD -RedirectStandardError "$env:TEMP\rustfort-start.txt"
+  Start-Sleep 10; Select-String -Path "$env:TEMP\rustfort-start.txt" -Pattern '^rustfort: Dwarf Fortress'
+  ```
+
+  The console line `rustfort: Dwarf Fortress at <path> (<source>)` (or `rustfort: Dwarf
+  Fortress not found: ...`) is the machine-checkable result of step 7, and it names the DF
+  folder Rustfort uses. The line comes after the build output, so wait longer if a build is
+  still running. Then ask the user to confirm that the title screen is visible and to close it
+  with **Quit**.
+- Start the game without special flags: no debug, test, screenshot or script options. The one
+  extra check you may run is the windowless smoke test
+  `target\release\rustfort.exe bench --ticks 2000`. It opens no window, takes a few seconds,
+  and prints the fort it used (a `world:` line; without an export it uses the built-in test
+  fort and says so) and a `state hash:` line at the end.
 - Do not start an import unless the user asks for it. If they do, only use the title screen
   (step 9) or the manual exporter command above. Both are read-only towards DF.
 - At the end, report what you installed, which checks passed, which DF folder Rustfort found
-  (the title screen or Settings shows it), and anything that failed, with the exact error
+  (the console line of step 7, or Settings), and anything that failed, with the exact error
   message.
