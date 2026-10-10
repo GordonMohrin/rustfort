@@ -35,7 +35,7 @@ pub const MAX_NEIGHBORS: usize = 26;
 
 /// [perf] Division by a fixed divisor `d` (1..2^16) as `(n * m) >> s`, exact for n < 2^31
 /// (Granlund-Montgomery: s = 31 + ceil(log2 d), m = ceil(2^s / d), so n * m < 2^63).
-#[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug)] // [saves11]
 pub struct Magic {
     m: u64,
     s: u32,
@@ -55,21 +55,28 @@ impl Magic {
     }
 }
 
+#[derive(serde::Serialize, serde::Deserialize)] // [saves11] exact snapshot (big tables as byte columns)
+#[serde(default = "Nav::empty")] // [saves11]
 pub struct Nav {
     pub dx: usize,
     pub dy: usize,
     pub dz: usize,
     pub layer: usize,
+    #[serde(with = "crate::saves11::le_u8")] // [saves11]
     pub flags: Vec<u8>,
     /// Component id per tile (0 = not walkable). Compare with [`Nav::comp_root`].
+    #[serde(with = "crate::saves11::le_u32")] // [saves11]
     pub comp: Vec<u32>,
+    #[serde(with = "crate::saves11::le_u32")] // [saves11]
     parent: Vec<u32>,
+    #[serde(with = "crate::saves11::le_u32")] // [saves11]
     size: Vec<u32>,
     /// Some walkable tiles/edges were removed since the last rebuild; components may be split.
     pub suspect: bool,
     /// Smallest traffic cost present on the map (admissible A* heuristic factor).
     pub min_cost: u32,
     shapes: Vec<Shape>,
+    #[serde(with = "crate::saves11::le_u64")] // [saves11]
     blocked: Vec<u64>,
     any_blocked: bool,
     pub rebuilds: u64,
@@ -80,7 +87,9 @@ pub struct Nav {
     pub version: u64,
     // [defense] Building overrides (bit sets, allocated on first use): lowered bridges and
     // hatches give a floor over open space; locked hatches block stairs/ramps through them.
+    #[serde(with = "crate::saves11::le_u64")] // [saves11]
     floor_force: Vec<u64>,
+    #[serde(with = "crate::saves11::le_u64")] // [saves11]
     novert: Vec<u64>,
     any_override: bool,
     /// [perf9] Landmark distances for the A* heuristic (see [`Landmarks`]).
@@ -109,23 +118,52 @@ const LM_RELAX_CAP: u64 = 4_000_000;
 /// that; new moves (digging, opened doors, cheaper traffic) are repaired right away by a
 /// decrease-only relaxation from the changed tiles (`relax_box`). So paths stay optimal. They can
 /// differ from the old heuristic's paths among equally cheap ones (other tie-breaks).
-#[derive(Default)]
+#[derive(Default, serde::Serialize, serde::Deserialize)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct Landmarks {
     pub on: bool,
     /// Tile -> compact index (u32::MAX = none).
+    #[serde(with = "crate::saves11::len_only")] // [saves11] rebuilt from `tile`
     id: Vec<u32>,
     /// Compact index -> tile.
+    #[serde(with = "crate::saves11::le_u32")] // [saves11]
     tile: Vec<u32>,
+    #[serde(with = "crate::saves11::lm_cols")] // [saves11]
     d: Vec<[u16; LM_K]>,
     /// Landmark tiles (all components).
     pub marks: Vec<u32>,
+    #[serde(with = "crate::saves11::len_only")] // [saves11] rebuilt from `queue`
     inq: Vec<bool>,
     queue: std::collections::VecDeque<u32>,
     /// Relaxations done by incremental updates (stats).
     pub relaxed: u64,
 }
 
+impl Landmarks {
+    /// [saves11] Rebuild the tables a snapshot stores only by length (`id` from `tile`, `inq`
+    /// from `queue`).
+    pub(crate) fn after_load(&mut self) {
+        self.id.iter_mut().for_each(|x| *x = u32::MAX);
+        for (k, &t) in self.tile.iter().enumerate() {
+            if let Some(x) = self.id.get_mut(t as usize) {
+                *x = k as u32;
+            }
+        }
+        self.inq = vec![false; self.tile.len()];
+        for &k in &self.queue {
+            if let Some(x) = self.inq.get_mut(k as usize) {
+                *x = true;
+            }
+        }
+    }
+}
+
 impl Nav {
+    /// [saves11] Grid of an empty world (defaults of a snapshot's missing fields).
+    pub(crate) fn empty() -> Nav {
+        Nav::new(&World::default(), &[])
+    }
+
     pub fn new(world: &World, blocked_tiles: &[usize]) -> Nav {
         let (dx, dy, dz) = (world.dims.x as usize, world.dims.y as usize, world.dims.z as usize);
         let n = dx * dy * dz;

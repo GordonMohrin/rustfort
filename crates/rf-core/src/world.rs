@@ -158,6 +158,50 @@ pub struct World {
     /// by `Sim::new` when the save is loaded; empty in a running game and in imports.
     #[serde(default)]
     pub sim_state: std::collections::BTreeMap<String, String>,
+    /// [saves11] Exact runtime snapshot of the simulation (MessagePack of the sim's whole state
+    /// except this world), so a loaded game continues bit-identically. Like `sim_state` it is
+    /// filled only in the copy written to a save (`Sim::world_for_save`) and consumed by
+    /// `Sim::new`; a sim that cannot use it (other version, edited world) falls back to
+    /// `sim_state`. Stored as one MessagePack `bin` value.
+    #[serde(default, with = "blob")]
+    pub sim_exact: Vec<u8>,
+}
+
+/// [saves11] Serde format of [`World::sim_exact`]: one `bytes` value (MessagePack `bin`), read
+/// back from bytes or from a sequence of integers.
+pub mod blob {
+    use serde::de::{self, SeqAccess, Visitor};
+    use serde::{Deserializer, Serializer};
+    use std::fmt;
+
+    pub fn serialize<S: Serializer>(v: &[u8], s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_bytes(v)
+    }
+
+    struct V;
+    impl<'de> Visitor<'de> for V {
+        type Value = Vec<u8>;
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("bytes")
+        }
+        fn visit_bytes<E: de::Error>(self, v: &[u8]) -> Result<Vec<u8>, E> {
+            Ok(v.to_vec())
+        }
+        fn visit_byte_buf<E: de::Error>(self, v: Vec<u8>) -> Result<Vec<u8>, E> {
+            Ok(v)
+        }
+        fn visit_seq<A: SeqAccess<'de>>(self, mut a: A) -> Result<Vec<u8>, A::Error> {
+            let mut v = Vec::with_capacity(a.size_hint().unwrap_or(0).min(1 << 24));
+            while let Some(b) = a.next_element::<u8>()? {
+                v.push(b);
+            }
+            Ok(v)
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Error> {
+        d.deserialize_byte_buf(V)
+    }
 }
 
 /// [saves10] Serde format of [`World::tiles`]: a struct of one little-endian byte column per

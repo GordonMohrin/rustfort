@@ -32,7 +32,8 @@ use crate::{Kind, Sim, NONE};
 use rf_core::{Item, Pos, SquadAmmo};
 
 /// Equipment of one squad position (DF squad equipment screen).
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct SquadEquipment {
     pub position: usize,
     /// Unit in the position, -1 = empty.
@@ -48,7 +49,8 @@ pub struct SquadEquipment {
 }
 
 /// Barracks of one squad: walkable tiles and bed indices.
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub(crate) struct BarracksT {
     pub squad: i32,
     pub tiles: Vec<u32>,

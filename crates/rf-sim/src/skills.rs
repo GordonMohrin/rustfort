@@ -102,7 +102,8 @@ fn tenths(t: i32, r: &mut Rng) -> i32 {
 }
 
 /// What a soldier found around its training spot (from `barracks_spar`).
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub(crate) struct TrainScene {
     /// A sparring partner next to it (both at least Competent in Fighting).
     pub partner: bool,
@@ -292,7 +293,8 @@ impl Sim {
 
 /// [skills9] Counters: quality of made items (0..=5), training rounds, demonstrations,
 /// conversations that trained a skill, manager approvals.
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct SkillsReport {
     pub made: [u64; 6],
     pub spar_rounds: u64,

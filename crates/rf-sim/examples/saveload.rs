@@ -45,10 +45,34 @@ fn main() {
     let t0 = std::time::Instant::now();
     let mut a = Sim::new(world, seed);
     a.run_ticks(n);
+    let ts = std::time::Instant::now();
     let saved = a.world_for_save();
+    let save_secs = ts.elapsed().as_secs_f64();
     let modules = saved.sim_state.clone();
+    // [saves11] Through the save file's encoding (MessagePack, named fields, as rf-app's
+    // format 2) unless --memory: what a real save + load gives.
+    let exact_len = saved.sim_exact.len();
+    let ts = std::time::Instant::now();
+    let saved = if args.iter().any(|a| a == "--memory") {
+        saved
+    } else {
+        let raw = rmp_serde::to_vec_named(&saved).expect("encode world");
+        let mut w: rf_core::World = rmp_serde::from_slice(&raw).expect("decode world");
+        w.tiletypes.reindex();
+        println!("world body {:.1} MB raw (snapshot {:.1} MB)", raw.len() as f64 / 1e6, exact_len as f64 / 1e6);
+        w
+    };
+    let codec_secs = ts.elapsed().as_secs_f64();
+    let ts = std::time::Instant::now();
     let mut b = Sim::new(saved, seed);
+    let load_secs = ts.elapsed().as_secs_f64();
     println!("export {}  seed {seed}  N {n}  M {m}  ({:.1}s)", dir.display(), t0.elapsed().as_secs_f64());
+    println!("restore: {}  world_for_save {save_secs:.3}s  encode+decode {codec_secs:.3}s  Sim::new {load_secs:.3}s", b.restore_mode());
+    if args.iter().any(|a| a == "--sizes") {
+        for (k, v) in a.exact_sizes() {
+            println!("  snapshot part {k:<11} {:>10} bytes", v);
+        }
+    }
 
     // 1. Module state survives the reload unchanged.
     let again = b.save_modules();

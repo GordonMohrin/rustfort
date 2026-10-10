@@ -81,7 +81,7 @@ const DW: u8 = 8;
 /// DF quality value multipliers (ordinary .. masterful).
 pub const QUALITY_MULT: [i32; 6] = [1, 2, 3, 4, 5, 12];
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)] // [saves11]
 pub(crate) enum CK {
     Build(ConstructionKind),
     Deconstruct,
@@ -105,7 +105,7 @@ impl CK {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug)] // [saves11]
 pub(crate) struct CJob {
     kind: CK,
     tile: u32,
@@ -121,7 +121,8 @@ pub(crate) struct CJob {
 }
 
 /// Counters for the UI and the bench.
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct ConstructReport {
     pub open_jobs: usize,
     pub planned_constructions: usize,
@@ -143,7 +144,8 @@ pub struct ConstructReport {
     pub dump_waiting: usize,
 }
 
-#[derive(Default)]
+#[derive(serde::Serialize, serde::Deserialize, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub(crate) struct Cx {
     jobs: Vec<CJob>,
     free: Vec<u32>,

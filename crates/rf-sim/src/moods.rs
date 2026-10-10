@@ -73,7 +73,7 @@ const COUNTER_RESET: i32 = 1_000;
 /// Eligible dwarves needed (wiki).
 const MIN_ELIGIBLE: usize = 20;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)] // [saves11]
 pub enum MoodKind {
     Fey,
     Secretive,
@@ -124,7 +124,7 @@ impl MoodKind {
 }
 
 /// A material class a mood can demand.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)] // [saves11]
 pub(crate) enum Mat {
     Boulder,
     Log,
@@ -260,7 +260,7 @@ fn tickets(profession: &str) -> u32 {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)] // [saves11]
 enum Step {
     Claim,
     Hunt(u32),
@@ -270,15 +270,19 @@ enum Step {
     Work(u64),
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)] // [saves11]
 pub(crate) struct Active {
     slot: usize,
     uid: i32,
     kind: MoodKind,
-    skill: &'static str,
-    shop_kind: &'static str,
-    shop_sub: &'static str,
-    shop_label: &'static str,
+    #[serde(with = "crate::saves11::interned")] // [saves11]
+    skill: crate::saves11::SStr,
+    #[serde(with = "crate::saves11::interned")] // [saves11]
+    shop_kind: crate::saves11::SStr,
+    #[serde(with = "crate::saves11::interned")] // [saves11]
+    shop_sub: crate::saves11::SStr,
+    #[serde(with = "crate::saves11::interned")] // [saves11]
+    shop_label: crate::saves11::SStr,
     shop_bid: i32,
     site: u32,
     demands: Vec<Mat>,
@@ -288,12 +292,14 @@ pub(crate) struct Active {
     wait_since: Option<u64>,
     started: u64,
     needs: (i32, i32, i32),
+    #[serde(with = "crate::saves11::interned")] // [saves11]
     art: ArtKind,
     record: usize,
 }
 
 /// One strange mood, for reports.
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct MoodRecord {
     pub unit_id: i32,
     pub name: String,
@@ -309,6 +315,7 @@ pub struct MoodRecord {
     pub victim: Option<String>,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)] // [saves11]
 pub(crate) struct Moods {
     pub counter: i32,
     pub active: Option<Active>,

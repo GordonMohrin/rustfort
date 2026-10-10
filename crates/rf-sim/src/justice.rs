@@ -38,7 +38,8 @@ use rf_core::{Crime, Wound, TICKS_PER_DAY};
 const DAY: u64 = TICKS_PER_DAY as u64;
 
 /// Justice statistics for reports and the benchmark.
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct JusticeReport {
     /// Crimes by DF crime type.
     pub crimes: Vec<(String, u64)>,
@@ -59,7 +60,7 @@ pub struct JusticeReport {
     pub no_enforcer: u64,
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)] // [saves11]
 pub(crate) struct CrimeRt {
     pub id: i32,
     /// The real culprit (unit id), known to the sim, not to the fort.
@@ -68,7 +69,7 @@ pub(crate) struct CrimeRt {
     pub no_enforcer_counted: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)] // [saves11]
 pub(crate) struct Prisoner {
     pub slot: u32,
     pub crime: i32,
@@ -78,7 +79,8 @@ pub(crate) struct Prisoner {
     pub next_day: u64,
 }
 
-#[derive(Default)]
+#[derive(serde::Serialize, serde::Deserialize, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub(crate) struct Justice {
     pub rt: Vec<CrimeRt>,
     pub prisoners: Vec<Prisoner>,

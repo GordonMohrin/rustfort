@@ -1,7 +1,7 @@
 //! Item categories (stockpile categories, hauling labors, food/drink classes).
 
 /// Top-level stockpile category (DF names in `rf_core::StockpileSettings::categories`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)] // [saves11]
 #[repr(u8)]
 pub enum Cat {
     Animals,

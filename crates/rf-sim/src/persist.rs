@@ -70,6 +70,7 @@ impl Sim {
     pub fn world_for_save(&self) -> rf_core::World {
         let mut w = self.world.clone();
         w.sim_state = self.save_modules();
+        w.sim_exact = self.exact_snapshot(); // [saves11] bit-identical continuation
         w
     }
 

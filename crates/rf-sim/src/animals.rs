@@ -163,7 +163,8 @@ const CLUTCHES: &[(&str, u8, u8)] = &[
 const SHEARABLE: &[&str] = &["SHEEP", "LLAMA", "ALPACA"];
 
 /// What the simulation knows about a species (from the exported creature raws).
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub(crate) struct Species {
     pub token: String,
     pub name: String,
@@ -187,7 +188,7 @@ pub(crate) struct Species {
 }
 
 /// Per-unit animal state (indexed by AI slot).
-#[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug)] // [saves11]
 pub(crate) struct AState {
     pub sp: u16,
     pub last: u64,
@@ -243,7 +244,7 @@ impl Default for AState {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)] // [saves11]
 pub(crate) enum WKind {
     #[default]
     None,
@@ -254,7 +255,7 @@ pub(crate) enum WKind {
     Fish,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)] // [saves11]
 pub(crate) enum Step {
     #[default]
     None,
@@ -270,7 +271,8 @@ pub(crate) enum Step {
 }
 
 /// A worker's animal job (indexed by AI slot).
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub(crate) struct AWork {
     pub kind: WKind,
     pub step: Step,
@@ -287,7 +289,7 @@ pub(crate) struct AWork {
 }
 
 /// Nest box (DF `NestBox` building).
-#[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug)] // [saves11]
 pub(crate) struct Nest {
     pub bid: i32,
     pub tile: u32,
@@ -295,7 +297,7 @@ pub(crate) struct Nest {
 }
 
 /// A clutch of eggs lying in a nest box.
-#[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug)] // [saves11]
 pub(crate) struct Clutch {
     pub item: i32,
     pub tile: u32,
@@ -304,7 +306,7 @@ pub(crate) struct Clutch {
     pub sp: u16,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug)] // [saves11]
 pub(crate) struct Grass {
     pub tile: u32,
     pub amount: u8,
@@ -314,14 +316,15 @@ pub(crate) struct Grass {
 }
 
 /// Pasture zone (Pen/Pasture civzone).
-#[derive(Clone, Copy)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy)] // [saves11]
 pub(crate) struct Pen {
     pub bid: i32,
     pub zone: crate::Zone,
 }
 
 /// Animal husbandry counters for reports.
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct AnimalReport {
     /// Living tame animals on the map, by race token.
     pub by_race: Vec<(String, usize)>,
@@ -371,7 +374,8 @@ pub struct AnimalReport {
     pub cpu_secs: f64,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub(crate) struct ACensus {
     pub milk_ready: i32,
     pub shear_ready: i32,
@@ -381,7 +385,8 @@ pub(crate) struct ACensus {
     pub raw_fish: i32,
 }
 
-#[derive(Default)]
+#[derive(serde::Serialize, serde::Deserialize, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub(crate) struct Animals {
     pub ready: bool,
     pub off: bool,

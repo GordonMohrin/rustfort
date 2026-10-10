@@ -59,7 +59,7 @@ pub const PETITION_TIMEOUT: u64 = 28 * DAY;
 /// Members a religion or guild needs in the fort before it petitions (estimate).
 pub const LOCATION_PETITION_MEMBERS: usize = 10;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)] // [saves11]
 pub enum LocKind {
     Temple,
     Tavern,
@@ -83,7 +83,7 @@ impl LocKind {
 }
 
 /// Visitor role (DF visitor kinds).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)] // [saves11]
 pub enum VisitorRole {
     Performer,
     Scholar,
@@ -114,7 +114,8 @@ impl VisitorRole {
 }
 
 /// A petition of a visitor (DF `agreement`: residency or citizenship).
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct Petition {
     pub id: i32,
     pub unit: i32,
@@ -130,7 +131,8 @@ pub struct Petition {
 }
 
 /// Location statistics for reports and the benchmark.
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct LocationReport {
     /// (location id, kind, name, citizen-days spent there).
     pub usage: Vec<(i32, String, String, u64)>,
@@ -151,7 +153,7 @@ pub struct LocationReport {
 }
 
 /// Runtime view of one location.
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)] // [saves11]
 pub(crate) struct LocRt {
     /// Index into `World::locations`.
     pub li: usize,
@@ -167,7 +169,7 @@ pub(crate) struct LocRt {
     pub books: u32,
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)] // [saves11]
 pub(crate) struct Visitor {
     pub slot: u32,
     pub unit: i32,
@@ -183,14 +185,15 @@ pub(crate) struct Visitor {
     pub loot: i32,
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)] // [saves11]
 struct Arrival {
     tick: u64,
     role: VisitorRole,
     loc: usize,
 }
 
-#[derive(Default)]
+#[derive(serde::Serialize, serde::Deserialize, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub(crate) struct Locs {
     /// Round-8 society modules switched off (A/B runs; `Sim::set_society2_enabled`).
     pub off: bool,

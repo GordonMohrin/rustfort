@@ -17,7 +17,8 @@ const DENSE_MAX: i32 = 1 << 26;
 /// `clear`, `[&id]`), so all modules keep working unchanged. Lookups are one array read, and
 /// the item compaction updates only the entries that moved instead of rebuilding a hash map
 /// of all 16 000 items whenever one item is used up.
-#[derive(Clone, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub(crate) struct IdMap {
     v: Vec<u32>,
     other: HashMap<i32, u32>,
@@ -80,7 +81,7 @@ impl std::ops::Index<&i32> for IdMap {
 }
 
 /// [perf] Per `haul` entry: the item's category and its cached walk component.
-#[derive(Clone, Copy)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy)] // [saves11]
 pub(crate) struct HaulCache {
     pub cat: u8,
     tile: u32,

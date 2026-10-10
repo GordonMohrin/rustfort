@@ -116,7 +116,7 @@ const TRAPCOMPS: &[(&str, &str, &str, i32, i32, i32, u32)] = &[
     ("ITEM_TRAPCOMP_MENACINGSPIKE", "spike", "stab", 10, 6000, 1600, 1),
 ];
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)] // [saves11]
 pub enum MechKind {
     Door,
     Hatch,
@@ -174,7 +174,7 @@ impl MechKind {
 /// Wanted navigation state of one building tile: (blocked, floor provided, no vertical moves).
 type NavState = (bool, bool, bool);
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)] // [saves11]
 pub(crate) struct Mech {
     pub id: i32,
     pub kind: MechKind,
@@ -199,7 +199,7 @@ pub(crate) struct Mech {
 }
 
 /// A queued "Pull the Lever" job.
-#[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug)] // [saves11]
 pub(crate) struct LeverJob {
     pub lever: i32,
     pub claimed: u32,
@@ -208,7 +208,7 @@ pub(crate) struct LeverJob {
 }
 
 /// A trap waiting to be re-armed by a mechanic (DF jobs "Load Cage Trap", "Load Stone Trap").
-#[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug)] // [saves11]
 pub(crate) struct ReloadJob {
     pub trap: i32,
     pub claimed: u32,
@@ -217,7 +217,8 @@ pub(crate) struct ReloadJob {
 }
 
 /// Counters for reports and tests.
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct DefenseStats {
     /// Creatures caught in cage traps.
     pub caught: u64,
@@ -244,6 +245,7 @@ pub struct DefenseStats {
     pub buildings_destroyed: u64,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)] // [saves11]
 pub(crate) struct Defense {
     pub mechs: Vec<Mech>,
     pub by_id: HashMap<i32, usize>,

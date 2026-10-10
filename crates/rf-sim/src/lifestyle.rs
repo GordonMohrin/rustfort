@@ -48,7 +48,8 @@ pub const CORPSE_MIASMA_DAYS: u16 = 56;
 pub const MIASMA_RANGE: u32 = 2;
 
 /// Lifestyle statistics for reports and the benchmark.
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct LifestyleReport {
     /// Wear levels gained by worn clothing.
     pub wear_steps: u64,
@@ -67,7 +68,8 @@ pub struct LifestyleReport {
     pub kitchen_rules: usize,
 }
 
-#[derive(Default)]
+#[derive(serde::Serialize, serde::Deserialize, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub(crate) struct Life {
     ready: bool,
     /// Worn clothing item id -> days worn at the current wear level.

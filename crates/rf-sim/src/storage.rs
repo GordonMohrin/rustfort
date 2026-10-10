@@ -130,7 +130,7 @@ pub(crate) fn perishable(kind: &str) -> bool {
 }
 
 /// A storage container standing on a stockpile tile.
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)] // [saves11]
 pub(crate) struct Cont {
     pub id: i32,
     pub tile: u32,
@@ -145,7 +145,8 @@ pub(crate) struct Cont {
 }
 
 /// Per-pile container settings and counts.
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub(crate) struct PileStore {
     pub bid: i32,
     pub max_bins: i32,
@@ -158,7 +159,8 @@ pub(crate) struct PileStore {
     pub bringing: i32,
 }
 
-#[derive(Default)]
+#[derive(serde::Serialize, serde::Deserialize, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub(crate) struct Store {
     pub piles: Vec<PileStore>,
     pub conts: Vec<Cont>,
@@ -179,7 +181,8 @@ pub(crate) struct Store {
 }
 
 /// Fill state of one stockpile (for reports).
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct PileReport {
     pub building_id: i32,
     pub categories: Vec<String>,
@@ -197,7 +200,8 @@ pub struct PileReport {
 }
 
 /// Overall storage state.
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct StorageReport {
     pub piles: Vec<PileReport>,
     /// Loose items outside every stockpile that a stockpile would accept (waiting to be hauled).

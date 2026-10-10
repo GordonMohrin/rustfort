@@ -56,7 +56,7 @@ use crate::{AnnouncementKind, Kind, Sim, Task, NONE};
 use rf_core::{Pos, Skill, Unit, UnitFlags, TICKS_PER_DAY, TICKS_PER_MONTH};
 
 /// Kind of a raid (an invasion group on the map).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)] // [saves11]
 pub enum RaidKind {
     /// A siege: visible army, camps, then charges.
     #[default]

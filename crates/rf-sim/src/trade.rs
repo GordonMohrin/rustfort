@@ -43,6 +43,7 @@ const STAY_SPREAD: u32 = 10_000;
 /// Wiki "Caravan": the "will be leaving soon" warning comes about 4 days before they leave.
 const WARN_TICKS: u64 = 4 * DAY;
 
+#[derive(serde::Serialize, serde::Deserialize)] // [saves11]
 pub(crate) struct Member {
     pub slot: u32,
     pub dest: u32,
@@ -50,6 +51,7 @@ pub(crate) struct Member {
     pub arrived: bool,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)] // [saves11]
 pub(crate) struct Caravan {
     pub civ_id: i32,
     pub civ: String,
@@ -68,6 +70,7 @@ pub(crate) struct Caravan {
     pub log: usize,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)] // [saves11]
 pub(crate) struct DepotMove {
     pub item: i32,
     pub claimed: u32,
@@ -76,7 +79,8 @@ pub(crate) struct DepotMove {
 }
 
 /// One caravan visit (for the UI, the bench and tests).
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct CaravanLog {
     pub civ: String,
     pub race: String,
@@ -92,7 +96,8 @@ pub struct CaravanLog {
     pub note: String,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct TradeReport {
     pub caravans: Vec<CaravanLog>,
     /// Accepted trades: (tick, offered value, requested value, reply).
@@ -100,7 +105,8 @@ pub struct TradeReport {
     pub items_moved_to_depot: usize,
 }
 
-#[derive(Default)]
+#[derive(serde::Serialize, serde::Deserialize, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub(crate) struct Trade {
     pub caravan: Option<Caravan>,
     /// Scheduled arrival: (tick, entity).

@@ -35,6 +35,7 @@ use crate::{AnnouncementKind, Kind, Sim, NONE};
 use rf_core::{tile_flags, Pos, TICKS_PER_MONTH};
 
 /// A raid group on the map (siege, ambush, thief or snatcher; see `raids.rs`).
+#[derive(serde::Serialize, serde::Deserialize)] // [saves11]
 pub(crate) struct Siege {
     pub members: Vec<u32>,
     pub start: u64,
@@ -55,6 +56,7 @@ pub(crate) struct Siege {
     pub fled_at: u64,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)] // [saves11]
 pub(crate) struct Invasions {
     pub enabled: bool,
     pub sieges: Vec<Siege>,

@@ -50,7 +50,8 @@ const MAX_SPAWN_TILES: usize = 4_096;
 pub(crate) const BEAST_CIV: i32 = 999_001;
 
 /// One detected cavern layer.
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct CavernLayer {
     /// 1 = topmost cavern; the magma sea has `magma` set.
     pub id: u8,
@@ -81,7 +82,8 @@ impl CavernLayer {
 }
 
 /// A forgotten beast that came to the fort.
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct BeastRecord {
     pub unit_id: i32,
     pub name: String,
@@ -96,7 +98,8 @@ pub struct BeastRecord {
 }
 
 /// Report for tests, benches and the UI.
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct CavernReport {
     pub layers: Vec<CavernLayer>,
     /// (tick, layer label, creature name, count, hostile).
@@ -104,7 +107,8 @@ pub struct CavernReport {
     pub beasts: Vec<BeastRecord>,
 }
 
-#[derive(Default)]
+#[derive(serde::Serialize, serde::Deserialize, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub(crate) struct Caverns {
     pub layers: Vec<CavernLayer>,
     pub(crate) detected: bool, // [war9] pub(crate)

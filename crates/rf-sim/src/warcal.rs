@@ -55,7 +55,8 @@ const NOT_MADE: &[&str] = &[
 pub const UNIT_COST: i64 = 15;
 
 /// One planned siege (see [`Sim::siege_plan`]).
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default, PartialEq)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct SiegePlan {
     /// Invading civilization (entity id; 9 999 when no civilizations were exported).
     pub civ: i32,
@@ -72,7 +73,8 @@ pub struct SiegePlan {
 }
 
 /// Extra parameters of a raid group (`raids::spawn_raid_ex`).
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub(crate) struct RaidExtra {
     pub mounts: usize,
     pub masters_pct: u32,

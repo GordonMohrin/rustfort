@@ -40,7 +40,8 @@ const DUST_RADIUS: i32 = 2;
 const DUST_TICKS: u64 = 60;
 
 /// Cave-in counters (see [`Sim::cavein_report`]).
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub struct CaveInReport {
     /// Support checks after digging or deconstruction.
     pub checks: u64,
@@ -55,7 +56,8 @@ pub struct CaveInReport {
     pub items_destroyed: u32,
 }
 
-#[derive(Default)]
+#[derive(serde::Serialize, serde::Deserialize, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub(crate) struct CaveIns {
     pub rep: CaveInReport,
     /// Tiles of support buildings, rebuilt when the building count changes.

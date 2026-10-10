@@ -17,7 +17,7 @@ use std::collections::BinaryHeap;
 
 pub const MAX_GOALS: usize = 16;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug)] // [saves11]
 pub struct Goals {
     pub n: usize,
     pub t: [u32; MAX_GOALS],

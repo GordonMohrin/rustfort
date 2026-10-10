@@ -28,7 +28,8 @@ const MATURE_IN: u32 = 330;
 const DIE_IN: u32 = 240;
 const SEED_IN: u32 = 750;
 
-#[derive(Default)]
+#[derive(serde::Serialize, serde::Deserialize, Default)] // [saves11]
+#[serde(default)] // [saves11]
 pub(crate) struct Growth {
     pub matured: u64,
     pub died: u64,
