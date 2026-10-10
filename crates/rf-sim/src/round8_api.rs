@@ -69,8 +69,10 @@ impl Sim {
 
     /// All leaf filters DF offers for a stockpile category (for the settings editor),
     /// as `category/group/token` strings with a display label.
-    pub fn stockpile_filter_options(&self, _category: &str) -> Vec<(String, String)> {
-        Vec::new()
+    pub fn stockpile_filter_options(&self, category: &str) -> Vec<(String, String)> {
+        // [export9] DF's own leaf list from the export (`World::stockpile_options`); empty for older exports
+        let prefix = format!("{category}/");
+        self.world.stockpile_options.iter().filter(|o| o.path.starts_with(&prefix)).map(|o| (o.path.clone(), o.label.clone())).collect()
     }
 
     pub fn set_kitchen(&mut self, setting: KitchenSetting) {

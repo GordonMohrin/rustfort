@@ -226,6 +226,8 @@ exported wealth for a tier. At 87 citizens that is tier 3 ("10 regulars"), whate
 DF sent at least 137 goblins to the same fort with the same population and 3.2 M item wealth,
 which fits tier 5 (Metropolis, 120 regulars + 40 monsters on the wiki) reached by wealth alone.
 
+**DF's own numbers (exporter round 9, `export/tileshtulon-r7`, live game after the fall):** `plotinfo.progress_population` = 3, `progress_trade` = 5, `progress_production` = 5 (tier indices into `ENEMY_POP/TRADE/PROD_TRIGGER`), created wealth (`tasks.wealth.total`) 1 576 145, exported 216 264, imported 253 175. DF's invasion list holds 5 goblin sieges: 34 (year 274), 58 (275), 143 (277), 101 (278) and 148 (280) units, so DF chose the size by the trade/production tier 5 while the population tier was 3. These values are in `settings.other` (`WEALTH_CREATED=`, `PROGRESS_TRADE=`, `INVASION_HISTORY=`, ...; `rf_import::wealth`, `invasions.json`). The r5 export has none of them; DF keeps only current values, so r5's cannot be recovered. Imported and exported wealth only grow, so r7's are upper bounds for r5.
+
 ## What matches DF
 
 - **Caravans** (4 in 2.18 years, 2 in 1.32 years), **strange moods and artifacts**, tantrums.
@@ -294,6 +296,7 @@ which fits tier 5 (Metropolis, 120 regulars + 40 monsters on the wiki) reached b
   that were made and then eaten, traded or destroyed; compare durable goods only.
 - The r3 export lacks settings, squads' routines and engravings; r4 lacks engravings.
 - XP is compared for dwarves present at both ends; DF's dead or arriving dwarves are not in it.
+- `pop.animals` counts the animals of departed caravans that DF keeps off the map (r4: 60, r5: 80, r6: 82; DF does not simulate them). Since exporter round 9 they import as `flags.inactive` (older exports are repaired by the importer); on the map r4 had about 117 and r5 about 109 animals. `validate` should filter `!flags.inactive` for this row.
 
 ## Appendix: full table r4 -> r5 (as printed by the tool)
 

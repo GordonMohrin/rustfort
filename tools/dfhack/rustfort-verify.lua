@@ -387,6 +387,52 @@ do
     end
   end
 end
+-- round 9: DF's active list (units DF simulates), caged units at their cage item, squad ammo, wealth,
+-- invasions, sizes of a few stockpile option groups (counted here from the raws, independently)
+do
+  local active = {}
+  for _, u in ipairs(df.global.world.units.active) do active[u.id] = true end
+  local cage = {}
+  for _, it in ipairs(df.global.world.items.other.CAGE) do
+    for _, r in ipairs(it.general_refs) do
+      if r:getType() == df.general_ref_type.CONTAINS_UNIT then
+        local x, y, z = dfhack.items.getPosition(it)
+        if type(x) == 'userdata' then x, y, z = x.x, x.y, x.z end
+        if x then cage[r.unit_id] = { x, y, z } end
+      end
+    end
+  end
+  for _, u in ipairs(df.global.world.units.all) do
+    if not dfhack.units.isDead(u) then
+      local p = { u.pos.x, u.pos.y, u.pos.z }
+      if p[1] < 0 and u.flags1.caged and cage[u.id] then p = cage[u.id] end
+      out[#out + 1] = ('act %d %d %d %d %d'):format(u.id, active[u.id] and 1 or 0, p[1], p[2], p[3])
+    end
+  end
+  local gid = df.global.plotinfo.group_id
+  for _, s in ipairs(df.global.world.squads.all) do
+    if s.entity_id == gid then
+      local tot = 0
+      for _, a in ipairs(s.ammo.ammunition) do tot = tot + a.amount end
+      out[#out + 1] = ('ammo %d %d %d'):format(s.id, #s.ammo.ammunition, tot)
+    end
+  end
+  local W = df.global.plotinfo.tasks.wealth
+  out[#out + 1] = ('wealth %d %d %d'):format(W.total, W.exported, W.imported)
+  out[#out + 1] = ('invasions %d'):format(#df.global.plotinfo.invasions.list)
+  local MT = raws.mat_table
+  local alive = 0
+  for _, c in ipairs(raws.creatures.all) do if not c.flags.DOES_NOT_EXIST and c.creature_id ~= 'EQUIPMENT_WAGON' then alive = alive + 1 end end
+  local metals, trees = 0, 0
+  for _, m in ipairs(raws.inorganics.all) do if m.material.flags.IS_METAL then metals = metals + 1 end end
+  for _, p in ipairs(raws.plants.all) do if p.flags.TREE then trees = trees + 1 end end
+  out[#out + 1] = ('popt food meat %d'):format(#MT.organic_types[df.organic_mat_category.Meat])
+  out[#out + 1] = ('popt leather mats %d'):format(#MT.organic_types[df.organic_mat_category.Leather])
+  out[#out + 1] = ('popt corpses corpses %d'):format(alive)
+  out[#out + 1] = ('popt coins mats %d'):format(metals)
+  out[#out + 1] = ('popt wood mats %d'):format(trees)
+  out[#out + 1] = ('popt weapons weapon_type %d'):format(#raws.itemdefs.weapons)
+end
 local f = assert(io.open(outp, 'wb'))
 f:write(table.concat(out, '\n'), '\n')
 f:close()

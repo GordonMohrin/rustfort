@@ -234,6 +234,17 @@ pub struct StockpileSettings {
     pub take_from: Vec<i32>,
 }
 
+/// [export9] One leaf DF's stockpile editor offers (exporter round 9, `stockpile_options.json`):
+/// `path` = `category/group/token` in the [`StockpileSettings::filters`] scheme (e.g.
+/// `food/meat/CREATURE:COW:MUSCLE`, `stone/mats/INORGANIC:GRANITE`, `weapons/options/usable`),
+/// `label` = DF's display name (e.g. `cow muscle`, `granite`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct StockpileOption {
+    pub path: String,
+    pub label: String,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Building {
