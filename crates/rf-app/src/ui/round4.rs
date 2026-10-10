@@ -60,40 +60,17 @@ pub struct R4Ui {
     /// Position token whose appoint picker is open.
     pub appoint: Option<String>,
     pub appoint_scroll: usize,
-    /// `CARAVAN_ARRIVAL` flags from DF's announcements.txt (`BOX`, `P`, `R`, ...).
-    pub caravan_flags: Option<Vec<String>>,
     /// `--ui fake-caravan`: a made-up caravan for layout tests while the sim has none.
     pub debug_caravan: Option<TradeStatus>,
 }
 
-/// Flags of an announcement type from the player's DF prefs (then the install's defaults).
-pub fn announcement_flags(df: &std::path::Path, kind: &str) -> Vec<String> {
-    let mut files = Vec::new();
-    if let Some(app) = std::env::var_os("APPDATA") {
-        files.push(std::path::PathBuf::from(app).join("Bay 12 Games").join("Dwarf Fortress").join("prefs").join("announcements.txt"));
-    }
-    files.push(df.join("prefs").join("announcements.txt"));
-    files.push(df.join("data").join("init").join("announcements.txt"));
-    for f in files {
-        let Ok(text) = std::fs::read_to_string(&f) else { continue };
-        if let Some(fl) = parse_announcement_flags(&text, kind) {
-            return fl;
-        }
-    }
-    // DF's default for CARAVAN_ARRIVAL (data/init/announcements.txt).
-    vec!["A_D".into(), "D_D".into(), "ALERT".into()]
-}
-
+/// The flags of one entry of a DF `announcements.txt` (`[KIND:BOX:A_D:...]`). [app9] The
+/// files are read by `round9::ensure_ann` for every announcement type.
 pub fn parse_announcement_flags(text: &str, kind: &str) -> Option<Vec<String>> {
     let tag = format!("[{kind}:");
     let line = text.lines().find(|l| l.trim_start().starts_with(&tag))?;
     let inner = line.trim().trim_start_matches('[').split(']').next()?;
     Some(inner.split(':').skip(1).map(|s| s.to_string()).collect())
-}
-
-/// Whether DF pauses for an announcement with these flags (a BOX pauses in v50; `P` pauses).
-pub fn flags_pause(fl: &[String]) -> bool {
-    fl.iter().any(|f| f == "BOX" || f == "P" || f == "PAUSE")
 }
 
 fn is_caravan_text(t: &str) -> bool {
@@ -172,16 +149,16 @@ fn caravan_arrived(g: &mut Game) {
         let date = date_string(&g.sim.world.calendar);
         g.log.push(LogLine::new(text.clone(), pos, AnnouncementKind::Warning, get_time(), date));
     }
-    if g.r4.caravan_flags.is_none() {
-        g.r4.caravan_flags = Some(announcement_flags(&g.gfx.df_dir, "CARAVAN_ARRIVAL"));
-    }
-    let fl = g.r4.caravan_flags.clone().unwrap_or_default();
-    if flags_pause(&fl) {
+    // [app9] The announcement settings (DF CARAVAN_ARRIVAL flags, changeable in the game).
+    let f = super::round9::flags_by_id(g, "CARAVAN");
+    if f.popup {
         g.paused = true;
         let race = if t.race.is_empty() { String::new() } else { format!(" ({})", super::pretty(&t.race).to_lowercase()) };
         g.r4.popup = Some(Popup { title: "Caravan".into(), text: format!("{text}{race}"), trade: true, pos });
+    } else if f.pause {
+        g.paused = true;
     }
-    if fl.iter().any(|f| f == "R") {
+    if f.recenter {
         if let Some(p) = pos {
             g.cam.focus(p);
         }
@@ -371,6 +348,11 @@ pub fn draw_settings(g: &mut Game) {
     if text_button(&mut g.ui, &g.font, Rect::new(x, r.y + r.h - pad - bh2, 14.0 * 8.0 * s, bh2), "Back", BtnState::Normal) {
         g.menu.page = MenuPage::Main;
     }
+    // [app9] DF announcements.txt: which events pop up, pause, recenter, show.
+    let ab = Rect::new(x + 16.0 * 8.0 * s, r.y + r.h - pad - bh2, 20.0 * 8.0 * s, bh2);
+    if text_button(&mut g.ui, &g.font, ab, "Announcements...", BtnState::Normal) {
+        g.menu.page = MenuPage::Announcements;
+    }
 }
 
 #[cfg(test)]
@@ -382,9 +364,9 @@ mod tests {
         let txt = "[CARAVAN_ARRIVAL:BOX:A_D:D_D:ALERT]\n[NOBLE_ARRIVAL:A_D:D_D]\n";
         let f = parse_announcement_flags(txt, "CARAVAN_ARRIVAL").unwrap();
         assert_eq!(f, vec!["BOX", "A_D", "D_D", "ALERT"]);
-        assert!(flags_pause(&f));
+        assert!(super::super::round9::flags_from_df(&f).popup);
         let d = parse_announcement_flags("[CARAVAN_ARRIVAL:A_D:D_D:ALERT]", "CARAVAN_ARRIVAL").unwrap();
-        assert!(!flags_pause(&d));
+        assert!(!super::super::round9::flags_from_df(&d).popup);
         assert!(parse_announcement_flags(txt, "MERCHANTS_UNLOADING").is_none());
         assert!(is_caravan_text("Merchants have arrived and are unloading their goods."));
     }

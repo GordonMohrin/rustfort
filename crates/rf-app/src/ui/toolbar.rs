@@ -79,7 +79,7 @@ pub const CENTER: &[ToolButton] = &[
     tb(Action::Stockpile, "Stockpiles", "BUTTON_STOCKPILE", Ico::Crate, "D_STOCKPILES", true),
     tb(Action::Zone, "Zones", "BUTTON_ZONE", Ico::Zone, "D_CIVZONE", true),
     tb(Action::Burrow, "Burrows", "BUTTON_BURROW", Ico::Glyph(176, [200, 160, 120]), "D_BURROWS", true),
-    tb(Action::Hauling, "Hauling (not yet)", "BUTTON_HAULING", Ico::Glyph(26, [200, 200, 200]), "", false),
+    tb(Action::Hauling, "Hauling routes (not yet)", "BUTTON_HAULING", Ico::Glyph(26, [200, 200, 200]), "D_HAULING", false),
 ];
 
 pub const RIGHT: &[ToolButton] = &[
@@ -108,10 +108,13 @@ pub const DIG_MENU: &[DigEntry] = &[
 
 fn tip(g: &Game, label: &str, bind: &str) -> String {
     let k = if bind.is_empty() { String::new() } else { g.binds.label(bind) };
-    if k.is_empty() {
-        label.to_string()
-    } else {
-        format!("{label} ({k})")
+    // [app9] Second line: the DF key binding name, like DF's own key hints.
+    match (k.is_empty(), bind.is_empty()) {
+        (false, _) => format!("{label} ({k})
+DF key {bind}"),
+        (true, false) => format!("{label}
+DF key {bind} (not bound)"),
+        _ => label.to_string(),
     }
 }
 
@@ -251,6 +254,10 @@ pub fn draw_toolbar(g: &mut Game) -> f32 {
             }
             Tool::PileLink(..) => {
                 let h = super::round8::link_hint(g).unwrap_or_default(); // [app8]
+                top = draw_hint(g, cx, y, &h);
+            }
+            Tool::Patrol(sq) => {
+                let h = super::round9::patrol_hint(g, sq); // [app9]
                 top = draw_hint(g, cx, y, &h);
             }
             Tool::Link(_) => {

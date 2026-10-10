@@ -33,19 +33,22 @@ pub fn draw_ui(g: &mut Game) {
     super::trade::draw_trade(g); // [round 4]
     super::nobles::draw_nobles(g); // [round 4]
     super::round8::draw_screens(g); // [app8]
+    super::round9::draw_petitions(g); // [app9]
+    super::round9::draw_badges(g, top); // [app9] petitions alert
     draw_status(g, toolbar_top.min(tb_y));
     if g.menu_open {
         draw_menu(g);
     }
     super::alerts::draw_alert(g);
     super::round4::draw_popup(g); // [round 4]
+    super::round9::draw_popups(g); // [app9] announcement boxes
     super::help::draw_hints(g); // [round 6]
     super::help::draw_help(g); // [round 6]
     // Button tooltips win over the map tooltip (multi-line with '\n').
     if let Some((t, p)) = g.ui.tooltip.take() {
         let lines: Vec<(String, Color)> = t.split('\n').map(|l| (l.to_string(), col::TEXT)).collect();
         tooltip_box(g, &lines, p, true);
-    } else if !g.ui.over_ui && !g.menu_open && !g.help_open && g.alert.is_none() && g.r4.popup.is_none() && g.screen == Screen::None && !matches!(g.tool, Tool::Build(_) | Tool::Construct(_)) {
+    } else if !g.ui.over_ui && !g.menu_open && !g.help_open && g.alert.is_none() && g.r4.popup.is_none() && g.r9.popups.is_empty() && g.screen == Screen::None && !matches!(g.tool, Tool::Build(_) | Tool::Construct(_)) {
         map_tooltip(g);
     }
 }
@@ -161,7 +164,7 @@ fn draw_announcements(g: &mut Game, bottom: f32, right: f32) -> f32 {
         .log
         .iter()
         .enumerate()
-        .filter(|(_, l)| now - l.born < 25.0)
+        .filter(|(_, l)| now - l.born < 25.0 && !l.quiet) // [app9] DF D_D off
         .map(|(i, _)| i)
         .collect();
     let start = visible.len().saturating_sub(max_lines);
@@ -235,6 +238,8 @@ fn draw_menu(g: &mut Game) {
         draw_load_menu(g);
     } else if g.menu.page == MenuPage::Settings {
         super::round4::draw_settings(g); // [round 4]
+    } else if g.menu.page == MenuPage::Announcements {
+        super::round9::draw_ann_settings(g); // [app9]
     } else {
         let (w, h) = (380.0 * s, 346.0 * s);
         let r = Rect::new((sw - w) / 2.0, (sh - h) / 2.0, w, h);

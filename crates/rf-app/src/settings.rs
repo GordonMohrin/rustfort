@@ -38,6 +38,24 @@ pub struct Settings {
     pub hints_off: bool,
     /// [app8] The minimap is shown.
     pub minimap: bool,
+    /// [app9] Announcement types changed in the game (DF `announcements.txt` flags); types not
+    /// listed use the DF files' values.
+    pub announcements: Vec<AnnSetting>,
+}
+
+/// [app9] One changed announcement type (`ui::round9::ANN_TYPES` id and its flags).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct AnnSetting {
+    pub id: String,
+    /// DF `BOX`: a pop-up box that pauses.
+    pub popup: bool,
+    /// DF `P`.
+    pub pause: bool,
+    /// DF `R`.
+    pub recenter: bool,
+    /// DF `D_D`.
+    pub show: bool,
 }
 
 impl Default for Settings {
@@ -54,6 +72,7 @@ impl Default for Settings {
             hints_seen: Vec::new(),
             hints_off: false,
             minimap: false,
+            announcements: Vec::new(),
         }
     }
 }
@@ -145,6 +164,7 @@ mod tests {
         assert_eq!(Settings::load_from(&p), Settings::default());
         let mut s = Settings { ui_scale: 1.5, autosave_days: 28, pop_cap: Some(120), ..Default::default() };
         s.hints_seen.push("welcome".into());
+        s.announcements.push(AnnSetting { id: "DEATH".into(), popup: false, pause: true, recenter: false, show: true }); // [app9]
         s.save_to(&p).unwrap();
         let l = Settings::load_from(&p);
         assert_eq!(l, s);

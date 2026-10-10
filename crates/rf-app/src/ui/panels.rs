@@ -1,6 +1,6 @@
 //! Side panels: unit sheet and tile info (right), citizens list (left).
 
-use super::{bar, clip, col, panel, pretty, skill_level_name, text_button, BtnState};
+use super::{bar, clip, col, panel, pretty, text_button, BtnState};
 use crate::font::GH;
 use super::psyche::{stress_color, stress_face, stress_rank};
 use crate::game::{CitSort, Game, Selected};
@@ -252,28 +252,14 @@ fn unit_sheet(g: &mut Game, id: i32, r: Rect) {
                     if y > r.y + r.h - lh - pad {
                         break;
                     }
-                    g.font.draw(&clip(&format!("{} {}", skill_level_name(k.rating), pretty(&k.id).to_lowercase()), maxc), x, y, s, col::TEXT);
+                    g.font.draw(&clip(&super::round9::skill_title(k), maxc), x, y, s, col::TEXT); // [app9] DF names
                     y += lh;
                 }
             }
         }
         1 => {
-            let mut sk = u.skills.clone();
-            sk.sort_by(|a, b| b.rating.cmp(&a.rating).then(b.xp.cmp(&a.xp)));
-            if sk.is_empty() {
-                g.font.draw("No skills.", x, y, s, col::TEXT_DIM);
-            }
-            for k in sk {
-                if y > r.y + r.h - lh - pad {
-                    break;
-                }
-                let name = pretty(&k.id);
-                let lvl = format!("{} ({})", skill_level_name(k.rating), k.rating);
-                g.font.draw(&clip(&name, 24), x, y, s, col::TEXT);
-                let lc = if k.rating >= 10 { col::TEXT_HI } else { col::TEXT_GOOD };
-                g.font.draw(&lvl, x + 26.0 * 8.0 * s, y, s, lc);
-                y += lh;
-            }
+            // [app9] DF skill names, levels and experience bars (scrolls).
+            super::round9::draw_skills(g, &u, x, y, bw, r.y + r.h - pad);
         }
         2 => {
             if u.labors.is_empty() {

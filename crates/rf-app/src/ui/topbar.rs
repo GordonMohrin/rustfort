@@ -76,12 +76,29 @@ pub fn draw_topbar(g: &mut Game) {
     if text_button(&mut g.ui, &g.font, pr, pause_label, if g.paused { BtnState::Active } else { BtnState::Normal }) {
         g.paused = !g.paused;
     }
+    if g.ui.hovered(pr) {
+        // [app9] tooltips with the DF keys
+        let k = g.binds.label("D_PAUSE");
+        let one = g.binds.label("D_ONESTEP");
+        g.ui.tooltip = Some((format!("{} ({k})
+One step while paused: {one}", if g.paused { "Unpause" } else { "Pause" }), vec2(pr.x, h + 40.0 * s)));
+    }
     x += pr.w + 4.0 * s;
-    for sp in Speed::ALL {
+    for (i, sp) in Speed::ALL.into_iter().enumerate() {
         let st = if g.speed == sp { BtnState::Active } else { BtnState::Normal };
-        if text_button(&mut g.ui, &g.font, Rect::new(x, by, bw, bh), sp.label(), st) {
+        let br = Rect::new(x, by, bw, bh);
+        if text_button(&mut g.ui, &g.font, br, sp.label(), st) {
             g.speed = sp;
             g.paused = false;
+        }
+        if g.ui.hovered(br) {
+            let k = g.binds.label(&format!("RF_SPEED_{}", i + 1));
+            let what = match sp.tps() {
+                Some(t) => format!("{t:.0} ticks per second (DF's default cap is 100)"),
+                None => "as fast as the machine allows".to_string(),
+            };
+            g.ui.tooltip = Some((format!("Speed {} ({k})
+{what}", sp.label()), vec2(br.x, h + 40.0 * s)));
         }
         x += bw + 3.0 * s;
     }

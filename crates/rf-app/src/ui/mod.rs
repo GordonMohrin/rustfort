@@ -24,6 +24,7 @@ pub mod reports;
 pub mod round4; // [round 4]
 pub mod round5; // [round 5]
 pub mod round8; // [app8]
+pub mod round9; // [app9]
 pub mod stockpile_ed; // [app8]
 pub mod toolbar;
 pub mod topbar;
