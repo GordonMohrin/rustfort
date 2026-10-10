@@ -503,6 +503,62 @@ pub fn fmt_bytes(n: u64) -> String {
     }
 }
 
+/// [saves10] The world in the frozen v0.9 types (field by field through MessagePack), as
+/// Rustfort 0.9 held it in memory; for converter checks (`savebench`, tests).
+pub fn to_v09(w: &World) -> Result<rf_save_v09::World, String> {
+    fn tc<A: Serialize, B: serde::de::DeserializeOwned>(a: &A) -> Result<B, String> {
+        rmp_serde::from_slice(&rmp_serde::to_vec_named(a).map_err(|e| e.to_string())?).map_err(|e| e.to_string())
+    }
+    Ok(rf_save_v09::World {
+        meta: tc(&w.meta)?,
+        calendar: tc(&w.calendar)?,
+        dims: tc(&w.dims)?,
+        tiles: w.tiles.iter().map(|t| rf_save_v09::Tile { tt: t.tt, mat: t.mat, flags: t.flags, liquid: t.liquid, desig: t.desig }).collect(),
+        tiletypes: tc(&w.tiletypes)?,
+        materials: tc(&w.materials)?,
+        units: tc(&w.units)?,
+        items: tc(&w.items)?,
+        buildings: tc(&w.buildings)?,
+        plants: tc(&w.plants)?,
+        work_orders: tc(&w.work_orders)?,
+        plant_raws: tc(&w.plant_raws)?,
+        creature_raws: tc(&w.creature_raws)?,
+        weapon_raws: tc(&w.weapon_raws)?,
+        armor_raws: tc(&w.armor_raws)?,
+        squads: tc(&w.squads)?,
+        burrows: tc(&w.burrows)?,
+        entities: tc(&w.entities)?,
+        nobles: tc(&w.nobles)?,
+        settings: tc(&w.settings)?,
+        hist_figs: tc(&w.hist_figs)?,
+        caravans: tc(&w.caravans)?,
+        engravings: tc(&w.engravings)?,
+        constructions: tc(&w.constructions)?,
+        carve_designations: tc(&w.carve_designations)?,
+        work_details: tc(&w.work_details)?,
+        kitchen: tc(&w.kitchen)?,
+        locations: tc(&w.locations)?,
+        crimes: tc(&w.crimes)?,
+        haul_routes: tc(&w.haul_routes)?,
+        stockpile_options: tc(&w.stockpile_options)?,
+        fort_history: tc(&w.fort_history)?,
+    })
+}
+
+/// [saves10] Write `world` as a Rustfort 0.9 (format 1) file, for converter checks.
+pub fn write_v09_file(world: &World, seed: u64, path: &Path) -> Result<(), String> {
+    let old = to_v09(world)?;
+    let raw = bincode::serialize(&old).map_err(|e| e.to_string())?;
+    let h = header_for(world, seed);
+    let hdr = SaveHeaderV1 { fort: h.fort, fort_native: h.fort_native, date: h.date, year: h.year, year_tick: h.year_tick, citizens: h.citizens, saved_unix: h.saved_unix, seed, source: h.source };
+    let hdr = bincode::serialize(&hdr).map_err(|e| e.to_string())?;
+    let mut file = MAGIC_V1.to_vec();
+    file.extend_from_slice(&(hdr.len() as u32).to_le_bytes());
+    file.extend_from_slice(&hdr);
+    file.extend_from_slice(&zstd::stream::encode_all(&raw[..], LEVEL).map_err(|e| e.to_string())?);
+    std::fs::write(path, file).map_err(|e| e.to_string())
+}
+
 /// `rustfort savebench`: save + load the world and report time and size.
 /// [saves10] Runs the sim for `RUSTFORT_SAVEBENCH_TICKS` (default 2000) ticks first so the
 /// module state is not empty, and compares with the old bincode format.
@@ -515,6 +571,7 @@ pub fn bench(world: World, seed: u64) {
     let world = sim.world_for_save();
     let snap = t.elapsed().as_secs_f64();
     let t = Instant::now();
+    // (Current types; tiles are columns here too, so this is only a size/speed reference.)
     let raw_v1 = bincode::serialize(&world).map(|v| v.len()).unwrap_or(0);
     let ser_v1 = t.elapsed().as_secs_f64();
     let t = Instant::now();
@@ -547,6 +604,8 @@ pub fn bench(world: World, seed: u64) {
     println!("verify: {:?} in {:.3}s", v.as_ref().map(|h| h.body_crc32), t.elapsed().as_secs_f64());
     match load_world(&info.path) {
         Ok((w2, li)) => {
+            let lossless = encode_world(&w2).ok() == encode_world(&world).ok();
+            println!("lossless (re-encoding the loaded world gives the same bytes): {lossless}");
             let t = Instant::now();
             let sim2 = rf_sim::Sim::new(w2, seed);
             let sim_s = t.elapsed().as_secs_f64();
@@ -565,6 +624,26 @@ pub fn bench(world: World, seed: u64) {
         Err(e) => eprintln!("load failed: {e}"),
     }
     let _ = std::fs::remove_file(&info.path);
+    // [saves10] A Rustfort 0.9 save of this world converts back to the same world.
+    let p = dir.join("v09-check.rfsave");
+    let mut plain = world.clone();
+    plain.sim_state.clear();
+    match write_v09_file(&plain, seed, &p) {
+        Ok(()) => {
+            let bytes = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+            match load_world(&p) {
+                Ok((w1, li)) => println!(
+                    "v0.9 save: {} file, load + convert {:.3}s, identical to the original: {}",
+                    fmt_bytes(bytes),
+                    li.secs,
+                    encode_world(&w1).ok() == encode_world(&plain).ok()
+                ),
+                Err(e) => eprintln!("v0.9 save did not load: {e}"),
+            }
+        }
+        Err(e) => eprintln!("writing a v0.9 save failed: {e}"),
+    }
+    let _ = std::fs::remove_file(&p);
 }
 
 #[cfg(test)]

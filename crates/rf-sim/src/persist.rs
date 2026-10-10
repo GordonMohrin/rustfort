@@ -29,6 +29,22 @@ struct CoreState {
     ticks: u64,
     next_item_id: i32,
     seed: u64,
+    /// Per-unit state that `rf_core::Unit` does not hold.
+    ai: Vec<AiS>,
+}
+
+/// Need counters of non-citizens (citizens' are mirrored into `Unit`) and sleep in progress.
+#[derive(Serialize, Deserialize, Default)]
+#[serde(default)]
+struct AiS {
+    slot: u32,
+    uid: i32,
+    thirst: i32,
+    hunger: i32,
+    sleep: i32,
+    /// Asleep: bed index (-1 = on the floor) and the bed's tile, and the wake-up check tick.
+    bed: Option<(i32, u32)>,
+    wake: u64,
 }
 
 /// Tick count stored in a `core` entry (for the save header).
@@ -60,7 +76,22 @@ impl Sim {
     /// [saves10] The modules' runtime state (what [`Sim::world_for_save`] puts into the save).
     pub fn save_modules(&self) -> BTreeMap<String, String> {
         let mut m = BTreeMap::new();
-        put(&mut m, "core", &CoreState { version: CORE_VERSION, ticks: self.ticks, next_item_id: self.next_item_id, seed: self.seed });
+        let mut ai = Vec::new();
+        for (s, a) in self.ai.iter().enumerate() {
+            let bed = match a.task {
+                crate::Task::Sleep(b) if a.sleeping && a.kind != crate::Kind::Dead => Some((b, if b >= 0 { self.beds[b as usize].tile } else { a.pos })),
+                _ => None,
+            };
+            let (thirst, hunger, sleep) = self.needs_now(a);
+            // Citizens' needs are mirrored into `Unit`; others only if they differ from it.
+            let u = &self.world.units[a.uidx];
+            let mirrored = a.kind == crate::Kind::Worker || (thirst, hunger, sleep) == (u.thirst_timer.max(0), u.hunger_timer.max(0), u.sleepiness_timer.max(0));
+            if mirrored && bed.is_none() {
+                continue;
+            }
+            ai.push(AiS { slot: s as u32, uid: a.id, thirst, hunger, sleep, bed, wake: if bed.is_some() { a.wake } else { 0 } });
+        }
+        put(&mut m, "core", &CoreState { version: CORE_VERSION, ticks: self.ticks, next_item_id: self.next_item_id, seed: self.seed, ai });
         self.locs_save(&mut m); // locations: visitors, petitions, arrivals
         self.moods_save(&mut m); // moods: counter, active mood, records
         self.ind_save(&mut m); // industry: melt fractions, fuel, counters
@@ -86,6 +117,30 @@ impl Sim {
         }
         if let Some(c) = get::<CoreState>(saved, "core") {
             self.next_item_id = self.next_item_id.max(c.next_item_id);
+            for a in c.ai {
+                let s = a.slot as usize;
+                if s >= self.ai.len() || self.ai[s].id != a.uid {
+                    continue;
+                }
+                if self.ai[s].kind != crate::Kind::Worker {
+                    let ai = &mut self.ai[s];
+                    ai.thirst = a.thirst;
+                    ai.hunger = a.hunger;
+                    ai.sleep = a.sleep;
+                }
+                if let Some((b, tile)) = a.bed {
+                    let ok = b < 0 || ((b as usize) < self.beds.len() && self.beds[b as usize].tile == tile && self.beds[b as usize].occupant == crate::NONE);
+                    if ok && self.ai[s].pos == if b >= 0 { tile } else { self.ai[s].pos } {
+                        if b >= 0 {
+                            self.beds[b as usize].occupant = s as u32;
+                        }
+                        let ai = &mut self.ai[s];
+                        ai.task = crate::Task::Sleep(b);
+                        ai.sleeping = true;
+                        ai.wake = a.wake.max(self.ticks + 1);
+                    }
+                }
+            }
         }
         self.locs_restore(saved);
         self.moods_restore(saved);

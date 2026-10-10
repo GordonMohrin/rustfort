@@ -152,7 +152,7 @@ impl Sim {
             .collect();
         self.moods.active = None;
         let Some(a) = s.active else { return };
-        if a.slot >= self.ai.len() || self.ai[a.slot].id != a.uid || self.ai[a.slot].kind == Kind::Dead {
+        if a.slot >= self.ai.len() || self.ai[a.slot].id != a.uid || self.ai[a.slot].kind == Kind::Dead || self.moods.records.is_empty() {
             return;
         }
         let Some(kind) = ALL_KINDS.iter().copied().find(|k| k.name() == a.kind) else { return };
