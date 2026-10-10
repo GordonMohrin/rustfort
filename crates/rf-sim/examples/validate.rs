@@ -3,6 +3,11 @@
 //!   cargo run -p rf-sim --release --example validate -- --from <export A> --to <export B>
 //!       [--seeds 1,2,3,4,5] [--jobs 3] [--ticks N] [--no-invasions] [--no-standdown]
 //!       [--gamelog <DF gamelog.txt> --gl-from <line> --gl-to <line>] [--md <out.md>]
+//!       [--deaths <day:n,day:n,...>]
+//!
+//! [skills9] `--deaths` kills n citizens (soldiers first) on the given day of the run, to
+//! replay the real fort's losses (e.g. `25:11,580:1,650:3` for r4 -> r5) when the sim's own
+//! sieges are weaker than DF's; used to calibrate grief and fear stress.
 //!
 //! A and B are two real DF exports of the same fort (e.g. `tileshtulon-r4`, year 277, and
 //! `tileshtulon`, year 279). The tool
@@ -353,6 +358,8 @@ struct Opts {
     /// After a fight, go back to the squads' schedules of the start export (Gordon's routine,
     /// e.g. constant training) instead of `Off duty` for everyone.
     restore: bool,
+    /// [skills9] Scripted deaths: (day of the run, citizens killed).
+    deaths: Vec<(u64, usize)>,
 }
 
 struct RunOut {
@@ -390,6 +397,20 @@ fn run_seed(start: &World, ticks: u64, seed: u64, opt: &Opts, years: f64) -> Run
         let n = 100u64.min(ticks - done);
         sim.run_ticks(n as u32);
         done += n;
+        // [skills9] scripted deaths (soldiers first, then the oldest citizens by slot order)
+        for &(day, k) in &opt.deaths {
+            let at = day * rf_core::TICKS_PER_DAY as u64;
+            if at > done - n && at <= done {
+                let in_squad: BTreeSet<i32> = sim.world.squads.iter().flat_map(|q| q.members.iter().copied()).collect();
+                let mut ids: Vec<(bool, i32)> = sim.world.citizens().filter(|u| u.age >= 13.0).map(|u| (!in_squad.contains(&u.id), u.id)).collect();
+                ids.sort();
+                let step = (ids.len() / k.max(1)).max(1);
+                let pick: Vec<i32> = if ids.iter().filter(|x| !x.0).count() >= k { ids.iter().take(k).map(|x| x.1).collect() } else { ids.iter().step_by(step).take(k).map(|x| x.1).collect() };
+                for id in pick {
+                    sim.kill_unit(id, "has been found dead");
+                }
+            }
+        }
         if standdown {
             let cits: Vec<rf_core::Pos> = sim.world.citizens().map(|u| u.pos).collect();
             let threat = sim.hostiles().iter().any(|&id| {
@@ -546,7 +567,10 @@ fn main() {
     let jobs: usize = get("--jobs").and_then(|s| s.parse().ok()).unwrap_or(3).max(1);
     let invasions = !flag("--no-invasions");
     let standdown = !flag("--no-standdown");
-    let opts = Opts { invasions, standdown, standing: flag("--standing-orders"), restore: flag("--restore-schedules") };
+    let deaths: Vec<(u64, usize)> = get("--deaths")
+        .map(|s| s.split(',').filter_map(|p| p.split_once(':')).filter_map(|(d, n)| Some((d.trim().parse().ok()?, n.trim().parse().ok()?))).collect())
+        .unwrap_or_default(); // [skills9]
+    let opts = Opts { invasions, standdown, standing: flag("--standing-orders"), restore: flag("--restore-schedules"), deaths };
 
     let t0 = Instant::now();
     let mut a = load(&from);

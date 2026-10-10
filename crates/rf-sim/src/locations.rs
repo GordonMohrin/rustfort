@@ -693,6 +693,9 @@ impl Sim {
             // Music / dance (MakeMerry) or poetry / story (HearEloquence), fixed per performer.
             let eloquent = self.ai[p].id % 3 == 2;
             if self.s2_citizen(p) {
+                if eloquent {
+                    self.add_xp(p, "SPEAKING", crate::skills::XP_USE); // [skills9] poetry / story
+                }
                 self.feel(p, "Perform", Class::PosMild, 80, -1, 0, now);
                 self.s2_satisfy(p, "BeCreative");
                 self.s2_satisfy(p, "StayOccupied");
@@ -746,6 +749,7 @@ impl Sim {
             self.s2_satisfy(s, "LearnSomething");
             self.s2_satisfy(s, "ThinkAbstractly");
             self.feel(s, "ReadBook", Class::Pos, 100, -1, 0, now);
+            self.skills_read(s); // [skills9] Student, Concentration
             self.locs.rep.books_read += 1;
             if let Some(n) = self.locs.next_read.get_mut(s) {
                 *n = now + 7 * DAY;

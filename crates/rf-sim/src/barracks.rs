@@ -17,10 +17,10 @@
 //!
 //! # Estimates
 //! - Training spots: the barracks' walkable tiles in row order, position p at tile `(p/2)*3`,
-//!   the odd partner next to it. Sparring doubles the weapon experience (6 instead of 3 per
-//!   100 ticks) and gives 2 DODGING; an injury (a bruise) in 1 of 2000 bouts. Demonstration:
-//!   a squadmate within 3 tiles with a weapon skill 2+ levels higher gives 2 extra experience,
-//!   1 in 10 training rounds.
+//!   the odd partner next to it. An injury (a bruise) in 1 of 2000 bouts. [skills9] Sparring
+//!   needs both partners at Competent Fighting; a demonstration needs a squadmate within 3 tiles
+//!   2+ levels better in the demonstrated skill (rotating weapon, Fighting, Discipline,
+//!   Dodging). The experience amounts live in `skills.rs`.
 //! - Soldiers on duty sleep in barracks beds whenever their squad has a barracks with a free bed
 //!   (DF's per-routine sleep setting is not exported). Patrol waypoints: wait 50 ticks at each.
 //! - Ammo amount: each soldier keeps up to `amount / members` rounds (at most a quiver of 50).
@@ -233,22 +233,32 @@ impl Sim {
         true
     }
 
-    /// Sparring and demonstrations for a soldier training at its barracks spot.
-    pub(crate) fn barracks_spar(&mut self, s: usize, now: u64) {
+    /// Sparring and demonstrations for a soldier training at its barracks spot: who is around
+    /// ([skills9] the experience itself is given by `skills_train_round`). `skill` is the
+    /// soldier's weapon skill.
+    pub(crate) fn barracks_spar(&mut self, s: usize, now: u64, skill: &str) -> crate::skills::TrainScene {
+        let mut scene = crate::skills::TrainScene::default();
         let spot = self.combat.f[s].spot;
         if spot == NONE || self.ai[s].pos != spot {
-            return;
+            return scene;
         }
         let sq = self.combat.f[s].squad;
         let me = self.upos(s);
-        let skill = match self.wielded(s) {
-            Some((_, w)) => self.combat.weapons[w as usize].skill.clone(),
-            None => "WRESTLING".to_string(),
+        // [skills9] The demonstrated skill rotates: weapon, Fighting, Discipline, Dodging.
+        scene.demo_skill = ((now / 100) % 4) as u8;
+        let demo = match scene.demo_skill {
+            0 => skill,
+            1 => "MELEE_COMBAT",
+            2 => "DISCIPLINE",
+            _ => "DODGING",
         };
-        let my_rating = self.world.units[self.ai[s].uidx].skill(&skill);
+        let my_rating = self.world.units[self.ai[s].uidx].skill(demo);
+        // [skills9] w:Sparring: both need at least Competent (3) Fighting.
+        let my_fight = self.world.units[self.ai[s].uidx].skill("MELEE_COMBAT");
         let members: Vec<i32> = self.world.squads.iter().find(|q| q.id == sq).map(|q| q.members.clone()).unwrap_or_default();
         let mut partner = false;
-        let mut teacher = false;
+        let mut near = 0;
+        let mut teacher: Option<(i32, usize)> = None;
         for uid in members {
             let Some(&t) = self.unit_slot.get(&uid) else { continue };
             if t == s || t >= self.combat.f.len() || self.ai[t].kind != Kind::Worker {
@@ -259,26 +269,29 @@ impl Sim {
                 continue;
             }
             let d = me.dist(self.upos(t));
-            if d <= 1 {
+            let ut = &self.world.units[self.ai[t].uidx];
+            if d <= 1 && my_fight >= 3 && ut.skill("MELEE_COMBAT") >= 3 {
                 partner = true;
             }
-            if d <= 3 && self.world.units[self.ai[t].uidx].skill(&skill) >= my_rating + 2 {
-                teacher = true;
+            if d <= 5 {
+                near += 1;
+            }
+            let tr = ut.skill(demo);
+            if d <= 3 && tr >= my_rating + 2 && teacher.map(|b| tr > b.0).unwrap_or(true) {
+                teacher = Some((tr, t));
             }
         }
+        scene.partner = partner;
+        scene.watching = near >= 2;
+        scene.teacher = teacher.map(|t| t.1);
         let mut r = Rng::for_unit(self.seed, s, now, 0x5BA2);
         if partner {
             self.combat.stats.sparring += 1;
-            self.add_xp(s, &skill, 3);
-            self.add_xp(s, "DODGING", 1);
             if r.chance(1, 2000) {
                 self.sparring_bruise(s, &mut r);
             }
         }
-        if teacher && r.chance(1, 10) {
-            self.combat.stats.demonstrations += 1;
-            self.add_xp(s, &skill, 2);
-        }
+        scene
     }
 
     /// A rare sparring injury: a bruise on an outer body part.

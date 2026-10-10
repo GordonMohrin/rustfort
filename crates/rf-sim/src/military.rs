@@ -24,8 +24,9 @@
 //!   mill about inside the burrow.
 //!
 //! # Estimates
-//! - Training experience: 3 XP per 100 ticks for the weapon skill (or WRESTLING when unarmed),
-//!   1 each for DODGING, ARMOR, MELEE_COMBAT, SHIELD (with a shield).
+//! - [skills9] Training experience every 100 ticks: individual drills, sparring, watching bouts
+//!   and demonstrations, see `skills.rs` (calibrated to Gordon's 14.5k military XP per
+//!   dwarf-year).
 //! - [r7] Under an alert, meals, drinks and beds outside the burrow are still used (DF prefers
 //!   the burrow's own); doctor, burial, depot and lever jobs are not taken under an alert.
 //!   Hauling picks the nearest item inside the burrow over all wanted stockpile categories.
@@ -431,26 +432,23 @@ impl Sim {
                 }
                 if now >= self.combat.f[s].train_at {
                     self.combat.f[s].train_at = now + 100;
-                    self.train_xp(s);
-                    self.barracks_spar(s, now); // [military2] sparring, demonstrations
+                    self.train_round(s, now); // [skills9] drills, sparring, demonstrations
                 }
                 self.ai[s].wake = now + 50;
             }
         }
     }
 
-    fn train_xp(&mut self, s: usize) {
+    /// [skills9] One training round (every 100 ticks): individual drill or sparring,
+    /// watching bouts, demonstrations (`barracks_spar` finds the partners, `skills.rs` gives
+    /// the experience).
+    fn train_round(&mut self, s: usize, now: u64) {
         let skill = match self.wielded(s) {
             Some((_, w)) => self.combat.weapons[w as usize].skill.clone(),
             None => "WRESTLING".to_string(),
         };
-        self.add_xp(s, &skill, 3);
-        self.add_xp(s, "DODGING", 1);
-        self.add_xp(s, "ARMOR", 1);
-        self.add_xp(s, "MELEE_COMBAT", 1);
-        if self.world.units[self.ai[s].uidx].inventory.iter().any(|id| self.item_idx.get(id).map(|&i| self.world.items[i as usize].kind == "SHIELD").unwrap_or(false)) {
-            self.add_xp(s, "SHIELD", 1);
-        }
+        let scene = self.barracks_spar(s, now, &skill);
+        self.skills_train_round(s, &skill, scene, now);
     }
 
     /// Nearest free item for a missing uniform piece of soldier `s`.

@@ -102,6 +102,8 @@ pub use animals::AnimalReport; // [animals]
 pub mod locations; // [society2] temples, taverns, libraries, visitors, petitions
 pub mod justice; // [society2] crimes, investigation, punishment
 pub mod lifestyle; // [society2] clothing wear, meal quality, kitchen, miasma, rain
+pub mod skills; // [skills9] experience per job, item quality, training, social skills
+pub mod growth; // [skills9] saplings grow into trees, trees regrow
 pub use justice::JusticeReport; // [society2]
 pub use lifestyle::LifestyleReport; // [society2]
 pub use locations::{LocationReport, Petition, VisitorRole}; // [society2]
@@ -612,6 +614,9 @@ pub struct Sim {
     locs: locations::Locs,
     justice: justice::Justice,
     life: lifestyle::Life,
+    /// [skills9] Skill and quality counters; tree growth state.
+    skills: skills::SkillsReport,
+    growth: growth::Growth,
 }
 
 #[inline]
@@ -723,6 +728,8 @@ impl Sim {
             locs: locations::Locs::default(), // [society2]
             justice: justice::Justice::default(), // [society2]
             life: lifestyle::Life::default(), // [society2]
+            skills: skills::SkillsReport::default(), // [skills9]
+            growth: growth::Growth::default(), // [skills9]
         };
         sim.init_plants();
         sim.init_units();
@@ -1278,6 +1285,9 @@ impl Sim {
         self.animals_tick(now); // [animals]
         if now % locations::S2_PERIOD == locations::S2_PHASE {
             self.society2_pass(now); // [society2]
+        }
+        if now % rf_core::TICKS_PER_DAY as u64 == 611 {
+            self.growth_day(now); // [skills9] saplings grow, trees seed
         }
         let t0 = Instant::now();
         self.phase[9] += (t0 - tq).as_secs_f64(); // [perf]
@@ -1872,7 +1882,8 @@ impl Sim {
                         JobKind::Chop => self.fell_tree(s, tile, now),
                         JobKind::Gather => self.gather(s, tile, now),
                     }
-                    self.add_xp(s, kind.skill(), 30);
+                    // [skills9] wiki Experience: mining 10 per tile, other jobs 30.
+                    self.add_xp(s, kind.skill(), if matches!(kind, JobKind::Dig(_)) { skills::XP_STONECUT } else { skills::XP_USE });
                     self.stats.jobs_done += 1;
                     self.jobs[j as usize].claimed = NONE;
                     self.remove_job(j);
@@ -2308,10 +2319,11 @@ impl Sim {
         };
         sk.xp += xp;
         let r0 = sk.rating; // [social]
-        // DF: the next level needs 500 + 100 * current level experience.
+        // DF: the next level needs 500 + 100 * current level experience, with no upper
+        // limit ([skills9] the old cap at 20 is gone; w:Skill, Gordon's fort has levels > 100).
         loop {
             let need = 500 + 100 * sk.rating;
-            if sk.rating >= 20 || sk.xp < need {
+            if sk.xp < need {
                 break;
             }
             sk.xp -= need;

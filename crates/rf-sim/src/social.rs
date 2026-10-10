@@ -1486,7 +1486,7 @@ impl Sim {
                 other = Some((code, u.id));
             }
         }
-        let Some((code, _)) = other else { return };
+        let Some((code, other_id)) = other else { return };
         self.satisfy(s, "Socialize");
         match code {
             3 => {
@@ -1509,6 +1509,8 @@ impl Sim {
         }
         if r.chance(1, 4) {
             self.social.conversations += 1;
+            let partner_stress = self.world.unit(other_id).map(|u| u.stress).unwrap_or(0); // [skills9]
+            self.skills_talked(s, code, partner_stress, now); // [skills9] conversation skills
             if code == -2 {
                 self.feel(s, "Argument", Class::NegMild, 80, -1, 0, now);
             } else {

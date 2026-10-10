@@ -1475,7 +1475,11 @@ impl Sim {
                     Some(old) if old != p => {
                         self.prod.order_period.insert(id, p);
                         let o = &mut self.world.work_orders[oi];
+                        let ran = o.amount_left < o.amount_total; // [skills9]
                         o.amount_left = o.amount_total;
+                        if ran {
+                            self.skills_order_approved(); // [skills9] the manager approves the order again
+                        }
                     }
                     _ => {}
                 }
@@ -2098,6 +2102,7 @@ impl Sim {
         match wj.kind {
             WK::Shop { bid, recipe, order_id } => {
                 let rec = &RECIPES[recipe as usize];
+                let first_new = self.next_item_id; // [skills9]
                 match rec.input {
                     // Both brew reactions have a SEEDS product (raws: SEED_MAT of the plant).
                     Input::BrewPlant | Input::BrewFruit => self.finish_brew(&wj, rec.count as i32, true),
@@ -2122,7 +2127,7 @@ impl Sim {
                         }
                     }
                 }
-                self.add_xp(s, rec.skill, 30);
+                self.skills_job_done(s, rec.skill, first_new, now); // [skills9] quality roll, 30 (+30 quality) XP
                 self.prod.done[recipe as usize] += 1;
                 // Remove the queue entry (repeat jobs stay), count the order.
                 if let Some(si) = self.prod.shops.iter().position(|sh| sh.bid == bid) {
@@ -2158,7 +2163,7 @@ impl Sim {
                         t.skill = skill;
                     }
                 }
-                self.add_xp(s, "PLANT", 20);
+                self.add_xp(s, "PLANT", crate::skills::XP_USE); // [skills9] wiki: 30 per use
                 self.prod.done[DONE_PLANT] += 1;
             }
             WK::Harvest { bid, k } => {
@@ -2186,7 +2191,7 @@ impl Sim {
                         self.list_consumable(id);
                     }
                 }
-                self.add_xp(s, "PLANT", 20);
+                self.add_xp(s, "PLANT", crate::skills::XP_USE); // [skills9] wiki: 30 per use
                 self.prod.done[DONE_HARVEST] += 1;
             }
             WK::Construct { bid } => {
