@@ -82,6 +82,6 @@ impl Sim {
     }
 
     pub fn mood_info(&self, unit_id: i32) -> MoodInfo {
-        MoodInfo { mood: self.world.unit(unit_id).map(|u| u.mood.clone()).unwrap_or_default(), workshop: -1, ..Default::default() }
+        self.mood_info_impl(unit_id) // [moods]
     }
 }
