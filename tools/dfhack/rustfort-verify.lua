@@ -301,6 +301,92 @@ do
   out[#out + 1] = ('caravans %d'):format(#df.global.plotinfo.caravans)
   out[#out + 1] = ('mandates %d'):format(#df.global.world.mandates.all)
 end
+-- round 8: work details, kitchen, locations (zones via civzone.location_id, holders via world.occupations),
+-- crimes, animals, pregnancies, stockpile links and sampled filter leaves (tokens resolved here independently)
+do
+  for i, d in ipairs(df.global.plotinfo.labor_info.work_details) do
+    local nl = 0
+    for l = 0, df.unit_labor._last_item do if try(function() return d.allowed_labors[l] end) then nl = nl + 1 end end
+    out[#out + 1] = ('wd %d %s %d %d %s'):format(i, df.work_detail_mode[d.flags.mode] or '?', #d.assigned_units, nl, d.name)
+  end
+  local k = df.global.plotinfo.kitchen
+  local cook, brew = 0, 0
+  for i = 0, #k.exc_types - 1 do
+    if k.exc_types[i].Cook then cook = cook + 1 end
+    if k.exc_types[i].Brew then brew = brew + 1 end
+  end
+  out[#out + 1] = ('kitchen %d %d %d'):format(#k.item_types, cook, brew)
+  local site_id = df.global.plotinfo.site_id
+  local zones, holders = {}, {}
+  for _, b in ipairs(df.global.world.buildings.all) do
+    if b:getType() == df.building_type.Civzone and b.location_id >= 0 then zones[b.location_id] = (zones[b.location_id] or 0) + 1 end
+  end
+  for _, o in ipairs(df.global.world.occupations.all) do
+    if o.site_id == site_id and o.location_id >= 0 and o.unit_id >= 0 then holders[o.location_id] = (holders[o.location_id] or 0) + 1 end
+  end
+  for _, ab in ipairs(df.global.plotinfo.main.fortress_site.buildings) do
+    out[#out + 1] = ('loc %d %s %d %d %d'):format(ab.id, df.abstract_building_type[ab:getType()], zones[ab.id] or 0, holders[ab.id] or 0,
+      try(function() return ab.contents.location_value end) or -1)
+  end
+  local nc, ns = 0, 0
+  for _, c in ipairs(df.global.world.crimes.all) do
+    if c.site == site_id then nc = nc + 1; if c.flags.sentenced then ns = ns + 1 end end
+  end
+  out[#out + 1] = ('crimes %d %d'):format(nc, ns)
+  for _, u in ipairs(df.global.world.units.active) do
+    if dfhack.units.isAnimal(u) and dfhack.units.isTame(u) and not dfhack.units.isDead(u) then
+      out[#out + 1] = ('animal %d %d %s %d %d'):format(u.id, u.relationship_ids.PetOwner, df.animal_training_level[u.training_level] or '?',
+        u.flags2.slaughter and 1 or 0, u.pregnancy_timer)
+    elseif u.pregnancy_timer > 0 and not dfhack.units.isDead(u) then
+      out[#out + 1] = ('preg %d %d'):format(u.id, u.pregnancy_timer)
+    end
+  end
+  -- sampled leaves: the first enabled, the first disabled and the middle entry of a few groups per pile
+  local MT = raws.mat_table
+  local OC = df.organic_mat_category
+  local SAMPLE = {
+    { 'food', 'meat', function(i) return token(MT.organic_types[OC.Meat][i], MT.organic_indexes[OC.Meat][i]) end },
+    { 'food', 'plants', function(i) return token(MT.organic_types[OC.Plants][i], MT.organic_indexes[OC.Plants][i]) end },
+    { 'food', 'drink_plant', function(i) return token(MT.organic_types[OC.PlantDrink][i], MT.organic_indexes[OC.PlantDrink][i]) end },
+    { 'food', 'seeds', function(i) return token(MT.organic_types[OC.Seed][i], MT.organic_indexes[OC.Seed][i]) end },
+    { 'stone', 'mats', function(i) return 'INORGANIC:' .. raws.inorganics.all[i].id end },
+    { 'wood', 'mats', function(i) return 'PLANT:' .. raws.plants.all[i].id .. ':WOOD' end },
+    { 'furniture', 'type', function(i) return df.furniture_type[i] end },
+    { 'refuse', 'type', function(i) return df.item_type[i] end },
+    { 'animals', 'enabled', function(i) return raws.creatures.all[i].creature_id end },
+    { 'corpses', 'corpses', function(i) return raws.creatures.all[i].creature_id end },
+  }
+  for _, b in ipairs(df.global.world.buildings.all) do
+    if b:getType() == df.building_type.Stockpile then
+      out[#out + 1] = ('pile %d %d %d %d'):format(b.id, b.stockpile_flag.use_links_only and 1 or 0,
+        #b.links.give_to_pile + #b.links.give_to_workshop, #b.links.take_from_pile + #b.links.take_from_workshop)
+      local s = b.settings
+      for _, sm in ipairs(SAMPLE) do
+        local cat, grp, tokf = sm[1], sm[2], sm[3]
+        if s.flags[cat] then
+          local v = s[cat][grp]
+          local n = #v
+          local pick, on1, off1 = {}, nil, nil
+          for i = 0, n - 1 do
+            local x = v[i] ~= 0 and v[i] ~= false
+            if x and not on1 then on1 = i end
+            if not x and not off1 then off1 = i end
+            if on1 and off1 then break end
+          end
+          if on1 then pick[#pick + 1] = on1 end
+          if off1 then pick[#pick + 1] = off1 end
+          if n > 2 then pick[#pick + 1] = n // 2 end
+          for _, i in ipairs(pick) do
+            local tk = try(tokf, i)
+            if tk and tk ~= '' and not tk:find(' ') then
+              out[#out + 1] = ('pleaf %d %s %s %d %s'):format(b.id, cat, grp, (v[i] ~= 0 and v[i] ~= false) and 1 or 0, tk)
+            end
+          end
+        end
+      end
+    end
+  end
+end
 local f = assert(io.open(outp, 'wb'))
 f:write(table.concat(out, '\n'), '\n')
 f:close()
