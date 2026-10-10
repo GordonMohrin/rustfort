@@ -257,6 +257,82 @@ impl WorldCheck {
     }
 }
 
+/// Layout of a MessagePack value: the set of (path, map key) pairs it contains (array elements
+/// share their array's path; keys that are not strings count as one placeholder). Two
+/// encodings of the same data have the same layout whatever the order of their (hash) maps;
+/// a missing or an extra field changes it. None: not well-formed MessagePack.
+fn layout(b: &[u8]) -> Option<BTreeSet<u64>> {
+    fn h(path: u64, key: &[u8]) -> u64 {
+        let mut x = path ^ 0x9e3779b97f4a7c15;
+        for &c in key {
+            x ^= c as u64;
+            x = x.wrapping_mul(0x100000001b3);
+        }
+        x.wrapping_mul(0x100000001b3)
+    }
+    fn take<'a>(b: &'a [u8], p: &mut usize, n: usize) -> Option<&'a [u8]> {
+        let s = b.get(*p..p.checked_add(n)?)?;
+        *p += n;
+        Some(s)
+    }
+    fn be(b: &[u8], p: &mut usize, n: usize) -> Option<usize> {
+        Some(take(b, p, n)?.iter().fold(0usize, |a, &c| (a << 8) | c as usize))
+    }
+    /// Skips one value; returns the bytes of a string value (to use it as a key).
+    fn walk<'a>(b: &'a [u8], p: &mut usize, path: u64, out: &mut BTreeSet<u64>, depth: u32) -> Option<Option<&'a [u8]>> {
+        if depth > 64 {
+            return None;
+        }
+        let m = *b.get(*p)?;
+        *p += 1;
+        let (maps, arrays) = match m {
+            0x00..=0x7f | 0xe0..=0xff | 0xc0 | 0xc2 | 0xc3 => return Some(None),
+            0x80..=0x8f => ((m & 0x0f) as usize, 0),
+            0x90..=0x9f => (0, (m & 0x0f) as usize),
+            0xa0..=0xbf => return take(b, p, (m & 0x1f) as usize).map(Some),
+            0xd9 => return { let n = be(b, p, 1)?; take(b, p, n).map(Some) },
+            0xda => return { let n = be(b, p, 2)?; take(b, p, n).map(Some) },
+            0xdb => return { let n = be(b, p, 4)?; take(b, p, n).map(Some) },
+            0xc4 | 0xc5 | 0xc6 => {
+                let n = be(b, p, 1 << (m - 0xc4))?;
+                return take(b, p, n).map(|_| None);
+            }
+            0xc7 | 0xc8 | 0xc9 => {
+                let n = be(b, p, 1 << (m - 0xc7))? + 1;
+                return take(b, p, n).map(|_| None);
+            }
+            0xca | 0xce | 0xd2 => return take(b, p, 4).map(|_| None),
+            0xcb | 0xcf | 0xd3 => return take(b, p, 8).map(|_| None),
+            0xcc | 0xd0 => return take(b, p, 1).map(|_| None),
+            0xcd | 0xd1 => return take(b, p, 2).map(|_| None),
+            0xd4..=0xd8 => return take(b, p, 1 + (1 << (m - 0xd4))).map(|_| None),
+            0xdc => (0, be(b, p, 2)?),
+            0xdd => (0, be(b, p, 4)?),
+            0xde => (be(b, p, 2)?, 0),
+            0xdf => (be(b, p, 4)?, 0),
+            _ => return None, // 0xc1 is never used
+        };
+        let elem = h(path, b"[]");
+        for _ in 0..arrays {
+            walk(b, p, elem, out, depth + 1)?;
+        }
+        for _ in 0..maps {
+            let kp = h(path, b"{k}");
+            let k = match walk(b, p, kp, out, depth + 1)? {
+                Some(s) => h(path, s),
+                None => h(path, b"{v}"),
+            };
+            out.insert(k);
+            walk(b, p, k, out, depth + 1)?;
+        }
+        Some(None)
+    }
+    let mut out = BTreeSet::new();
+    let mut p = 0;
+    walk(b, &mut p, 0, &mut out, 0)?;
+    (p == b.len()).then_some(out)
+}
+
 #[derive(Serialize)]
 struct SnapRef<'a> {
     version: u32,
@@ -299,7 +375,16 @@ impl Sim {
         if sim.nav.flags.len() != n || sim.ai.len() != world.units.len() || sim.imeta.len() != world.items.len() {
             return Err("snapshot tables do not match the world".into());
         }
-        Ok(sim)
+        // Same layout: every field the snapshot has is known here and every field this build
+        // has was in the snapshot (none filled with a default, none ignored). A snapshot of
+        // another build that added or dropped state would skip the init passes with tables
+        // missing, so it takes the round-10 path instead.
+        let again = rmp_serde::to_vec_named(&SnapRef { version: snap.version, check: snap.check, sim: &sim }).map_err(|e| format!("re-encode: {e}"))?;
+        match (layout(bytes), layout(&again)) {
+            (Some(a), Some(b)) if a == b => Ok(sim),
+            (None, _) | (_, None) => Err("snapshot is not well-formed".into()),
+            _ => Err("snapshot from a Rustfort build with other sim state".into()),
+        }
     }
 
     /// [saves11] How this sim came from a save: "" (not from a save), "exact" (snapshot:
@@ -315,39 +400,56 @@ impl Sim {
 
     /// [saves11] Encoded size of each part of the snapshot (bytes, before compression).
     pub fn exact_sizes(&self) -> Vec<(&'static str, usize)> {
-        fn sz<T: Serialize>(v: &T) -> usize {
-            rmp_serde::to_vec_named(v).map(|b| b.len()).unwrap_or(0)
+        self.exact_parts().into_iter().map(|(k, v)| (k, v.len())).collect()
+    }
+
+    /// [saves11] The snapshot split by part (each part's encoding; for size checks).
+    pub fn exact_parts(&self) -> Vec<(&'static str, Vec<u8>)> {
+        fn enc<T: Serialize>(v: &T) -> Vec<u8> {
+            rmp_serde::to_vec_named(v).unwrap_or_default()
         }
+        let mut comp = Vec::with_capacity(self.nav.comp.len() * 4);
+        for c in &self.nav.comp {
+            comp.extend_from_slice(&c.to_le_bytes());
+        }
+        let (nav, lm) = (enc(&self.nav), enc(&self.nav.lm));
+        let rest = nav.len().saturating_sub(lm.len() + comp.len() + self.nav.flags.len());
+        let cat = |v: Vec<Vec<u8>>| v.concat();
         vec![
-            ("nav", sz(&self.nav)),
-            ("ai", sz(&self.ai)),
-            ("jobs", sz(&self.jobs) + sz(&self.job_at) + sz(&self.chunks) + sz(&self.chunk_of) + sz(&self.chunk_order)),
-            ("piles", sz(&self.piles) + sz(&self.pile_at)),
-            ("items", sz(&self.imeta) + sz(&self.item_idx) + sz(&self.contents)),
-            ("haul", sz(&self.haul) + sz(&self.haul_ix) + sz(&self.haul_cat) + sz(&self.haul_pos)),
-            ("path_cache", sz(&self.path_cache)),
-            ("water", sz(&self.water) + sz(&self.water_set)),
-            ("prod", sz(&self.prod)),
-            ("social", sz(&self.social)),
-            ("store", sz(&self.store)),
-            ("ind", sz(&self.ind)),
-            ("combat", sz(&self.combat)),
-            ("fluids", sz(&self.fluids)),
-            ("power", sz(&self.power)),
-            ("pop", sz(&self.pop)),
-            ("trade", sz(&self.trade)),
-            ("def", sz(&self.def)),
-            ("ranged", sz(&self.ranged)),
-            ("cx", sz(&self.cx)),
-            ("moods", sz(&self.moods)),
-            ("health", sz(&self.health)),
-            ("caverns", sz(&self.caverns)),
-            ("animals", sz(&self.animals)),
-            ("locs", sz(&self.locs)),
-            ("justice", sz(&self.justice)),
-            ("life", sz(&self.life)),
-            ("skills", sz(&self.skills) + sz(&self.growth)),
-            ("total", self.exact_snapshot().len()),
+            ("nav.flags", self.nav.flags.clone()),
+            ("nav.comp", comp),
+            ("nav.lm", lm),
+            ("nav.rest", nav[..rest.min(nav.len())].to_vec()),
+            ("ai", enc(&self.ai)),
+            ("jobs", cat(vec![enc(&self.jobs), enc(&self.job_at), enc(&self.chunks), enc(&self.chunk_of), enc(&self.chunk_order)])),
+            ("piles", cat(vec![enc(&self.piles), enc(&self.pile_at)])),
+            ("items.meta", enc(&self.imeta)),
+            ("items.idx", enc(&self.item_idx)),
+            ("items.contents", enc(&self.contents)),
+            ("haul", cat(vec![enc(&self.haul), enc(&self.haul_ix), enc(&self.haul_cat), enc(&self.haul_pos)])),
+            ("path_cache", enc(&self.path_cache)),
+            ("water", cat(vec![enc(&self.water), enc(&self.water_set)])),
+            ("prod", enc(&self.prod)),
+            ("social", enc(&self.social)),
+            ("store", enc(&self.store)),
+            ("ind", enc(&self.ind)),
+            ("combat", enc(&self.combat)),
+            ("fluids", enc(&self.fluids)),
+            ("power", enc(&self.power)),
+            ("pop", enc(&self.pop)),
+            ("trade", enc(&self.trade)),
+            ("def", enc(&self.def)),
+            ("ranged", enc(&self.ranged)),
+            ("cx", enc(&self.cx)),
+            ("moods", enc(&self.moods)),
+            ("health", enc(&self.health)),
+            ("caverns", enc(&self.caverns)),
+            ("animals", enc(&self.animals)),
+            ("locs", enc(&self.locs)),
+            ("justice", enc(&self.justice)),
+            ("life", enc(&self.life)),
+            ("skills", cat(vec![enc(&self.skills), enc(&self.growth)])),
+            ("total", self.exact_snapshot()),
         ]
     }
 }

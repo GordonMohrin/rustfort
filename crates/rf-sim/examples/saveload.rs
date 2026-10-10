@@ -69,9 +69,15 @@ fn main() {
     println!("export {}  seed {seed}  N {n}  M {m}  ({:.1}s)", dir.display(), t0.elapsed().as_secs_f64());
     println!("restore: {}  world_for_save {save_secs:.3}s  encode+decode {codec_secs:.3}s  Sim::new {load_secs:.3}s", b.restore_mode());
     if args.iter().any(|a| a == "--sizes") {
-        for (k, v) in a.exact_sizes() {
-            println!("  snapshot part {k:<11} {:>10} bytes", v);
+        let mut z_sum = 0;
+        for (k, v) in a.exact_parts() {
+            let z = zstd::bulk::compress(&v, 3).map(|c| c.len()).unwrap_or(0);
+            if k != "total" {
+                z_sum += z;
+            }
+            println!("  snapshot part {k:<15} {:>10} bytes  zstd-3 {:>9}", v.len(), z);
         }
+        println!("  (sum of compressed parts {z_sum})");
     }
 
     // 1. Module state survives the reload unchanged.

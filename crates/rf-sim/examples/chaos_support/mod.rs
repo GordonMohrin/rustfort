@@ -927,9 +927,16 @@ pub fn violations(sim: &Sim) -> Vec<String> {
 }
 
 /// Save/load round trip exactly like the app (bincode of the world, `reindex`, `Sim::new`).
+/// [saves11] Like a save game: the world from `world_for_save` (with the exact snapshot).
 pub fn save_load(sim: Sim) -> Sim {
+    save_load_with(sim, true)
+}
+
+/// [saves11] `exact`: through `world_for_save` (module state + snapshot, what a save holds);
+/// otherwise the bare world (an import or an old save).
+pub fn save_load_with(sim: Sim, exact: bool) -> Sim {
     let seed = sim.seed;
-    let bytes = bincode::serialize(&sim.world).expect("serialize world");
+    let bytes = if exact { bincode::serialize(&sim.world_for_save()) } else { bincode::serialize(&sim.world) }.expect("serialize world");
     drop(sim);
     let mut w: World = bincode::deserialize(&bytes).expect("deserialize world");
     w.tiletypes.reindex();
@@ -1041,7 +1048,14 @@ impl Chaos {
             }
             if save_every > 0 && s > 0 && s % save_every == 0 {
                 self.log.push(format!("t{} save_load", sim.ticks()));
-                sim = save_load(sim);
+                // [saves11] Alternate a real save (exact snapshot: must continue with the
+                // same state) and a bare-world reload (imports, old saves).
+                let exact = self.out.saves % 2 == 0;
+                let before = sim.state_hash();
+                sim = save_load_with(sim, exact);
+                if exact && (sim.restore_mode() != "exact" || sim.state_hash() != before) && self.out.violations.len() < 50 {
+                    self.out.violations.push(format!("step {s} tick {}: exact reload changed the state ({})", sim.ticks(), sim.restore_mode()));
+                }
                 if self.no_invasions {
                     sim.set_invasions(false);
                 }
