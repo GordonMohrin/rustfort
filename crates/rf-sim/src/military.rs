@@ -419,6 +419,12 @@ impl Sim {
         match self.combat.f[s].duty {
             Duty::Station(t) => {
                 let here = self.upos(s);
+                // [chaos10] a station on a wall/open air: go to the nearest standable tile, as
+                // DF's soldiers do, instead of a failing whole-map search every 60 ticks
+                let Some(t) = self.station_tile(t) else {
+                    self.ai[s].wake = now + 50;
+                    return;
+                };
                 if here.dist(self.world.pos_of(t as usize)) > 1 && self.nav.comp_near(t as usize) == self.nav.comp_near(self.ai[s].pos as usize) {
                     self.walk_to(s, t, now);
                 } else {
@@ -437,6 +443,50 @@ impl Sim {
                 self.ai[s].wake = now + 50;
             }
         }
+    }
+
+    /// [chaos10] The tile a station order really leads to: the ordered tile when a unit can
+    /// stand there, else the nearest standable tile within 5 tiles (same z first, then one
+    /// level up or down); `None` when there is none.
+    pub(crate) fn station_tile(&self, t: u32) -> Option<u32> {
+        let t = t as usize;
+        if t >= self.world.tiles.len() {
+            return None;
+        }
+        if self.nav.walkable(t) {
+            return Some(t as u32);
+        }
+        let (x, y, z) = self.nav.xyz(t);
+        let (dx, dy, dz) = (self.world.dims.x as i32, self.world.dims.y as i32, self.world.dims.z as i32);
+        for oz in [0i32, -1, 1] {
+            let zz = z as i32 + oz;
+            if zz < 0 || zz >= dz {
+                continue;
+            }
+            for r in (if oz == 0 { 1 } else { 0 })..=5i32 {
+                let mut best: Option<(i32, usize)> = None;
+                for oy in -r..=r {
+                    for ox in -r..=r {
+                        if ox.abs() != r && oy.abs() != r {
+                            continue; // ring only
+                        }
+                        let (xx, yy) = (x as i32 + ox, y as i32 + oy);
+                        if xx < 0 || yy < 0 || xx >= dx || yy >= dy {
+                            continue;
+                        }
+                        let i = self.nav.idx(xx as usize, yy as usize, zz as usize);
+                        let d = ox * ox + oy * oy;
+                        if self.nav.walkable(i) && best.map(|b| d < b.0).unwrap_or(true) {
+                            best = Some((d, i));
+                        }
+                    }
+                }
+                if let Some((_, i)) = best {
+                    return Some(i as u32);
+                }
+            }
+        }
+        None
     }
 
     /// [skills9] One training round (every 100 ticks): individual drill or sparring,
