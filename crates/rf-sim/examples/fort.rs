@@ -2,7 +2,7 @@
 //!
 //!   cargo run -p rf-sim --release --example fort -- [--export <dir>] [--ticks 806400] [--seed 1]
 //!
-//! Without `--export` the env var `RUSTFORT_EXPORT` or `export/tileshtulon` is used. Prints per
+//! Without `--export` the env var `RUSTFORT_EXPORT` or the newest export under `export/` is used. Prints per
 //! game month: citizens alive, drinks, prepared meals, raw food, seeds, brewable plants, empty
 //! barrels/pots, open orders, queued workshop jobs, planted farm tiles and jobs done that month;
 //! at the end deaths by cause and ticks/s.
@@ -97,7 +97,7 @@ fn main() {
                 sim.unit_status(id).activity != "Lurk"
                     && sim.world.unit(id).map(|u| cits.iter().any(|&c| c.dist(u.pos) <= 30 && sim.reachable(u.pos, c))).unwrap_or(false)
             });
-            // Re-alert like a player (or Gordon's guard script) when a new threat shows up.
+            // Re-alert like a player (or a guard script) when a new threat shows up.
             if threat && sim.world.squads.iter().all(|q| q.schedule.eq_ignore_ascii_case("Off duty")) {
                 let ids: Vec<i32> = sim.world.squads.iter().map(|q| q.id).collect();
                 for id in ids {

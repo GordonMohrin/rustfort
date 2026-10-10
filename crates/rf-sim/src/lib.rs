@@ -2533,7 +2533,7 @@ impl Sim {
         sk.xp += xp;
         let r0 = sk.rating; // [social]
         // DF: the next level needs 500 + 100 * current level experience, with no upper
-        // limit ([skills9] the old cap at 20 is gone; w:Skill, Gordon's fort has levels > 100).
+        // limit ([skills9] the old cap at 20 is gone; w:Skill, the reference fort has levels > 100).
         loop {
             let need = 500 + 100 * sk.rating;
             if sk.xp < need {

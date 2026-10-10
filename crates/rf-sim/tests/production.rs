@@ -144,7 +144,7 @@ fn units_of(sim: &Sim, kind: &str) -> i32 {
 fn production_fort_survives_two_years() {
     let mut w = production_world();
     w.work_orders.push(brew_order(1, 2, "Daily", vec![drinks_below(40)]));
-    // An easy-meal order: plump helmets are brewable, so (Gordon's rule) nothing gets cooked.
+    // An easy-meal order: plump helmets are brewable, so (the reference fort's rule) nothing gets cooked.
     w.work_orders.push(WorkOrder {
         id: 2,
         job: "PrepareMeal".into(),

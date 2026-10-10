@@ -248,7 +248,7 @@ fn room_value_counts_floor_walls_and_engravings() {
 }
 
 /// [calib11-social] Dwarves hardened to death (their exported memories show they felt nothing
-/// about a dead body, as all of Gordon's dwarves do) feel nothing about a death they witness;
+/// about a dead body, as all of the reference fort's dwarves do) feel nothing about a death they witness;
 /// unhardened dwarves are horrified by the same death.
 #[test]
 fn hardened_dwarves_feel_nothing_about_deaths() {

@@ -1,4 +1,4 @@
-//! Loads the real fort export if present (`export/tileshtulon` or `RUSTFORT_EXPORT`) and
+//! Loads a real fort export if present (`RUSTFORT_EXPORT` or the newest one under `export/`) and
 //! checks it against its manifest. Skips (passes) when no export exists, so CI without DF
 //! data stays green.
 
@@ -7,7 +7,7 @@ use rf_core::{Shape, NO_MAT};
 #[test]
 fn real_export_matches_manifest() {
     let Some(dir) = rf_import::find_export(None) else {
-        eprintln!("SKIP: no export found (export/tileshtulon or RUSTFORT_EXPORT)");
+        eprintln!("SKIP: no export found (RUSTFORT_EXPORT or export/)");
         return;
     };
     let m = rf_import::load_manifest(&dir).expect("manifest");

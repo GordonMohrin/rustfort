@@ -16,14 +16,14 @@
 //!   drinks, flour, fat/tallow, milk and other liquids never rot.
 //!
 //! # Estimates (not on the wiki)
-//! - Item volumes for bins are calibrated on Gordon's real fort (observed bins: 10-11 bars or
+//! - Item volumes for bins are calibrated on the reference fort (observed bins: 10-11 bars or
 //!   blocks, ~48 gems, ~320 cloth, ~78 weapons, ~70 mixed clothing/armor pieces, 12 leathers,
 //!   ~66 crafts per bin).
 //! - A bag holds 100 seeds (observed up to 68 in the real fort) or one powder stack.
 //! - Rotting takes 28 days (one month) of exposure, rotten food rots away after another 28.
 //! - Existing containers on a pile are used even beyond the pile's maximum; the maximum only
 //!   limits how many empty containers are brought.
-//! - [carts12] Wheelbarrows are simulated in `minecarts` (all of Gordon's piles have
+//! - [carts12] Wheelbarrows are simulated in `minecarts` (all of the reference fort's piles have
 //!   `max_wheelbarrows` 0).
 
 use crate::items::Cat;

@@ -1,4 +1,4 @@
-//! [validation] How close is Rustfort to real DF? Replays Gordon's own history.
+//! [validation] How close is Rustfort to real DF? Replays a real fort's own history.
 //!
 //!   cargo run -p rf-sim --release --example validate -- --from <export A> --to <export B>
 //!       [--seeds 1,2,3,4,5] [--jobs 3] [--ticks N] [--no-invasions] [--no-standdown]
@@ -20,7 +20,7 @@
 //!    on, and applies the same census to the simulated end state,
 //! 3. prints per metric the real value, the seeds' min / median / max and a verdict.
 //!
-//! Gordon and his scripts gave orders in DF between the snapshots (work orders, digging,
+//! The player and their scripts gave orders in DF between the snapshots (work orders, digging,
 //! buildings). Rustfort only has what A contained, so compare rates and orders of magnitude,
 //! not exact states. `--gamelog` adds real event counts (sieges, migrant waves, births, deaths,
 //! caravans, moods) from DF's `gamelog.txt` between two line numbers (read only; see
@@ -369,7 +369,7 @@ struct Opts {
     invasions: bool,
     standdown: bool,
     standing: bool,
-    /// After a fight, go back to the squads' schedules of the start export (Gordon's routine,
+    /// After a fight, go back to the squads' schedules of the start export (the player's routine,
     /// e.g. constant training) instead of `Off duty` for everyone.
     restore: bool,
     /// [skills9] Scripted deaths: (day of the run, citizens killed).
@@ -389,7 +389,7 @@ fn run_seed(start: &World, ticks: u64, seed: u64, opt: &Opts, years: f64) -> Run
     let (invasions, standdown) = (opt.invasions, opt.standdown);
     let mut sim = Sim::new(start.clone(), seed);
     if opt.standing {
-        // Gordon's food-watch scripts add brew/cook orders when stocks run low; the sim's
+        // The reference fort's food-watch scripts add brew/cook orders when stocks run low; the sim's
         // fallback standing orders are the closest equivalent (brew, cook, barrels, pots).
         sim.set_standing_orders(true);
     }
@@ -623,7 +623,7 @@ fn main() {
     let b = load(&to);
     if !from.join("settings.json").exists() && to.join("settings.json").exists() {
         // Exports before round 4 have no d_init settings; the importer's defaults (no
-        // population cap) would flood the fort with migrants. Gordon's caps did not change.
+        // population cap) would flood the fort with migrants. The reference fort's caps did not change.
         println!("note: {} has no settings.json; using the caps of {}", from.display(), to.display());
         a.settings = b.settings.clone();
     }

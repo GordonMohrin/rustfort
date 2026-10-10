@@ -1032,7 +1032,7 @@ fn floor(g: &Gfx, world: &World, p: Pos, mat: u16, tt: &rf_core::TiletypeInfo, h
         _ => {
             if matches!(tt.special, TtSpecial::Smooth | TtSpecial::SmoothDead) {
                 // Engraved floors: the smooth floor plus Rustfort's "Maeander" overlay (below);
-                // DF's own engraving picture is not used (Gordon's choice, style C).
+                // DF's own engraving picture is not used (style C, picked in playtesting).
                 t.smooth_floor
             } else {
                 t.stone.center(tt.variant, h)
@@ -1627,7 +1627,7 @@ mod bridge_tests {
 
     #[test]
     fn raised_bridge_is_a_wall_on_its_edge() {
-        // Gordon's bridge 10972: 3x3, raises west.
+        // The reference fort's bridge 10972: 3x3, raises west.
         let b = br(99, 126, 101, 128, "W", &["HAS_SUPPORT", "RAISED"]);
         assert_eq!(bridge_piece(&b, Pos::new(99, 126, 0)), BridgePiece::Raised(2, 0));
         assert_eq!(bridge_piece(&b, Pos::new(99, 127, 0)), BridgePiece::Raised(2, 1));

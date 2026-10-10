@@ -119,7 +119,7 @@ pub const SHEAR_REGROW: u64 = 300 * TICKS_PER_DAY as u64;
 /// Vanilla raws: `CHILD:1` for all domestic animals (years).
 const CHILD_YEARS: f32 = 1.0;
 /// [calib11-econ] Monthly conception chance (1 in this) of a caged female sharing her cage
-/// with a male of her race (estimate fitted to Gordon's caged troglodytes, see
+/// with a male of her race (estimate fitted to the reference fort's caged troglodytes, see
 /// `an_cage_breed_pass`).
 pub const CAGE_CONCEIVE_IN: u32 = 16;
 /// Training (estimates).
@@ -1428,7 +1428,7 @@ impl Sim {
 
     /// [calib11-econ] Creatures sharing one cage breed. Wiki "Breeding": "Caged males are still
     /// capable of breeding, assuming the female can approach the cage. Pregnant non-egglaying
-    /// females can give birth in cages". Observation (Gordon's fort, gamelog r3 -> r6): the 35-61
+    /// females can give birth in cages". Observation (the reference fort, gamelog r3 -> r6): the 35-61
     /// troglodytes held together in 7 cage traps had 23 births ("Troglodyte has given birth to
     /// a girl."), all of the fort's animal births, so a female sharing her cage with a male of
     /// her race conceives too. Estimate fitted to that: 1 in 16 per month, 6 months gestation

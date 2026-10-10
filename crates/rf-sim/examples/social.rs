@@ -3,7 +3,7 @@
 //!
 //!   cargo run -p rf-sim --release --example social -- [--export <dir>] [--ticks 806400] [--seed 1]
 //!
-//! Without `--export` the env var `RUSTFORT_EXPORT` or `export/tileshtulon` is used.
+//! Without `--export` the env var `RUSTFORT_EXPORT` or the newest export under `export/` is used.
 //! `--no-dining` removes all tables and `--no-beds` all beds before the run (comparison runs);
 //! `--off` switches the social simulation off (speed A/B).
 

@@ -516,7 +516,7 @@ pub fn link_hint(g: &Game) -> Option<String> {
     }
 }
 
-/// [app8] DF's kitchen default for Gordon's fort: plump helmets are brewed, never cooked.
+/// [app8] Kitchen default (the reference fort's rule): plump helmets are brewed, never cooked.
 /// Added once when the save has no kitchen setting for them.
 pub fn apply_kitchen_default(g: &mut Game) {
     const PH: &str = "PLANT:MUSHROOM_HELMET_PLUMP:STRUCTURAL";

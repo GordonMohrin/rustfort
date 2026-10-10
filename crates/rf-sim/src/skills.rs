@@ -1,5 +1,5 @@
 //! [skills9] Experience per job, item quality from skill, military training, social and mental
-//! skills (round 9, calibrated against Gordon's real fort, see docs/VALIDATION.md).
+//! skills (round 9, calibrated against the reference fort, see docs/VALIDATION.md).
 //!
 //! # DF rules implemented (wiki v50: Experience, Skill, Item quality, Training, Sparring,
 //! Demonstration, Situational awareness, Manager)
@@ -9,7 +9,7 @@
 //!   only the base 30. Mining, smoothing, carving fortifications and tracks, engraving and making
 //!   stone blocks give only **10**. A work order the manager approves gives **100** Organization.
 //! - **No level cap** (w:Skill): level n -> n+1 needs 500 + 100 n XP, without upper limit
-//!   (Gordon's fort has Situational awareness up to 126 and Growing 150).
+//!   (the reference fort has Situational awareness up to 126 and Growing 150).
 //! - **Item quality** depends on the maker's skill (w:Item quality): past a high skill a maker
 //!   almost always makes at least exceptional items, and masterworks are capped at a 1/3 chance.
 //!   [metal12] Workshop products use the wiki's quality-point formula (w:Skill, "item quality
@@ -30,25 +30,25 @@
 //!   Comedian, Flatterer, Liar, Intimidator, Pacifier, Consoler, Judge of intent, Conversationalist):
 //!   consoling a stressed partner, pacifying or intimidating in an argument.
 //!
-//! # Estimates (not on the wiki, fitted to Gordon's r4 -> r5 history)
+//! # Estimates (not on the wiki, fitted to the reference fort's r4 -> r5 history)
 //! - [metal12] Which attributes feed the quality formula per skill comes from the wiki's
 //!   attribute lists; which one is primary is an estimate ([`quality_attrs`]).
 //! - Meal quality roll (`quality_roll`, used by `lifestyle.rs`): a floor of skill / 4 (the
 //!   remainder as a chance), then up to 3 more levels,
 //!   each with chance 0.55; a result of masterwork or better is a masterwork with chance 1/3,
 //!   otherwise exceptional. At skill 2 that gives 45 / 25 / 14 / 17 % ordinary .. superior
-//!   (Gordon's leather armor by skill 1-3 leatherworkers: 39 / 34 / 12 / 15 %), at 16 82 %
+//!   (the reference fort's leather armor by skill 1-3 leatherworkers: 39 / 34 / 12 / 15 %), at 16 82 %
 //!   exceptional and 18 % masterwork, at 20+ 2/3 exceptional and 1/3 masterwork.
 //! - Training amounts per 100-tick round, in XP (fractions by chance): sparring SA 8, Fighting 3,
 //!   weapon 2, Discipline 2, Wrestling 1, Armor 0.5, Dodging 0.4, Shield 0.4, grasp strike 0.4,
 //!   stance strike 0.2, bite 0.2; witnessing a bout within 5 tiles SA 3; individual drill 5 XP
 //!   to one skill (weapon 30 %, Fighting 40 %, Discipline 20 %, Armor / Dodging / Shield 10 %);
 //!   demonstration 1 in 10 rounds: skill 3, Student 13, Concentration 13, teacher Teacher 13.
-//!   Gordon's three constantly training squads gained 14.5k military XP per dwarf-year (6.1k
+//!   The reference fort's three constantly training squads gained 14.5k military XP per dwarf-year (6.1k
 //!   SA, 2.6k Fighting, 1.8k axe, 1.7k Discipline).
 //! - Conversation: the speaker gains `TALK_XP` (11) in one conversation skill per conversation; the
 //!   skill is Consoler for a stressed partner, Pacifier / Intimidator in an argument, otherwise
-//!   picked with the weights of Gordon's fort (Persuader 76, Comedian 41, Judge of intent 37,
+//!   picked with the weights of the reference fort (Persuader 76, Comedian 41, Judge of intent 37,
 //!   Intimidator 20, Pacifier 25, Consoler 20, Conversationalist 28, Flatterer 8, Liar 4).
 //! - Reading a book: Student and Concentration 30 each.
 
@@ -185,7 +185,7 @@ pub(crate) struct TrainScene {
     pub demo_skill: u8,
 }
 
-/// Conversation skills with the weights seen in Gordon's fort (XP per dwarf-year r4 -> r5).
+/// Conversation skills with the weights seen in the reference fort (XP per dwarf-year r4 -> r5).
 const TALK_SKILLS: [(&str, u32); 9] = [
     ("PERSUASION", 76),
     ("COMEDY", 41),
@@ -262,7 +262,7 @@ impl Sim {
 
     /// [calib11-social] Slot `s` just made the masterwork item `id` (wiki Item quality: each
     /// masterwork is a historical event): DF's announcement "<name> has created a masterpiece
-    /// <item>!" (MASTERPIECE_CRAFTED, the line Gordon's gamelog shows for crafts, cloth,
+    /// <item>!" (MASTERPIECE_CRAFTED, the line the reference gamelog shows for crafts, cloth,
     /// furniture, ammo and meals) and the maker's `MakeMasterwork` thought ("after producing a
     /// masterwork"; strength an estimate like the other thoughts).
     pub(crate) fn skills_masterpiece(&mut self, s: usize, id: i32, now: u64) {

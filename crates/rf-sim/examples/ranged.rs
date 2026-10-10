@@ -1,4 +1,4 @@
-//! Ranged combat on the real fort: Gordon's "Schuetzen" (marksdwarves) and the goblin bowmen
+//! Ranged combat on the reference fort: its "Schuetzen" (marksdwarves) and the goblin bowmen
 //! of the running siege. Runs until the hostiles are gone (or `--ticks`), then reports shots,
 //! hits, kills, ammo used, the squad's skills and ammo, and DF-style projectile log lines.
 //!

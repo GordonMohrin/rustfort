@@ -34,11 +34,11 @@
 //! - Thief visits: 1 in 2 per season if a kobold civilization is at war with the fort;
 //!   snatchers: 1 in 3 per season with a goblin civilization at war that has not sieged the
 //!   fort yet, and children in the fort; they arrive on a random day of the season.
-//!   [gaps10] Calibrated to Gordon's gamelog: Trussroads (68 springs, 16 ambushes and 5 sieges
-//!   from civ 39) saw **no** thief and no snatcher; his kobold civilization is at peace. His
-//!   earlier forts in the same DF install saw 28-45 "Snatcher!" alarms each, mostly before and
+//!   [gaps10] Calibrated to the reference gamelog: Trussroads (68 springs, 16 ambushes and 5 sieges
+//!   from civ 39) saw **no** thief and no snatcher; its kobold civilization is at peace. The
+//!   earlier forts in the same gamelog saw 28-45 "Snatcher!" alarms each, mostly before and
 //!   between their first sieges, which the stage rule follows; that snatchers stop for good after
-//!   the first siege is an ESTIMATE (Windrings still got some later, maybe from a second civ).
+//!   the first siege is an ESTIMATE (one of them still got some later, maybe from a second civ).
 //! - Spotting: within `3 + observer/3 - ambusher/4` tiles (at least 1, at most 8; soldiers on
 //!   duty +3), same z +-1, same walk component, 1 in 2 per 10-tick check. Sleeping or
 //!   unconscious dwarves and children spot nobody.
@@ -171,8 +171,8 @@ impl Sim {
 
     /// Race of the fort's thieves: kobolds (entity `SKULKING` with `ITEM_THIEF`) if a kobold
     /// civilization is **at war** with the fort (or no civilizations were exported at all).
-    /// [gaps10] Only hostile civilizations raid (wiki Invasion); Gordon's kobolds (Chulgis) are at
-    /// peace, and his whole Trussroads gamelog has no thief.
+    /// [gaps10] Only hostile civilizations raid (wiki Invasion); the reference fort's kobolds (Chulgis)
+    /// are at peace, and its whole Trussroads gamelog has no thief.
     pub(crate) fn thief_race(&self) -> Option<&'static str> {
         let civ = |e: &rf_core::EntityInfo| e.race == "KOBOLD" && e.relation == "War" && (e.kind == "Civilization" || e.kind.is_empty());
         (self.world.entities.is_empty() || self.world.entities.iter().any(civ)).then_some("KOBOLD")
@@ -180,8 +180,8 @@ impl Sim {
 
     /// A goblin civilization at war (entity `EVIL` with `BABYSNATCHER`) that sends snatchers, or
     /// no civilizations exported. [gaps10] Snatchers are the first stage of the invading
-    /// civilization's raids: once it has started sieging the fort (DF's `siege_tier`, Gordon's
-    /// civ 39: 4 at r5) it sends ambushes and sieges instead (see the module docs).
+    /// civilization's raids: once it has started sieging the fort (DF's `siege_tier`, the
+    /// reference fort's civ 39: 4 at r5) it sends ambushes and sieges instead (see the module docs).
     pub(crate) fn snatcher_civ(&self) -> bool {
         if self.world.entities.is_empty() {
             return true;
@@ -279,7 +279,7 @@ impl Sim {
                 .unwrap_or(9_999)
         });
         let mount_race = if mounts > 0 { self.war_mount_race() } else { String::new() };
-        // [war9] Weapons of Gordon's goblin sieges (r6 export), if the save has their raws.
+        // [war9] Weapons of the reference fort's goblin sieges (r6 export), if the save has their raws.
         let weapons: Vec<(&str, &str, &str, u32)> = {
             let have = |t: &str| self.world.weapon_raws.iter().any(|w| w.token == t);
             let v: Vec<_> = WAR_WEAPONS.iter().copied().filter(|w| have(w.0)).collect();
@@ -1126,7 +1126,7 @@ impl Sim {
     }
 }
 
-/// [war9] Weapons of Gordon's 137 sieging goblins (r6 export): token, profession, skill, count.
+/// [war9] Weapons of the reference fort's 137 sieging goblins (r6 export): token, profession, skill, count.
 const WAR_WEAPONS: &[(&str, &str, &str, u32)] = &[
     ("ITEM_WEAPON_PIKE", "pikeman", "PIKE", 15),
     ("ITEM_WEAPON_SWORD_LONG", "swordsman", "SWORD", 14),
@@ -1356,7 +1356,7 @@ mod tests {
     }
 
     #[test]
-    fn thieves_and_snatchers_follow_gordons_history() {
+    fn thieves_and_snatchers_follow_reference_history() {
         // [gaps10] Trussroads: kobolds at peace, goblin civ 39 at war with 4 sieges sent -> no
         // thief and no snatcher in its whole gamelog.
         use rf_core::EntityInfo;

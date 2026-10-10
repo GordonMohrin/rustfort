@@ -37,7 +37,7 @@ fn main() {
     }
     let player = flag("--player");
     if player {
-        // Adults without an occupation, civilians first (most of Gordon's dwarves are in squads).
+        // Adults without an occupation, civilians first (most of the reference fort's dwarves are in squads).
         let busy: Vec<i32> = sim.world.locations.iter().flat_map(|l| l.occupations.iter().map(|o| o.unit)).collect();
         let mut cits: Vec<(bool, i32)> = sim
             .world

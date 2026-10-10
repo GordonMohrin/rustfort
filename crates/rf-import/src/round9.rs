@@ -5,7 +5,7 @@
 //!
 //! Units: DF keeps the animals of departed caravans in `world.units.all` with `flags1.forest`,
 //! position -30000 and `flags1.inactive` unset, but no longer in `world.units.active`. Exports
-//! before round 9 wrote them as active (Gordon's r5 export: 80 of 87 tame animals). Since round 9
+//! before round 9 wrote them as active (the reference fort's r5 export: 80 of 87 tame animals). Since round 9
 //! the exporter sets `flags.inactive` for every unit outside `world.units.active` and places a
 //! caged unit at its cage item; for older exports [`repair_units`] marks off-map units that are
 //! not caged as inactive.

@@ -19,12 +19,12 @@
 //!   "Miasma" ("after retching on a miasma"). Nothing outdoors (under the sky) makes miasma.
 //! - **Rain** (w:Weather): with weather on it rains on some days; with `Sim::set_rain_thoughts`
 //!   citizens outdoors in the rain think "Rain" (off by default: none of the 17 281 thoughts in
-//!   Gordon's export is a Rain thought although his world has weather on).
+//!   the reference fort's export is a Rain thought although its world has weather on).
 //!
 //! # Estimates (not on the wiki)
 //! - One wear level per 336 days of wearing; clothing thoughts at most once a year; dwarves
 //!   look for replacements once an item is worn (x) and try again weekly when none is free.
-//!   Calibrated on Gordon's fort: 91 % of the worn clothing is unworn, 7 % worn, 2 % threadbare
+//!   Calibrated on the reference fort: 91 % of the worn clothing is unworn, 7 % worn, 2 % threadbare
 //!   or tattered, no OldClothing/TatteredClothing thoughts but about 25 WearItem a month.
 //! - Corpses of creatures that die in the sim rot after 14 days and stop giving off miasma 56
 //!   days later (skeletal); miasma reaches 2 tiles from its source; at most one Miasma thought
@@ -520,8 +520,8 @@ impl Sim {
         }
     }
 
-    /// "Rain" thoughts for citizens caught outdoors in the rain (default off: Gordon's fort
-    /// shows none in 17 000 exported thoughts although weather is on).
+    /// "Rain" thoughts for citizens caught outdoors in the rain (default off: the reference
+    /// fort shows none in 17 000 exported thoughts although weather is on).
     pub fn set_rain_thoughts(&mut self, on: bool) {
         self.life.rain_thoughts = on;
     }

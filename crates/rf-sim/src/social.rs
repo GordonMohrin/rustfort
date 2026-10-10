@@ -1526,7 +1526,7 @@ impl Sim {
     /// events are kept and remembered, which brings the emotion back). Each day with chance
     /// 1 in `RECALL_IN` the strongest grief or horror memory of the last two years (death of a
     /// relation or friend, witnessed death, a dead body, a lost pet) is felt again at
-    /// 1/`RECALL_DIV` of its strength, half that in the second year (estimate, fitted so that the losses of Gordon's fort
+    /// 1/`RECALL_DIV` of its strength, half that in the second year (estimate, fitted so that the losses of the reference fort
     /// between r4 and r5 leave about as many stressed dwarves as DF had).
     fn social_recall(&mut self, s: usize, now: u64, r: &mut Rng) {
         if !r.chance(1, RECALL_IN) {

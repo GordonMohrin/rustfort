@@ -2,7 +2,7 @@
 //!
 //! # DF rules implemented (wiki: Siege, Invasion, Ambush)
 //! - Invasions are checked when a season starts (DF checks at season changes), at most one
-//!   siege at a time. Sieges need a population of at least 80 (DF v50; Gordon observed sieges
+//!   siege at a time. Sieges need a population of at least 80 (DF v50; sieges were observed
 //!   from 80 citizens on). Invasions can be switched off ([`Sim::set_invasions`]); default on.
 //! - [r7] **Siege size by wealth** (wiki Siege + Difficulty, Normal): the fort reaches an
 //!   invasion tier when it meets the tier's population "and one of production or trade"
@@ -96,10 +96,10 @@ impl Invasions {
 }
 
 /// [war9] Ticks a leaving raider gets to walk off the map before it gives up (estimate: 3 days,
-/// enough to cross Gordon's 192x192 map twice).
+/// enough to cross the reference fort's 192x192 map twice).
 pub const LEAVE_GIVE_UP: u64 = 3 * rf_core::TICKS_PER_DAY as u64;
 
-/// Population needed for sieges (DF v50; Gordon's observation).
+/// Population needed for sieges (DF v50; observed in play).
 pub const SIEGE_POPULATION: usize = 80;
 
 /// [r7] Invasion tier thresholds, Normal difficulty (wiki Difficulty): population, created
@@ -447,7 +447,7 @@ mod r7_tests {
         assert_eq!(siege_force(80, 0, 0), Some((10, 0)));
         assert_eq!(siege_force(10, 100_000, 0), Some((10, 0)));
         assert_eq!(siege_force(10, 0, 10_000), Some((10, 0)));
-        // Gordon's fort: 87 citizens and 3.2M created wealth reach the Metropolis tier.
+        // The reference fort: 87 citizens and 3.2M created wealth reach the Metropolis tier.
         assert_eq!(siege_force(87, 3_200_000, 0), Some((120, 40)));
         assert_eq!(invasion_tier(87, 3_200_000, 0), 5);
         // City and Metropolis.

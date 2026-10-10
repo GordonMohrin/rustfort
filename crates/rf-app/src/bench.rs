@@ -50,7 +50,7 @@ pub fn run(args: &crate::Args) {
                 sim.unit_status(id).activity != "Lurk"
                     && sim.world.unit(id).map(|u| citizen_pos.iter().any(|&c| c.dist(u.pos) <= 30 && sim.reachable(u.pos, c))).unwrap_or(false)
             });
-            // Re-alert like a player (or Gordon's guard script) when a new threat shows up.
+            // Re-alert like a player (or a guard script) when a new threat shows up.
             if threat && sim.world.squads.iter().all(|q| q.schedule.eq_ignore_ascii_case("Off duty")) {
                 let ids: Vec<i32> = sim.world.squads.iter().map(|q| q.id).collect();
                 for id in ids {

@@ -6,7 +6,7 @@
 //!   on the surface and in the caverns. Saplings mature into trees over the years; some die.
 //!   A grown tree is a TREE-material trunk that woodcutters can fell like any other tree.
 //!
-//! # Estimates (observed in Gordon's fort, r4 -> r5 = 2.18 years: of 1 110 live saplings 87
+//! # Estimates (observed in the reference fort, r4 -> r5 = 2.18 years: of 1 110 live saplings 87
 //! matured, 123 died, 104 new saplings appeared, live trees went 3 140 -> 3 205)
 //! - Each month a sapling matures with chance 1 in 330 (3.6 % a year) and dies with chance
 //!   1 in 240 (5 % a year); each grown tree seeds a sapling with chance 1 in 750 (1.6 % a year)

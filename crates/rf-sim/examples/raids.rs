@@ -4,7 +4,7 @@
 //!   cargo run -p rf-sim --release --example raids -- [--export <dir>] --kind ambush|thief|snatcher|siege
 //!       [--n 0] [--monsters 5] [--ticks 40000] [--seed 1] [--standdown] [--log 25]
 //!
-//! `--standdown` emulates the player (or Gordon's guard script) like `rustfort bench`: all squads
+//! `--standdown` emulates the player (or a guard script) like `rustfort bench`: all squads
 //! go to Ready while a visible threat is near, and off duty one day after it is gone.
 
 use rf_sim::{AnnouncementKind, RaidKind, Sim, SquadOrder};

@@ -569,7 +569,7 @@ mod tests {
     /// it is there (`RUSTFORT_DF_DIR` or the default Steam path); skipped otherwise.
     #[test]
     fn reaction_table_matches_raws() {
-        let dir = std::env::var("RUSTFORT_DF_DIR").unwrap_or_else(|_| r"E:\Program Files (x86)\Steam\steamapps\common\Dwarf Fortress".into());
+        let dir = std::env::var("RUSTFORT_DF_DIR").unwrap_or_else(|_| r"C:\Program Files (x86)\Steam\steamapps\common\Dwarf Fortress".into());
         let p = std::path::Path::new(&dir).join("data/vanilla/vanilla_reactions/objects/reaction_smelter.txt");
         let Ok(text) = std::fs::read_to_string(&p) else { return };
         let mut checked = 0;

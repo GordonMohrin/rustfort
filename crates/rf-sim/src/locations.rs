@@ -4,7 +4,7 @@
 //! # DF rules implemented (wiki v50: Location, Temple, Tavern, Library, Guildhall, Performance,
 //! Visitor, Petition, Mercenary, Scholar)
 //! - A **location** is built on civzones (`World::locations`). Exports without locations get
-//!   them from the fort's named meeting halls (Gordon's naming): "Tempel/Kapelle/Temple/Chapel/
+//!   them from the fort's named meeting halls (the reference fort's naming): "Tempel/Kapelle/Temple/Chapel/
 //!   Shrine" = temple (dedicated to the deity whose name is in the zone name, "alle" = all
 //!   deities), "Taverne/Tavern/Inn" = tavern, "Bibliothek/Library" = library, "Gilde/Guild" =
 //!   guildhall, "Hospital/Heilung" = hospital. `Sim::create_location` adds one for a zone.

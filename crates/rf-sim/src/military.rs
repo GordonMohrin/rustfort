@@ -25,7 +25,7 @@
 //!
 //! # Estimates
 //! - [skills9] Training experience every 100 ticks: individual drills, sparring, watching bouts
-//!   and demonstrations, see `skills.rs` (calibrated to Gordon's 14.5k military XP per
+//!   and demonstrations, see `skills.rs` (calibrated to the reference fort's 14.5k military XP per
 //!   dwarf-year).
 //! - [r7] Under an alert, meals, drinks and beds outside the burrow are still used (DF prefers
 //!   the burrow's own); doctor, burial, depot and lever jobs are not taken under an alert.

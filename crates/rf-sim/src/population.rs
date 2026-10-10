@@ -14,7 +14,7 @@
 //!   names are recombined from the citizens' name parts (no language data in the export).
 //! - Married couples (both alive on the map) can conceive; the pregnancy lasts until birth,
 //!   babies are carried by their mother, become children at 1 (raws `BABY:1`) and adults at 13
-//!   (raws say `CHILD:12`, but Gordon's fort shows dwarves aged 12.1-12.9 still as children, so
+//!   (raws say `CHILD:12`, but the reference fort shows dwarves aged 12.1-12.9 still as children, so
 //!   the observed threshold is used). Grown-ups become `PEASANT` with the fort's default labors.
 //! - Units age by 1/336 year per day; dwarves die of old age at their MAXAGE (raws `150:170`,
 //!   fixed per unit from its id).
@@ -30,9 +30,9 @@
 //!   deadline ("MandateIgnored"), a met one a good one. Punishments are not simulated.
 //!
 //! # Estimates (not on the wiki)
-//! - [calib11-econ] Migration (wiki Migrant + Gordon's gamelog): a migrant date 1-27 days into
+//! - [calib11-econ] Migration (wiki Migrant + the reference gamelog): a migrant date 1-27 days into
 //!   spring, summer and autumn (never winter: at most 3 migration messages per year in all 8
-//!   of his forts); the outcome is decided on that date. While a siege is seen on the map the
+//!   of the gamelog's forts); the outcome is decided on that date. While a siege is seen on the map the
 //!   wave waits, and it is lost when its season ends. Then 3 in 4 a wave, else "The fortress
 //!   attracted no migrants this season.". Dangerousness (wiki: citizen deaths and insanities,
 //!   this year x1, last year x1/2 ... 5 years x1/32) as last reported to the civilization (by
@@ -41,7 +41,7 @@
 //!   50 the same with "brave this terrifying place" / "cursed death-trap". Wave size
 //!   1 + rand(max), max = min(4 + fort wealth / 25 000 (at most 28), free places / 3 (at least
 //!   1), the wiki's local-population limit), capped by the room under both caps.
-//! - Conception chance 1 in 36 per month per couple ([skills9] was 1 in 12; Gordon's fort had
+//! - Conception chance 1 in 36 per month per couple ([skills9] was 1 in 12; the reference fort had
 //!   2 births in 2.18 years and none in 1.32 years, Rustfort 6 with 1 in 12), at least one year
 //!   after the last birth; pregnancy 9 months; twins 1 in 50.
 //! - Ghosts rise with a daily chance of 1 in 7 once the body lay unburied for 14 days.
@@ -76,7 +76,7 @@ pub const DEFAULT_BABY_PCT: i32 = 1000;
 pub const DANGER_DANGEROUS: f32 = 10.0;
 pub const DANGER_DEATH_TRAP: f32 = 50.0;
 /// [calib11-econ] A dangerous fort's wave still comes with a chance of 1 in this (estimate:
-/// Gordon's forts 6 and 7 show 15 arrivals "despite the danger" or "brave this terrifying
+/// forts 6 and 7 of the reference gamelog show 15 arrivals "despite the danger" or "brave this terrifying
 /// place" against 44 "Migrants were too wary to make the journey this season.").
 pub const DANGER_ARRIVE_IN: u32 = 3;
 /// Population needed for the mayor (wiki "Mayor").
@@ -84,7 +84,7 @@ pub const MAYOR_POPULATION: usize = 50;
 /// Pregnancy length (estimate: 9 months).
 pub const PREGNANCY_TICKS: u64 = 9 * MONTH;
 /// [skills9] Monthly conception chance of a married couple: 1 in this (estimate fitted to
-/// Gordon's fort).
+/// the reference fort).
 pub const CONCEIVE_IN: u32 = 36;
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)] // [saves11]
@@ -771,7 +771,7 @@ impl Sim {
         if self.pop.off || self.pop.wave_due.is_some() || !self.has_civilization() {
             return;
         }
-        // [calib11-econ] No migrants in winter: Gordon's gamelog (8 forts, about 100 game years)
+        // [calib11-econ] No migrants in winter: the reference gamelog (8 forts, about 100 game years)
         // never shows more than 3 migration messages per year (spring, summer, autumn); the wiki
         // says "there is never a migration in the first winter".
         let c = self.world.calendar;
@@ -860,7 +860,7 @@ impl Sim {
 
     /// [calib11-econ] Largest wave the fort can draw now: the wealth estimate (more created
     /// wealth attracts more migrants), smaller close to the population cap (estimate from
-    /// Gordon's history: 1-3 per wave within about 15 places of the cap, up to 10 with 40
+    /// the reference fort's history: 1-3 per wave within about 15 places of the cap, up to 10 with 40
     /// free places), and the wiki's limit by local population (1000 units: 10, minus 1 at
     /// 1300, 1600, 1800, ..., 2900; none from 3000).
     fn migrant_wave_max(&self, room: i32) -> i32 {
@@ -910,7 +910,7 @@ impl Sim {
     }
 
     /// [calib11-econ] Daily: new insanities count as danger; a caravan of the fort's own
-    /// civilization that leaves the map reports the danger home (Gordon's gamelog, spring 277:
+    /// civilization that leaves the map reports the danger home (the reference gamelog, spring 277:
     /// 11 citizens died in a siege, the human caravan left, two plain "Some migrants have
     /// arrived." waves followed; only the dwarven caravan's departure after them fits the
     /// wiki's danger threshold of 10).

@@ -1,4 +1,4 @@
-//! Preview of procedural engraving styles (Gordon's request: graceful patterns instead of
+//! Preview of procedural engraving styles (playtest request: graceful patterns instead of
 //! DF's dwarf-face picture, patterns that interlock across adjacent engraved tiles).
 //!
 //! Every pattern is a function of *world* pixel coordinates, so it runs seamlessly over tile

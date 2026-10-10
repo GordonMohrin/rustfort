@@ -1,4 +1,4 @@
-//! [carts12] Hauling routes on Gordon's real fort (Trussroads, export r5).
+//! [carts12] Hauling routes on the reference fort (Trussroads, export r5).
 //!
 //!   cargo run -p rf-sim --release --example minecarts -- [--export <dir>] [--ticks 40000]
 //!

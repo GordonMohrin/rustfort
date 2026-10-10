@@ -1,4 +1,4 @@
-//! [war9] Round 9 war calibration against Gordon's real history (docs/VALIDATION.md items 1, 6
+//! [war9] Round 9 war calibration against the reference fort's real history (docs/VALIDATION.md items 1, 6
 //! and 13): created and exported wealth, siege strength per consecutive siege, siege composition
 //! (masters, mounts, monsters, ambush squads alongside), forgotten beasts per cavern layer and
 //! the persistent counters in `World::fort_history`.
@@ -24,14 +24,14 @@
 //!   `FORGOTTEN_WEALTH_DIV` (40) counts as irritation, and nothing comes at or below
 //!   `FORGOTTEN_IRRITATE_MIN` (5 000); `FORGOTTEN_SENS` (10 000) more reaches the maximum chance.
 //!
-//! # Estimates (calibrated to Gordon's fort, see docs/VALIDATION.md)
+//! # Estimates (calibrated to the reference fort, see docs/VALIDATION.md)
 //! - One siege regular costs 15 strength points: the 5th siege (2 000) brings 133 creatures,
 //!   DF's 5th siege on Trussroads brought 136 goblins (r6 export). The wiki tier forces (Town 10,
 //!   City 40 + 5, Metropolis 120 + 40) cap the size by tier; at least 10 regulars.
 //! - Monsters (trolls, beak dogs): one per 20 creatures, at most the tier's monsters. Mounts
 //!   (from strength 1 000 on, DF's "mounted" troops from the 3rd siege on): one per 20 regulars
 //!   (r6: 7 mounts for 136 goblins); the mount race is a `MOUNT_EXOTIC` cave creature of the
-//!   save's raws if there is one (Gordon's goblins rode voracious cave crawlers), else beak dogs.
+//!   save's raws if there is one (the reference fort's goblins rode voracious cave crawlers), else beak dogs.
 //! - Master troops: strength / 160 percent of the regulars, at most 25 % (r6: 17 of 136 at
 //!   strength 2 000); weapon skill 10-14, regulars 3-9 (r6 means: sword 6.3, mace 9.5).
 //! - 1-5 ambush squads of 3-6 arrive with each siege (gamelog: 1, 5, 5, 1, 4 "An ambush!" lines
@@ -39,7 +39,7 @@
 //! - Invasion chance per season start: 2/3 (DF's real fort: a siege every 1.25-2 years).
 //! - Forgotten-beast chance per season and available layer: 1/4 x the irritation share. Cavern
 //!   layers already discovered when a fort is imported count as spent (an established fort has
-//!   met its region's beasts; DF sent none in 3.5 years of Gordon's history with 3 caverns open).
+//!   met its region's beasts; DF sent none in 3.5 years of the reference fort's history with 3 caverns open).
 //! - Stackable made items keep `value` 0 (the trade formula then follows the stack size), so a
 //!   split-off part of such a stack can be counted again; durable goods get their value stored.
 
@@ -186,7 +186,7 @@ impl Sim {
     }
 
     /// Mount race of the invaders: the first `MOUNT_EXOTIC` cave creature in the save's raws
-    /// (DF's raw order; Gordon's world: voracious cave crawlers, as in DF's r6 siege), else beak
+    /// (DF's raw order; the reference world: voracious cave crawlers, as in DF's r6 siege), else beak
     /// dogs (wiki: goblins ride beak dogs).
     pub(crate) fn war_mount_race(&self) -> String {
         self.world
@@ -307,7 +307,7 @@ mod tests {
     fn natural_siege_follows_the_civs_siege_count() {
         let (mut sim, _sz) = fort(62);
         sim.run_ticks(1_300);
-        // Gordon's fort at r5: Metropolis tier by created wealth, 4 sieges so far.
+        // The reference fort at r5: Metropolis tier by created wealth, 4 sieges so far.
         sim.world.fort_history.created_wealth = 3_200_000;
         sim.world.fort_history.sieges = vec![(9_999, 4)];
         let p = sim.siege_plan().expect("siege tier");

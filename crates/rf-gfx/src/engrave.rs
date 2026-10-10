@@ -1,4 +1,4 @@
-//! Procedural engravings in Gordon's chosen style "C, Mäander" (replaces DF Premium's
+//! Procedural engravings in style "C, Mäander", picked in playtesting (replaces DF Premium's
 //! engraving picture). Rustfort's own art, generated at runtime, not DF data.
 //!
 //! - **Floors:** a Greek-key band runs along the outline of every engraved region, with square

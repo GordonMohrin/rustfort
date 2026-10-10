@@ -6,7 +6,7 @@
 //! `scan` counts announcements between two line numbers (1-based, inclusive). The caller finds
 //! the lines of two exports by counting season markers back from the live date
 //! (docs/VALIDATION.md). The patterns are DF v50's announcement texts as they appear in
-//! Gordon's log; conversation lines ("Name, Profession: ...") are skipped.
+//! the reference gamelog; conversation lines ("Name, Profession: ...") are skipped.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader};

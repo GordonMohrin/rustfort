@@ -109,7 +109,7 @@ fn coke_from_bituminous_coal_and_order_from_the_real_queue() {
     let (cx, cy, hz) = hall();
     let mut w = World::synthetic(DX, DY, DZ);
     let mut sm = shop(801, "Furnace", "Smelter", cx, cy + 2, hz);
-    // The job as DF exports it from Gordon's smelter queue.
+    // The job as DF exports it from the reference fort's smelter queue.
     sm.jobs.push(rf_core::BuildingJob { job: "CustomReaction".into(), reaction: "BITUMINOUS_COAL_TO_COKE".into(), order_id: -1, ..Default::default() });
     w.buildings.push(sm);
     let coal = mat(&mut w, "INORGANIC:COAL_BITUMINOUS", "bituminous coal", |m| m.is_stone = true);

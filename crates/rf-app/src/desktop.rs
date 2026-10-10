@@ -1,5 +1,5 @@
-//! Move the game window to a given Windows virtual desktop (Gordon works with several
-//! desktops; automated screenshot/test runs should not pop up on his active desktop).
+//! Move the game window to a given Windows virtual desktop (for users who work with several
+//! desktops: automated screenshot/test runs should not pop up on the active desktop).
 //!
 //! Uses the documented `IVirtualDesktopManager::MoveWindowToDesktop` with the desktop GUIDs
 //! Windows keeps in `HKCU\...\Explorer\VirtualDesktops\VirtualDesktopIDs` (16 bytes per

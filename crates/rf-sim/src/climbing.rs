@@ -26,7 +26,7 @@
 //! - Fall damage as for falls from retracting bridges (`defense`): 2+ levels knock out for 100
 //!   ticks per level, 10+ levels kill.
 //! - 1 Climber experience per climbing step (wiki: climbers improve by climbing walls).
-//! - Invaders the sim generates get Climber 1-3 at the rates of Gordon's r6 goblins.
+//! - Invaders the sim generates get Climber 1-3 at the rates of the reference fort's r6 goblins.
 
 use crate::combat::bp;
 use crate::nav::{climb_classes, ClimbGraph, ClimbNet, SOLID, WALK};

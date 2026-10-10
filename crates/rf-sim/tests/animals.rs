@@ -539,7 +539,7 @@ fn animals_are_deterministic_across_thread_counts() {
     assert_eq!(a, b);
 }
 
-/// [calib11-econ] Wild creatures held together in one cage breed (Gordon's caged
+/// [calib11-econ] Wild creatures held together in one cage breed (the reference fort's caged
 /// troglodytes); a lone caged female does not.
 #[test]
 fn creatures_sharing_a_cage_breed() {

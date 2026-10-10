@@ -10,7 +10,7 @@
 //! - **Prepare meal** (kitchen, labor Cooking): easy 2 / fine 3 / lavish 4 ingredient stacks;
 //!   the meal stack is the sum of the ingredient stacks; the meal takes the material of the last
 //!   ingredient. Cooking destroys seeds. Brewable plants are only cooked when
-//!   [`Sim::set_cook_brewables`] allows it (default **off**: Gordon's rule, plump helmets are
+//!   [`Sim::set_cook_brewables`] allows it (default **off**: the reference fort's rule, plump helmets are
 //!   for brewing).
 //! - **Carpenter / mason / craftsdwarf**: furniture and containers from 1 log or 1 boulder,
 //!   4 blocks per boulder, rock large pots at the craftsdwarf's workshop. Economic stone (ore)
@@ -62,8 +62,8 @@ use std::collections::HashMap;
 pub const PROD_PERIOD: u64 = 100;
 /// DF: at most 10 jobs in a workshop queue.
 pub const MAX_QUEUE: usize = 10;
-/// [calib11-econ] Stock targets of the fallback standing orders per citizen (Gordon's food watch
-/// emulation; DF's real stocks per citizen in his fort: drinks 14.6 at r4, 18.4 at r5, 35 at r6;
+/// [calib11-econ] Stock targets of the fallback standing orders per citizen (emulation of the
+/// reference fort's food watch; DF's real stocks per citizen in that fort: drinks 14.6 at r4, 18.4 at r5, 35 at r6;
 /// meals 8.8, 7.4, 8.8).
 pub const STANDING_DRINK_PER_CITIZEN: i32 = 18;
 pub const STANDING_FOOD_PER_CITIZEN: i32 = 8;
@@ -1587,8 +1587,8 @@ impl Sim {
         n
     }
 
-    /// [calib11-econ] The fallback standing orders follow the fort like Gordon's food watch
-    /// ("bei knapper werdenden Vorraeten HOEHERE Produktionsziele statt Abschalten"): the stock
+    /// [calib11-econ] The fallback standing orders follow the fort like the reference fort's
+    /// food watch (higher production targets instead of switching off as stocks run low): the stock
     /// targets scale with today's citizens, and the daily amount grows with the shortfall (one
     /// job per `per_job` missing units, from the base amount up to 4x).
     fn standing_orders_adjust(&mut self) {
@@ -2712,7 +2712,7 @@ impl Sim {
 
     // ------------------------------------------------------------------ public API
 
-    /// Gordon's rule by default: brewable plants are not cooked. `true` restores DF's default
+    /// The reference fort's rule by default: brewable plants are not cooked. `true` restores DF's default
     /// kitchen settings (brewables may be cooked).
     pub fn set_cook_brewables(&mut self, on: bool) {
         self.prod.cook_brewables = on;

@@ -5,7 +5,7 @@
 //!   cargo run -p rf-sim --release --example chaos -- [--export <dir> | --synthetic | --bench]
 //!       [--seeds 1-24] [--years 2] [--step 1200] [--save-every 120] [--jobs 4] [--peaceful]
 //!
-//! Without `--export` the env var `RUSTFORT_EXPORT` or `export/tileshtulon` is used. Each seed
+//! Without `--export` the env var `RUSTFORT_EXPORT` or the newest export under `export/` is used. Each seed
 //! runs on its own thread (`--jobs` at a time); the sim seed and the chaos seed are both the
 //! seed number, so `--seeds 7` reproduces seed 7 exactly.
 
