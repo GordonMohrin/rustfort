@@ -347,6 +347,9 @@ pub struct SimStats {
     pub prod_searches: u64,
     pub prod_item_scans: u64,
     pub prod_search_secs: f64,
+    /// [perf11] Paths read off shared flows (see `path::Flow`) and the tiles they settled.
+    pub flow_paths: u64,
+    pub flow_nodes: u64,
 }
 
 /// A designation job (dig, fell tree, gather plants).
@@ -595,6 +598,8 @@ pub struct Sim {
     haul_ix: Vec<u32>,
     /// [perf] Category and cached walk component of each `haul` entry.
     haul_cat: Vec<perf::HaulCache>,
+    /// [perf11] Haul categories that failed per walk component (see `perf::HaulFail`).
+    haul_fail: perf::HaulFail,
     haul_pos: HashMap<i32, u32>,
     haul_cnt: [u32; 17],
     contents: HashMap<i32, Vec<i32>>,
@@ -648,6 +653,22 @@ pub struct Sim {
     /// [skills9] Skill and quality counters; tree growth state.
     skills: skills::SkillsReport,
     growth: growth::Growth,
+}
+
+/// [perf9] Debug: A* searches with at least this many nodes are printed (`RF_PATH_LOG`, set
+/// to a number for another limit than 5000; unset = off). [perf11] Read once.
+fn path_log_min() -> u32 {
+    static MIN: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *MIN.get_or_init(|| match std::env::var("RF_PATH_LOG") {
+        Ok(v) => v.parse().unwrap_or(5_000),
+        Err(_) => u32::MAX,
+    })
+}
+
+/// [perf11] Inclusive CPU cycles of hot functions since the last call: (name, calls, cycles).
+/// Empty unless rf-sim is built with the `prof` feature (see `perf::prof`).
+pub fn prof_report() -> Vec<(&'static str, u64, u64)> {
+    perf::prof::report()
 }
 
 #[inline]
@@ -742,6 +763,7 @@ impl Sim {
             haul: Vec::new(),
             haul_ix: Vec::new(),
             haul_cat: Vec::new(), // [perf]
+            haul_fail: perf::HaulFail::default(), // [perf11]
             haul_pos: HashMap::new(),
             haul_cnt: [0; 17],
             chunks: Vec::new(),
@@ -1183,6 +1205,7 @@ impl Sim {
         s.dead_units = self.ai.iter().filter(|a| a.kind == Kind::Dead && self.world.units[a.uidx].flags.dead).count();
         s.items = self.world.items.len();
         s.nav_rebuilds = self.nav.rebuilds;
+        (s.flow_paths, s.flow_nodes) = (self.combat.flow_paths, self.combat.flow_nodes); // [perf11]
         s.phase_times = PHASE_NAMES.iter().copied().zip(self.phase.iter().copied()).collect(); // [perf]
         s
     }
@@ -1354,16 +1377,21 @@ impl Sim {
         self.phase[9] += (t0 - tq).as_secs_f64(); // [perf]
         for s in 0..self.ai.len() {
             if self.ai[s].wake <= now {
+                let _p = perf::prof::Guard::new(if self.ai[s].kind == Kind::Worker { perf::prof::THINK_WORKER } else { perf::prof::THINK_OTHER }); // [perf11]
                 self.think(s, now);
             }
         }
         let t1 = Instant::now();
         self.phase[0] += (t1 - t0).as_secs_f64();
         if self.n_path > 0 {
+            let p0 = perf::prof::t(); // [perf11]
             self.solve_paths();
+            perf::prof::add(perf::prof::SOLVE_PATHS, p0); // [perf11]
             let t2 = Instant::now();
             self.phase[1] += (t2 - t1).as_secs_f64();
+            let p0 = perf::prof::t(); // [perf11]
             self.commit_paths(now);
+            perf::prof::add(perf::prof::COMMIT_PATHS, p0); // [perf11]
             self.phase[2] += t2.elapsed().as_secs_f64();
         }
         if self.items_dirty {
@@ -1401,7 +1429,7 @@ impl Sim {
                 continue;
             }
             ai.waiting = false;
-            if pj.nodes >= 5_000 && std::env::var_os("RF_PATH_LOG").is_some() {
+            if pj.nodes >= path_log_min() {
                 // [perf9] debug: who runs the big searches
                 let (u, task) = (&self.world.units[ai.uidx], ai.task);
                 eprintln!("bigpath t={now} unit {} {} kind {:?} task {:?} from {:?} to {:?} goals {} nodes {} ok {} len {}", u.id, u.race, ai.kind, task, self.world.pos_of(pj.start as usize), self.world.pos_of(pj.goals.t[0] as usize), pj.goals.n, pj.nodes, pj.ok, pj.out.len());
@@ -1435,6 +1463,7 @@ impl Sim {
     }
 
     fn request_path(&mut self, s: usize, goals: Goals, now: u64) {
+        let _p = perf::prof::Guard::new(perf::prof::REQUEST_PATH); // [perf11]
         let start = self.ai[s].pos;
         let ai = &mut self.ai[s];
         ai.path.clear();
@@ -1721,6 +1750,7 @@ impl Sim {
     }
 
     fn decide(&mut self, s: usize, now: u64) {
+        let _p = perf::prof::Guard::new(perf::prof::DECIDE); // [perf11]
         self.stats.decisions += 1;
         if self.moods_decide(s, now) {
             return; // [moods] strange mood, insanity
@@ -2922,6 +2952,7 @@ impl Sim {
     }
 
     fn try_haul(&mut self, s: usize, now: u64) -> bool {
+        let _p = perf::prof::Guard::new(perf::prof::TRY_HAUL); // [perf11]
         let labors = self.ai[s].labors;
         if labors & labor::ANY_HAUL == 0 || self.haul.is_empty() {
             return false;
@@ -2944,15 +2975,24 @@ impl Sim {
         if want == 0 {
             return false;
         }
-        self.stats.haul_searches += 1;
         let pos = self.ai[s].pos as usize;
         let c = self.nav.comp_near(pos);
+        let restricted = self.alert_restricted(s); // [r7] civilian alert
+        if !restricted && c != 0 {
+            // [perf11] Categories that just failed in this component.
+            want &= !self.haul_fail.mask(c, now, self.epoch_haul, self.nav.version);
+            if want == 0 {
+                perf::prof::add(perf::prof::HAUL_SKIPPED, perf::prof::t());
+                return false;
+            }
+        }
+        self.stats.haul_searches += 1;
         if c == 0 {
             return false;
         }
         let up = self.nav.xyz(pos);
-        let restricted = self.alert_restricted(s); // [r7] civilian alert
         let bests = if restricted { [perf::NO_HAUL; 17] } else { self.haul_best_per_cat(want, up, c, now) }; // [perf] one scan, same result
+        let mut failed = 0u32; // [perf11] categories without a destination for their nearest item
         while want != 0 {
             let (cat, id, t) = if restricted {
                 // [r7] Only items lying inside the burrow, stored inside the burrow.
@@ -2961,7 +3001,12 @@ impl Sim {
                     None => return false,
                 }
             } else {
-                let Some(cat) = Sim::haul_pick(&bests, want) else { return false }; // [perf]
+                let Some(cat) = Sim::haul_pick(&bests, want) else {
+                    // [perf11] `want` now holds only categories without a waiting item here.
+                    perf::prof::add(perf::prof::HAUL_NO_ITEM, perf::prof::t());
+                    self.haul_fail.add(c, want | failed, now, self.epoch_haul, self.nav.version);
+                    return false;
+                }; // [perf]
                 (cat, bests[cat as usize].1, bests[cat as usize].2) // [perf]
             };
             let dest = match self.store_dest(id, cat, self.nav.xyz(t), c) { // [industry] bins/barrels
@@ -2973,6 +3018,15 @@ impl Sim {
                 Some(d) => d,
                 None => {
                     want &= !cat.bit();
+                    // [perf11] Without container space the answer is the same for every item of
+                    // the category: no free pile tile for it in this component.
+                    if !restricted && self.store.free_cats & cat.bit() == 0 {
+                        perf::prof::add(perf::prof::HAUL_NO_DEST, perf::prof::t());
+                        failed |= cat.bit();
+                    }
+                    if want == 0 && failed != 0 {
+                        self.haul_fail.add(c, failed, now, self.epoch_haul, self.nav.version);
+                    }
                     continue;
                 }
             };

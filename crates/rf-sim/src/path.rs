@@ -385,3 +385,171 @@ impl AStar {
         false
     }
 }
+
+/// [perf11] Shared paths to one goal tile: a resumable reverse Dijkstra ("flow field").
+///
+/// A whole siege charging the same dwarf, or siegers walking to their camp, used to run one
+/// A* per creature (133 searches of 5-7k nodes in the tick a siege charges on r5). A flow
+/// settles tiles outward from the goal once, and every chaser reads its path off the
+/// shortest-path tree (`path`). Moves are symmetric (see `nav::Landmarks`), so the tree path
+/// from a tile is a cheapest path from it to the goal with A*'s cost (sum of the entered
+/// tiles' costs), possibly another one of equal cost. The search only grows as far as the
+/// farthest chaser asked so far (`settle`), and it is resumable: settled tiles stay final.
+pub struct Flow {
+    pub goal: u32,
+    /// Tick it was made, last used, and `Nav::rebuilds` then (a component rebuild retires it).
+    pub made: u64,
+    pub used: u64,
+    pub rebuilds: u64,
+    nodes: Vec<Node>,
+    bits: u32,
+    len: usize,
+    heap: Queue,
+    /// Tiles settled so far.
+    pub expanded: u64,
+}
+
+impl Flow {
+    pub fn new(goal: u32, now: u64, rebuilds: u64) -> Flow {
+        let mut f = Flow { goal, made: now, used: now, rebuilds, nodes: vec![Node::default(); 1usize << MIN_BITS], bits: MIN_BITS, len: 0, heap: Queue::default(), expanded: 0 };
+        let s = f.slot(goal);
+        f.nodes[s].g = 0;
+        f.heap.push(Entry { f: 0, h: 0, idx: goal, slot: s as u32 });
+        f
+    }
+
+    #[inline]
+    fn hash(&self, k: u32) -> usize {
+        ((k as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> (64 - self.bits)) as usize
+    }
+
+    #[inline]
+    fn slot(&mut self, k: u32) -> usize {
+        if self.len * 2 >= self.nodes.len() {
+            self.grow();
+        }
+        let mask = self.nodes.len() - 1;
+        let mut s = self.hash(k);
+        loop {
+            let n = &mut self.nodes[s];
+            if n.stamp == 0 {
+                *n = Node { stamp: 1, key: k, g: u32::MAX, parent: NO_PARENT };
+                self.len += 1;
+                return s;
+            }
+            if n.key == k {
+                return s;
+            }
+            s = (s + 1) & mask;
+        }
+    }
+
+    #[inline]
+    fn find(&self, k: u32) -> Option<usize> {
+        let mask = self.nodes.len() - 1;
+        let mut s = self.hash(k);
+        loop {
+            let n = &self.nodes[s];
+            if n.stamp == 0 {
+                return None;
+            }
+            if n.key == k {
+                return Some(s);
+            }
+            s = (s + 1) & mask;
+        }
+    }
+
+    fn grow(&mut self) {
+        let old = std::mem::take(&mut self.nodes);
+        self.bits += 1;
+        self.nodes = vec![Node::default(); 1usize << self.bits];
+        let mask = self.nodes.len() - 1;
+        for n in old.into_iter().filter(|n| n.stamp != 0) {
+            let mut s = self.hash(n.key);
+            while self.nodes[s].stamp != 0 {
+                s = (s + 1) & mask;
+            }
+            self.nodes[s] = n;
+        }
+    }
+
+    /// Settled already?
+    pub fn settled(&self, t: u32) -> bool {
+        self.find(t).map(|s| self.nodes[s].parent & CLOSED != 0).unwrap_or(false)
+    }
+
+    /// Path cost from settled tile `t` to the goal.
+    pub fn cost_from(&self, t: u32) -> Option<u32> {
+        self.find(t).filter(|&s| self.nodes[s].parent & CLOSED != 0).map(|s| self.nodes[s].g)
+    }
+
+    /// Grow the search until tile `t` is settled, at most `cap` more settled tiles. True if it
+    /// is settled (false: unreachable, or farther than the cap).
+    pub fn settle(&mut self, nav: &Nav, t: u32, cap: u32) -> bool {
+        if self.settled(t) {
+            return true;
+        }
+        let mut buf = [0u32; MAX_NEIGHBORS];
+        let mut n = 0u32;
+        while let Some(e) = self.heap.pop() {
+            let hint = self.nodes[e.slot as usize];
+            let s = if hint.stamp != 0 && hint.key == e.idx {
+                e.slot as usize
+            } else {
+                match self.find(e.idx) {
+                    Some(s) => s,
+                    None => continue,
+                }
+            };
+            if self.nodes[s].parent & CLOSED != 0 {
+                continue;
+            }
+            self.nodes[s].parent |= CLOSED;
+            self.expanded += 1;
+            // Every move into `e.idx` costs its traffic cost, from whichever neighbour.
+            let ng = self.nodes[s].g + nav.cost(e.idx as usize);
+            let k = nav.neighbors(e.idx as usize, &mut buf);
+            for &q in &buf[..k] {
+                let qs = self.slot(q);
+                let node = &mut self.nodes[qs];
+                if node.parent & CLOSED != 0 || ng >= node.g {
+                    continue;
+                }
+                node.g = ng;
+                node.parent = e.idx;
+                self.heap.push(Entry { f: ng, h: 0, idx: q, slot: qs as u32 });
+            }
+            if e.idx == t {
+                return true;
+            }
+            n += 1;
+            if n >= cap {
+                return false;
+            }
+        }
+        false
+    }
+
+    /// Tiles after settled `start` up to and including the goal (the A* `out` format).
+    pub fn path(&self, start: u32, out: &mut Vec<u32>) -> bool {
+        out.clear();
+        let mut cur = start;
+        loop {
+            let Some(s) = self.find(cur) else { return false };
+            let node = self.nodes[s];
+            if node.parent & CLOSED == 0 {
+                return false;
+            }
+            if cur == self.goal {
+                return true;
+            }
+            let p = node.parent & !CLOSED;
+            if p == NO_PARENT || out.len() > 1 << 20 {
+                return false;
+            }
+            out.push(p);
+            cur = p;
+        }
+    }
+}
