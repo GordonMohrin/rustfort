@@ -149,7 +149,9 @@ fn main() {
     if args.iter().any(|a| a == "--debug-units") {
         let mut v = Vec::new();
         eprintln!("DWARF: {:?}\nCAT: {:?}", gfx.creature_info("DWARF"), gfx.creature_info("CAT"));
-        for u in world.units.iter().take(12) {
+        // `--race R` limits the listing to one race (e.g. DEMON_2).
+        let race = get("--race");
+        for u in world.units.iter().filter(|u| race.as_deref().map(|r| u.race == r).unwrap_or(true)).take(12) {
             v.clear();
             gfx.unit(&world, u, &mut v);
             eprintln!("unit {} {} {} {} at {:?}: {} sprites {:?}", u.id, u.race, u.caste, u.profession, u.pos, v.len(), v.first());

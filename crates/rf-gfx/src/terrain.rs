@@ -1489,7 +1489,10 @@ pub(crate) fn building(g: &Gfx, world: &World, b: &Building, p: Pos, out: &mut V
             if let Some(set) = g.item_cache(key) {
                 let c = class_index(mat_class(world.material(b.mat)));
                 if let Some(s) = set[c].or(set[0]).or(set[6]) {
-                    out.push(g.recolor(s, world, b.mat));
+                    let s = g.recolor(s, world, b.mat);
+                    // Placed but not built yet (waiting for a dwarf): a faded ghost of the piece
+                    // (estimate of DF's planned-building look).
+                    out.push(if b.built || b.stage < 0 { s } else { s.mul_tint([255, 255, 255, 130]) });
                 }
             }
         }

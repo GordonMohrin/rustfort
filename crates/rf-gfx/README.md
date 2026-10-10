@@ -25,8 +25,10 @@ Preview flags:
 - `--debug-missing` marks every tile, building, item and unit of the level that got no sprite (magenta X) and prints a histogram of the missing kinds; `--scan` does the histogram for all levels (about 25 ms for the real fort). Civzones are skipped (the UI draws zones).
 - `--bench` times `terrain()` for 16 levels around `--z` and `item()`/`unit()` for everything (real fort: about 25 ns per tile, 0.5 ms for a 20k-tile frame).
 - `--half` writes the PNG at half size.
+- `--month 0..11` (0 = Granite) or `--tick <year tick>` overrides the calendar, to check the seasonal trees (the export's own tick comes from `manifest.json` `year_tick_end`).
+- Items get their designation markers (forbidden, dump, melt, hidden) like in the app.
 
-On the v0.1 export of Gordon's fort `--scan` finds 4 sprite-less things left (3 procedural demons, 1 chicken), down from 17,525 (16,804 of them tree canopy tiles).
+On the v0.1 export of Gordon's fort `--scan` found 4 sprite-less things left (3 procedural demons, 1 chicken), down from 17,525 (16,804 of them tree canopy tiles). Since round 6 it finds **0 on all 150 levels** of the latest export (year 277).
 
 ## Mods (`Gfx::load_with_mods`, `Gfx::load_for_world`)
 
@@ -112,7 +114,28 @@ Lookups are driven by the `TiletypeInfo` attributes (shape, material, special, v
 | farm plot | `FARMPLOT` + the plant's `CROP` for each planted seed (seeds inside the plot, `prepare` caches them per tile; ripe look, since growth is not exported), else `FARMPLOT_PLANTED` |
 | items `PLANT` / `SEEDS` / `PLANT_GROWTH` | the plant's `PICKED` / `SEED` / `GROWTH_PICKED` (growth found via the plant raws' `GROWTH_ITEM ... LOCAL_PLANT_MAT:<mat>`) |
 
-Not yet: seasonal leaves (the `TREES_LEAVES`/`_FLOWERS`/`_FRUIT` pages: autumn colors, blossoms, fruit), per-grass `GRASS_1..4`, `TREE_TRUNK_SLOPE_*` beyond the top piece, crop growth stages (`CROP_SPROUT`).
+### Seasons (`World::calendar.year_tick`)
+
+Trees follow their PLANT raws, like DF: `[GROWTH_TIMING]` says when a growth is on the tree and `[GROWTH_PRINT:..:fg:bg:bright:start:end]` its color over the year.
+
+| growth | look |
+|---|---|
+| leaves (`[STANDARD_LEAVES]` in the plant graphics) | green print = the normal `TREES` twigs; yellow / orange / red prints = `TREES_LEAVES` `_AUTUMN:1/2/3` (oak, cherry, chestnut... turn yellow from mid-Limestone, orange in Sandstone, red in Timber); outside the timing (after tick 300 000, winter) the leaves have dropped: `TREE_LEAFLESS_TWIGS_*` and no over-leaves |
+| blossoms (`[STANDARD_FLOWERS_1/2]`) | `TREES_FLOWERS` `_FLOWER:n` on top of the leaves while the growth is on (cherry, apricot in spring) |
+| fruit (`[STANDARD_FRUIT_1..3]`) | `TREES_FRUIT` `_FRUIT:n` on top (apricots, cherries, bayberries in summer) |
+
+- Flowers and fruit are standard-palette images, recolored (variant pages made by `prepare`) with the growth material's `STATE_COLOR` (e.g. cherry fruit `BURNT_UMBER`, blossoms `LAVENDER_BLUSH`), else the print color.
+- Trees with their own seasonal pieces (`[TREE_TILE:TREE_TWIGS_FULL1_AUTUMN:1:TREE_MAPLE_LEAVES:4:4]`, maple) use them, gaps filled from the standard ones.
+- Evergreens (bayberry, willow: one green print all year) stay green. Dead trees always use the leafless pieces.
+- Per lookup this is a few comparisons on the plant's growth list (no allocation).
+
+### Grass
+
+- Grass floors use the grass plant's own `GRASS_1..4` (`[PLANT_GRAPHICS:CAVE MOSS] [GRASS_1:CAVERN_GRASS:0:1]`), by tiletype variant 1..4. Surface grasses look as before; cavern grasses (cave moss teal, floor fungi yellow, underlichen) now have their DF colors. The floors.png `GRASS_5*` set is the fallback.
+- `[CUSTOM_EDGING:n]` grasses print their `CUSTOM_EDGE_<dir>` pieces onto neighboring tiles (sides, plus corners whose sides have none). Lower n wins; all of them win over regular grass, whose floors.png bleeding never covers them.
+- `[CUSTOM_RAMP]` grass ramps: the plant's `GRASS_1` plus `OVERLAY_RAMP_WITH_WALL_<dirs>` (`RAMP_OVERLAY` page).
+
+Not yet: `TREE_TRUNK_SLOPE_*` beyond the top piece, crop growth stages (`CROP_SPROUT`), grass blossoms (`[GROWTH:FLOWER] [GROWTH_1..4:GRASS_FLOWERS]`, none of the grasses on Gordon's map has them), dry/dead grass (the `GrassDry`/`GrassDead` tiletypes are drawn like living grass).
 
 ## Units (`Gfx::unit`)
 
@@ -172,12 +195,27 @@ Not yet: seasonal leaves (the `TREES_LEAVES`/`_FLOWERS`/`_FRUIT` pages: autumn c
 - Zones: `ZONE_*` (for example `ZONE_BEDROOM`, `ZONE_MEETING`, plus border pieces `ZONE_ACTIVE_N_S`...).
 - Any other name in `data/vanilla/vanilla_interface/graphics/*.txt` also works.
 
+## Round 6 additions
+
+- **Engravings** (`World::engravings`, indexed per tile by `prepare`; DF keeps the smooth tiletype): engraved walls use the `WALL_STONE_ENGRAVED` edge set with the same autotiling as smoothed walls; engraved floors draw `FLOOR_STONE_ENGRAVED_PALETTE` recolored by the stone (`FLOOR_STONE_ENGRAVED_NON_PALETTE` for stones without a palette row). Premium has one engraving image per family, so the quality does not change the look.
+- **Item markers:** `Gfx::item_marker(&item)` returns `DESIGNATION_ITEM_FORBIDDEN` / `_DUMP` / `_FORBIDDEN_DUMP` / `_MELT` / `_FORBIDDEN_MELT` / `_HIDDEN`. rf-app draws the melt marks through it (`// [gfx6]` in `ui/round5.rs`).
+- **Spider webs:** DF's webs are `THREAD` items described as "... web" (3,955 cave spider webs in Gordon's caverns). They are drawn as `ITEM_WEB_HARMLESS:1..4` (variant by position), `ITEM_WEB_THICK` for giant cave spider webs.
+- **Caste sprites:** `[CREATURE_CASTE_GRAPHICS:BIRD_CHICKEN:MALE]` and the like (rooster/hen, drake/duck, ram/ewe, deer, moose, ...) are picked by `Unit.caste` before the race-wide sprite.
+- **Procedural creatures** (no graphics raws: forgotten beasts, demons such as `DEMON_2` "winged ghost", titans): DF Premium's procedural beast sprites (`[TILE_GRAPHICS_RECTANGLE:BEASTS:x:y:3:2:BEAST_<BODY>]`, now parsed into `named`).
+  - The body is classified from the exported body parts: legs (`STANCE` limbs), hands (`GRASP`), wings, head and tail give `AMORPHOUS`, `SNAKE`, `WORM_SHORT`, `HUMANOID`, `BIPEDAL_DINOSAUR`, `FRONT_GRASP`, `QUADRUPED_BULKY`/`_SLINKY`, `INSECT`, `SPIDER` or `SCORPION`.
+  - The sim's forgotten beasts (`FORGOTTEN_BEAST_n`, no raws) use their quadruped flag.
+  - Winged ones get `_WINGS_<BAT|LACY|FEATHERED>_BACK/_FRONT` layers (bat wings for demons, lacy for bugs).
+  - Forgotten beasts use the plain (stone-like) `BEAST_<BODY>`; other generated creatures get the `BEAST_ORGANIC_<BODY>` details (mouths, teeth, flesh) on top. They are not recolored, because a unit carries no material. They are bottom-aligned 3x2 sprites (centered by `unit_center_px`).
+- **Planned furniture** (placed, `built == false`): the piece's sprite faded to alpha 130 (an estimate of DF's look).
+
 ## Known gaps / next steps
 
 - rf-app still calls `Gfx::load`; switch it to `Gfx::load_for_world(&df, &world)` so the save's mods apply.
-- Floors are drawn as-is (no material tint), as DF does for floors.png. Engraved walls and floors need the engraving data from the export.
-- No `RAMP_OVERLAY` / ramp shadows, no brooks or rivers, no spatter, no vision shadows, no traffic/blueprint overlays (the `DESIGNATION_TRAFFIC_*` icons exist for the UI), no planned-construction look for unbuilt furniture.
+- Floors are drawn as-is (no material tint), as DF does for floors.png. The exporter does not export DF's engravings yet (the sim's engravings are drawn).
+- No ramp shadows, no vision shadows, no traffic/blueprint overlays (the `DESIGNATION_TRAFFIC_*` icons exist for the UI).
+- **Brooks, rivers, waterfalls:** the `BROOK`/`RIVER` bed pieces and the `FLOWS` `BROOK_TO_<dir>` / `RIVER_TO_<dir>` flow arrows exist, but Gordon's map has no brook or river tiles (only a murky pool), and the export carries no flow direction, so they are not mapped yet. Liquid depth is drawn by rf-app with the `UNDERWATER_1..7` sprites.
+- **Blood and spatter:** the world data has no spatter/contaminants (DF `block.block_events` material spatter is not exported, and the sim keeps blood only as unit blood volume), so `blood_*.png`, `vomit.png` and `mud.png` are not drawn yet.
 - `USE_STANDARD_PALETTE_FROM_ITEM` (clothing dyed by item material) is drawn uncolored.
 - Custom workshops from mods (Crematorium, Armory) need the custom building token, which the export does not carry (`subtype` is `Custom`).
 - The look cache is per unit id. A unit that changes profession or equipment keeps its old look until the cache is cleared; there is no public invalidation yet. Corpse sprites are cached per item id.
-- Procedural creatures (`DEMON_*`, forgotten beasts, ...) have no graphics raws; DF builds those sprites at runtime.
+- Procedural creatures use the beast base sprite and wings only; DF also layers eyes, mandibles, horns, shells and material colors from the generated body.

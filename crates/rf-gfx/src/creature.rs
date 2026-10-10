@@ -338,9 +338,11 @@ pub(crate) fn beast_body(parts: &[rf_core::BodyPartRaw], seed: u32) -> (BeastBod
 }
 
 /// [gfx6] Look of a creature without graphics raws: DF Premium's procedural beast sprites
-/// (`BEAST_<BODY>` 3x2 tiles, `BEAST_ORGANIC_<BODY>` for flesh, plus wing layers), chosen from
+/// (`BEAST_<BODY>` 3x2 tiles, the `BEAST_ORGANIC_<BODY>` details on top for flesh, plus wing
+/// layers), chosen from
 /// the creature's exported body parts; the sim's forgotten beasts (`FORGOTTEN_BEAST_n`, no
-/// raws) by their quadruped flag. Stone-like for forgotten beasts (most are made of a mineral),
+/// raws) by their quadruped flag. Plain (stone-like) for forgotten beasts (most are made of a
+/// mineral),
 /// organic for demons and other generated creatures. Not recolored (the unit carries no
 /// material). `None` if the beast pages are missing.
 pub(crate) fn procedural_look(g: &Gfx, world: &World, u: &Unit) -> Option<Vec<Sprite>> {
@@ -369,9 +371,10 @@ pub(crate) fn procedural_look(g: &Gfx, world: &World, u: &Unit) -> Option<Vec<Sp
         None => return None,
     };
     let stone = u.race.starts_with("FORGOTTEN_BEAST");
-    let pre = if stone { "BEAST_" } else { "BEAST_ORGANIC_" };
     let n = |s: String| g.named.get(&s).copied();
-    let base = n(format!("{pre}{}", body.token())).or_else(|| n(format!("BEAST_{}", body.token())))?;
+    let base = n(format!("BEAST_{}", body.token()))?;
+    // Flesh creatures: the organic details (mouths, teeth, flesh folds) on top of the body.
+    let organic = if stone { None } else { n(format!("BEAST_ORGANIC_{}", body.token())) };
     let kind = match (raw.map(|c| c.flags.iter().any(|f| f == "HAS_ANY_DEMON")).unwrap_or(false), body) {
         (true, _) => "BAT",
         (_, BeastBody::Insect | BeastBody::Spider | BeastBody::Scorpion) => "LACY",
@@ -381,6 +384,7 @@ pub(crate) fn procedural_look(g: &Gfx, world: &World, u: &Unit) -> Option<Vec<Sp
     let mut v = Vec::with_capacity(3);
     v.extend(wing("BACK"));
     v.push(base);
+    v.extend(organic);
     v.extend(wing("FRONT"));
     // Bottom-aligned like DF's large creature sprites (centered by `Sprite::unit_center_px`).
     for s in &mut v {

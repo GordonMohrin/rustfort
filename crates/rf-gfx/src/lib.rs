@@ -938,4 +938,82 @@ mod tests {
         assert_eq!(g.building_size("Workshop", "Quern"), (1, 1));
         assert!(!g.building_ghost("Bed", "").is_empty());
     }
+
+    /// Round 6: engravings, item markers, seasons, procedural beasts, caste sprites, webs.
+    #[test]
+    fn round6_lookups() {
+        let dir = df_dir();
+        if !dir.join("data").join("vanilla").exists() {
+            eprintln!("DF install not found, skipping");
+            return;
+        }
+        let mut g = Gfx::load(&dir).expect("load");
+        let mut w = World::synthetic(32, 32, 12);
+        // A smoothed floor and wall pair in the hall, both engraved.
+        let hall = w.units[0].pos;
+        let fl = Pos::new(hall.x, hall.y + 1, hall.z);
+        let wall = (0..32).map(|x| Pos::new(x, fl.y, fl.z)).find(|&p| w.shape(p) == rf_core::Shape::Wall && w.shape(p.offset(1, 0, 0)) == rf_core::Shape::Floor).expect("hall wall");
+        let smooth_floor = w.tiletypes.by_name("StoneFloorSmooth").unwrap();
+        w.tile_mut(fl).unwrap().tt = smooth_floor;
+        let mut infos = w.tiletypes.infos.clone();
+        let id = infos.len() as u16;
+        infos.push(rf_core::TiletypeInfo { id, name: "StoneWallSmoothUD".into(), shape: rf_core::Shape::Wall, material: rf_core::TtMaterial::Stone, special: rf_core::TtSpecial::Smooth, variant: 0, direction: String::new() });
+        w.tiletypes = rf_core::TiletypeTable::new(infos);
+        w.tile_mut(wall).unwrap().tt = id;
+        w.engravings.push(rf_core::Engraving { pos: fl, quality: 2, floor: true, mat: 0, engraver: -1, skill: 3 });
+        w.engravings.push(rf_core::Engraving { pos: wall, quality: 2, floor: false, mat: 0, engraver: -1, skill: 3 });
+        // A procedural beast and a hen.
+        let mut fb = w.units[0].clone();
+        fb.id = 900;
+        fb.race = "FORGOTTEN_BEAST_3".into();
+        fb.flags.animal = true;
+        w.units.push(fb);
+        let mut hen = w.units.iter().find(|u| u.race == "CAT").unwrap().clone();
+        hen.id = 901;
+        hen.race = "BIRD_CHICKEN".into();
+        hen.caste = "FEMALE".into();
+        w.units.push(hen.clone());
+        hen.id = 902;
+        hen.caste = "MALE".into();
+        w.units.push(hen);
+        g.prepare(&w);
+        let mut out = Vec::new();
+        g.terrain(&w, fl, &mut out);
+        let eng_pages = [g.page_by_token("FLOOR_STONE_ENGRAVED_PALETTE"), g.page_by_token("FLOOR_STONE_ENGRAVED_NON_PALETTE")];
+        let base = |p: u16| g.pages[p as usize].token.split('#').next().unwrap().to_string();
+        assert!(out.iter().any(|s| eng_pages.iter().flatten().any(|&e| base(s.page) == base(e))), "engraved floor sprite expected: {out:?}");
+        out.clear();
+        g.terrain(&w, wall, &mut out);
+        assert!(out.iter().any(|s| base(s.page) == "WALL_STONE_ENGRAVED"), "engraved wall pieces expected");
+        // Melt marker.
+        let mut it = w.items[0].clone();
+        assert!(g.item_marker(&it).is_none());
+        it.flags.melt = true;
+        assert_eq!(g.item_marker(&it), g.named("DESIGNATION_ITEM_MELT"));
+        it.flags.forbid = true;
+        assert_eq!(g.item_marker(&it), g.named("DESIGNATION_ITEM_FORBIDDEN_MELT"));
+        // Webs.
+        it.kind = "THREAD".into();
+        it.desc = "cave spider silk web".into();
+        out.clear();
+        g.item(&w, &it, &mut out);
+        assert_eq!(out.first().map(|s| g.pages[s.page as usize].token.as_str()), Some("ITEM_WEBS"));
+        // Seasons of an oak: green in spring, autumn colors, bare in winter.
+        let oak = &g.plants_t.plants[g.plants_t.by_id["OAK"] as usize];
+        assert_eq!(oak.season(100_000).leaves, 0);
+        assert!((1..=3).contains(&oak.season(250_000).leaves));
+        assert_eq!(oak.season(350_000).leaves, 4);
+        let cherry = &g.plants_t.plants[g.plants_t.by_id["CHERRY"] as usize];
+        assert!(cherry.season(80_000).flowers > 0, "cherry blossoms in spring");
+        assert!(cherry.season(150_000).fruit > 0, "cherries in summer");
+        // Procedural beast: a 3x2 BEAST sprite; chickens by caste.
+        out.clear();
+        g.unit(&w, w.units.iter().find(|u| u.id == 900).unwrap(), &mut out);
+        assert!(out.iter().any(|s| s.tw == 3 && s.th == 2), "beast sprite expected: {out:?}");
+        let mut a = Vec::new();
+        let mut b = Vec::new();
+        g.unit(&w, w.units.iter().find(|u| u.id == 901).unwrap(), &mut a);
+        g.unit(&w, w.units.iter().find(|u| u.id == 902).unwrap(), &mut b);
+        assert!(!a.is_empty() && !b.is_empty() && a != b, "hen and rooster differ");
+    }
 }
