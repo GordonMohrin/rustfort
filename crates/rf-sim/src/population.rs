@@ -32,8 +32,9 @@
 //! # Estimates (not on the wiki)
 //! - Wave chance 3 in 4 per season below the cap; arrival 1-27 days into the season; wave size
 //!   2 + rand(min(28, 4 + fort wealth / 25 000)), capped by the room under both caps.
-//! - Conception chance 1 in 12 per month per couple, at least one year after the last birth;
-//!   pregnancy 9 months; twins 1 in 50.
+//! - Conception chance 1 in 36 per month per couple ([skills9] was 1 in 12; Gordon's fort had
+//!   2 births in 2.18 years and none in 1.32 years, Rustfort 6 with 1 in 12), at least one year
+//!   after the last birth; pregnancy 9 months; twins 1 in 50.
 //! - Ghosts rise with a daily chance of 1 in 7 once the body lay unburied for 14 days.
 //! - Mandates: one per noble at most, issued with a chance of 1 in 3 per season, deadline one
 //!   season; election score = social skills + 2 per friend (incumbent x1.5).
@@ -65,6 +66,9 @@ pub const DEFAULT_BABY_PCT: i32 = 1000;
 pub const MAYOR_POPULATION: usize = 50;
 /// Pregnancy length (estimate: 9 months).
 pub const PREGNANCY_TICKS: u64 = 9 * MONTH;
+/// [skills9] Monthly conception chance of a married couple: 1 in this (estimate fitted to
+/// Gordon's fort).
+pub const CONCEIVE_IN: u32 = 36;
 
 #[derive(Clone, Debug)]
 pub(crate) struct Pregnancy {
@@ -849,7 +853,7 @@ impl Sim {
         }
         for (k, (m, f)) in couples.into_iter().enumerate() {
             let mut r = Rng::for_unit(self.seed, k, now, 0xBAB1);
-            if r.chance(1, 12) {
+            if r.chance(1, CONCEIVE_IN) {
                 self.pop.preg.push(Pregnancy { mother: m, father: f, due: now + PREGNANCY_TICKS });
                 self.pop.rep.pregnancies_started += 1;
             }
@@ -1470,7 +1474,8 @@ pub(crate) mod tests {
         let mut w = World::synthetic(48, 48, 20);
         marry(&mut w, 1, 0);
         let mut sim = Sim::new(w.clone(), 5);
-        for m in 0..48u64 {
+        for m in 0..144u64 {
+            // [skills9] 1 in 36 per month: 12 years for a near-certain conception
             sim.pop_monthly(m * MONTH + 11);
         }
         assert_eq!(sim.pop.preg.len(), 1, "one pregnancy at a time");

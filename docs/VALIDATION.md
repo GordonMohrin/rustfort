@@ -264,16 +264,16 @@ which fits tier 5 (Metropolis, 120 regulars + 40 monsters on the wiki) reached b
 |---|---|---|---|
 | 1 | Sieges kill 14 of 88 (r4 -> r5) and 73 of 87 (r5 -> r6) in DF, 0-4 in Rustfort ([r9]: 7 and 26 median, see "Round 9") | siege size: 10 regulars per siege at 87 citizens vs >= 137 goblins in DF; no ambush groups, no mounts (beak dogs) or monsters, invader skills | `invasion.rs` siege tier rule (WRONG by observation), "Sieges vs ambushes" MISSING, "Monsters and mounts" MISSING |
 | 2 | Forgotten beasts: 0 in 3.5 years of DF history, 1-5 per 2 years in Rustfort ([r9]: 0) | arrival 1/4 per season once a cavern is known | `caverns.rs`, "Forgotten beast arrival rate" (now confirmed too high) |
-| 3 | Social skills gain about 2 000 XP per dwarf-year in DF, 0 in Rustfort | conversations, teaching/learning at demonstrations, organization/record keeping give no XP | `social.rs`, `military.rs` (MISSING) |
-| 4 | Military XP: DF 14.5k per dwarf-year, mostly situational awareness (6.1k), melee combat (2.6k), discipline (1.7k), axe (1.8k); Rustfort trains weapon, dodging, armor and shield (2.6-3.8x DF) and never awareness or discipline | flat 3/1/1/1 XP every 100 ticks of training; no sparring, demonstrations or individual drills | `military.rs` training (ESTIMATE) |
-| 5 | Work XP about half of DF; per job Rustfort gives 30 for everything | wiki: 30 per use plus 30 for an item with quality (crafts, furniture: 60), mining, smoothing, engraving and stonecutting only 10 | `lib.rs` `add_xp` callers (WRONG) |
-| 6 | Skill levels above 20: DF has 96-137 skills over 20 (up to 29); Rustfort stops levelling at 20 | `add_xp` caps the rating at 20; wiki: no upper limit | `lib.rs` `add_xp` (WRONG) |
-| 7 | Crafts are always "ordinary" in Rustfort; DF crafts average 2.4-2.9 (25-46 masterworks) | crafts take no quality from the crafter's skill | `production.rs` / `industry.rs` (MISSING, like meal quality) |
-| 8 | Stress: DF's fort gets more stressed over the window (6 -> 17 stressed); Rustfort's gets happier | fewer deaths (no grief), thought strengths estimated | `social.rs` thought strengths (ESTIMATE) |
-| 9 | Births: 6 alive per 2.18 years in Rustfort, 2 in DF (0 in 1.32 years) | pregnancy rates | `population.rs` "Pregnancy" (ESTIMATE, too high) |
+| 3 | Social skills gain about 2 000 XP per dwarf-year in DF, 0 in Rustfort | conversations, teaching/learning at demonstrations, organization/record keeping give no XP | `social.rs`, `military.rs` (MISSING); **r9: 1 904** (`skills.rs`) |
+| 4 | Military XP: DF 14.5k per dwarf-year, mostly situational awareness (6.1k), melee combat (2.6k), discipline (1.7k), axe (1.8k); Rustfort trains weapon, dodging, armor and shield (2.6-3.8x DF) and never awareness or discipline | flat 3/1/1/1 XP every 100 ticks of training; no sparring, demonstrations or individual drills | `military.rs` training (ESTIMATE); **r9: 15.8k**, per skill within 10 % (`skills.rs`) |
+| 5 | Work XP about half of DF; per job Rustfort gives 30 for everything | wiki: 30 per use plus 30 for an item with quality (crafts, furniture: 60), mining, smoothing, engraving and stonecutting only 10 | `lib.rs` `add_xp` callers (WRONG); **r9: per wiki** |
+| 6 | Skill levels above 20: DF has 96-137 skills over 20 (up to 29); Rustfort stops levelling at 20 | `add_xp` caps the rating at 20; wiki: no upper limit | `lib.rs` `add_xp` (WRONG); **r9: no cap** |
+| 7 | Crafts are always "ordinary" in Rustfort; DF crafts average 2.4-2.9 (25-46 masterworks) | crafts take no quality from the crafter's skill | `production.rs` / `industry.rs` (MISSING, like meal quality); **r9: mean 1.8** |
+| 8 | Stress: DF's fort gets more stressed over the window (6 -> 17 stressed); Rustfort's gets happier | fewer deaths (no grief), thought strengths estimated | `social.rs` thought strengths (ESTIMATE); **r9: memories relived, 8 stressed (12 with DF's deaths), mean -25.7k** |
+| 9 | Births: 6 alive per 2.18 years in Rustfort, 2 in DF (0 in 1.32 years) | pregnancy rates | `population.rs` "Pregnancy" (ESTIMATE, too high); **r9: 3 births** |
 | 10 | Rustfort makes 30x the flour and 15x the bags, twice the plants and seeds of DF, but no barrels and few meals without help | the r4 orders MillPlants / ConstructBag run every day with plenty of input; farms keep harvesting; raw-plant eating makes seeds | `production.rs` (order conditions OK; consumption balance ESTIMATE) |
 | 11 | Items Rustfort makes have no stored value (1 551 new items), so `fort_wealth()` (created wealth for siege tiers) ignores all new production ([r9] fixed: `World::fort_history.created_wealth`, durable goods store their value) | `push_item` leaves `value` 0 | `population.rs` `fort_wealth` / `invasion.rs` (WRONG) |
-| 12 | Trees grow in DF (+65 in 2.18 years), never in Rustfort | no sapling growth | MISSING |
+| 12 | Trees grow in DF (+65 in 2.18 years), never in Rustfort | no sapling growth | MISSING; **r9: +70** (`growth.rs`) |
 | 13 | Building destroyers wrecked 17 of 31 workshops in DF's last siege ([r9]: destroyers wreck 8 buildings per siege median, mostly furniture; workshops 31 -> 30) | invaders do not attack workshops | `combat.rs` / `defense.rs` (MISSING) |
 | 14 | Stockpiles hold items on 37-39 % of their tiles in DF, 25 % in Rustfort (r4 -> r5) | containers are filled more densely (bin volume ESTIMATE), fewer new items to store | `storage.rs` "Bin volume" (ESTIMATE) |
 | 15 | Clothing, cloth, beds, barrels, coffins, digging, smoothing, new zones | Gordon's orders and designations after the start export | player-driven, not a sim error |
@@ -386,6 +386,44 @@ to a half of DF's (Rustfort's trap corridor and soldiers hold better, invaders d
 deconstruct or climb); migrants refill the fort after losses (DF: 1 migrant during the fall);
 workshops are rarely wrecked because the mounts walk beside the goblins instead of being ridden
 into the fort. The bigger sieges cost speed while they last (paths: 150 invaders' A*).
+## Round 9 calibration: experience, quality, births, stress, trees ([skills9])
+
+Same run as above (r4 -> r5, `--standing-orders --restore-schedules`, gamelog window), seeds
+1-4, master v0.8.0 before vs the [skills9] branch after (`skills.rs`, `growth.rs`, see
+FIDELITY.md). "deaths" = the same run with `--deaths 25:11,580:1,650:3`, which kills citizens
+(soldiers first) on the days of the run when DF's fort lost them (11 in the spring 277 siege,
+1 of thirst, 3 Axe Lords in the late-winter 278 siege), because the sim's sieges are still far
+weaker than DF's (item 1).
+
+| metric | DF | before (median, min-max) | after | after, deaths |
+|---|---|---|---|---|
+| military XP per dwarf-year | 14 545 | 9 879 (9 605-9 904) | **15 784** (15 137-16 146) | 10 411 (11 soldiers dead) |
+| situational awareness / Fighting / axe / Discipline | 6 116 / 2 648 / 1 816 / 1 711 | 0 / 1 036 / 5 125 / 0 | 6 671 / 2 874 / 1 916 / 1 813 | |
+| dodging / armor / shield / wrestling | 336 / 399 / 190 / 606 | 1 747 / 1 023 / 708 / 103 | 375 / 431 / 251 / 792 | |
+| social XP per dwarf-year | 1 977 | 0 | **1 904** (1 820-1 934) | 1 164 |
+| concentration / student / teacher / organization | 417 / 417 / 366 / 306 | 0 / 0 / 0 / 0 | 430 / 430 / 430 / 249 | |
+| persuasion / comedy / conversation | 76 / 42 / 28 | 0 | 104 / 58 / 40 | |
+| work XP per dwarf-year | 1 892 | 1 089 | 1 296 (player-driven digging and building missing) | 1 255 |
+| mining | 50 | 28.5 (30 per tile) | 18.5 (10 per tile, wiki) | |
+| skills above level 20 | 96 | 136 | 167 (no cap) | |
+| craft quality mean / masterworks | 2.6 / 25 | 0.0 / 0 | **1.8** / 11 (5-18) | 1.8 / 9 |
+| births (alive) | 2 | 6 (6-7) | **3** (2-4) | 3 |
+| stressed or worse at the end | 17 | 1 (0-1) | 8 (4-9) | **12** (6-14) |
+| mean stress | -25 720 | -41 524 | **-25 724** | -20 358 |
+| very stressed / breaking | 2 / 5 | 0 / 0 | 4 / 0 | 4 / 1 |
+| trees (live, change) | +65 | 0 | **+70** (+66..+80) | +70 |
+| ticks/s per sim (4 parallel, busy machine) | | 12 475 | 17 240 | 19 067 |
+
+Notes:
+
+- The craft quality roll gives skilled crafters DF-like results (skill 16: 82 % exceptional,
+  18 % masterwork), but in the sim most craft jobs go to the many unskilled dwarves with the
+  craft labor (62 of Gordon's dwarves have it, most at skill 0-4), so the mean stays at 1.8.
+- `quality.new_mean` (all new durable goods) is 2.8 vs DF 1.3 and masterworks 156 vs 76: most of
+  them are meals (cook skill 28, `lifestyle.rs` roll, not changed here).
+- Speaking stays 0: no poetry performers took the stage in these runs.
+- Stress now rises over the window as in DF, also without scripted deaths: the r4 export holds
+  the memories of the r3 siege deaths, which are relived (`social_recall`).
 
 ## Limitations
 

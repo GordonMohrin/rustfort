@@ -1374,7 +1374,13 @@ impl Sim {
             return;
         }
         if !skill.is_empty() {
-            self.add_xp(s, skill, if matches!(job.kind, CK::Build(_) | CK::Deconstruct) { 20 } else { 30 });
+            // [skills9] wiki Experience: smoothing, carving and engraving 10, other uses 30.
+            let xp = match job.kind {
+                CK::Smooth | CK::Engrave | CK::CarveFort | CK::CarveTrack => crate::skills::XP_STONECUT,
+                CK::Deconstruct => 20,
+                _ => crate::skills::XP_USE,
+            };
+            self.add_xp(s, skill, xp);
         }
         self.stats.jobs_done += 1;
         self.cx.jobs[j].claimed = NONE;
