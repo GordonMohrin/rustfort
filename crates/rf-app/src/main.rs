@@ -73,6 +73,8 @@ pub struct Args {
     /// [round 6] `--ui-scale` / `--gfps` were given (they win over the settings file).
     pub ui_scale_cli: bool,
     pub gfps_cli: bool,
+    /// [round 6] Extra screenshots at these frames (`<shot>-f<N>.png`), e.g. an import's progress.
+    pub shots_at: Vec<u32>,
 }
 
 const USAGE: &str = "usage:
@@ -144,6 +146,7 @@ fn parse_args() -> Result<Args, String> {
                 a.gfps_cli = true;
             }
             "--menu" => a.menu = true,
+            "--shots-at" => a.shots_at = val("--shots-at")?.split(',').filter_map(|s| s.trim().parse().ok()).collect(),
             "--menu-page" => {
                 a.menu_page = Some(val("--menu-page")?);
                 a.menu = true;

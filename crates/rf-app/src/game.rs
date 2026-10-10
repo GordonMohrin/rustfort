@@ -1819,6 +1819,11 @@ pub async fn run(args: Args, loaded: Loaded, settings: crate::settings::Settings
 
         frame += 1;
         if let Some(path) = &args.screenshot {
+            if args.shots_at.contains(&frame) {
+                let p = extra_shot_path(path, frame);
+                save_screenshot(&p);
+                println!("saved {} (sim tick {})", p.display(), g.sim.ticks());
+            }
             if frame >= args.frames.max(1) {
                 let (iw, ih) = save_screenshot(path);
                 println!(
@@ -1866,6 +1871,12 @@ pub async fn run(args: Args, loaded: Loaded, settings: crate::settings::Settings
     };
     let settings = g.settings.clone();
     (exit, settings)
+}
+
+/// [round 6] `shots/a.png` + frame 300 -> `shots/a-f300.png`.
+pub fn extra_shot_path(path: &std::path::Path, frame: u32) -> std::path::PathBuf {
+    let stem = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "shot".into());
+    path.with_file_name(format!("{stem}-f{frame}.png"))
 }
 
 /// Write the current frame to a PNG (alpha forced to opaque). Returns its size.

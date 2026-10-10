@@ -93,19 +93,28 @@ pub fn mouse_rows(b: &Bindings) -> Vec<(String, String)> {
             .unwrap_or_else(|| "-".into())
     };
     vec![
-        ("Select creature / building / tile".into(), "Left click".into()),
-        ("Next creature on the same tile".into(), "Click again".into()),
-        ("Designate, place zones and piles".into(), "Drag, or click + click".into()),
-        ("3D box (several levels)".into(), "Change level between".into()),
-        ("Back out (box, tool, menu)".into(), "Right click".into()),
+        ("Select".into(), "Left click".into()),
+        ("Cycle units on tile".into(), "Click again".into()),
+        ("Designate / place".into(), "Drag, or click+click".into()),
+        ("3D box".into(), "Change z in between".into()),
+        ("Back out".into(), "Right click".into()),
         ("Pan".into(), "Middle drag".into()),
-        ("One level up / down".into(), format!("{} / {}", wheel("CURSOR_UP_Z"), wheel("CURSOR_DOWN_Z"))),
-        ("Ten levels up / down".into(), format!("{} / {}", wheel("CURSOR_UP_Z_FAST"), wheel("CURSOR_DOWN_Z_FAST"))),
-        ("Zoom in / out".into(), format!("{} / {}", wheel("ZOOM_IN"), wheel("ZOOM_OUT"))),
-        ("Jump to an announcement".into(), "Click it".into()),
-        ("Jump to a level".into(), "Click the right bar".into()),
-        ("Button name and key".into(), "Hover it".into()),
+        ("Level up / down".into(), wheel_pair(&wheel("CURSOR_UP_Z"), &wheel("CURSOR_DOWN_Z"))),
+        ("10 levels".into(), wheel_pair(&wheel("CURSOR_UP_Z_FAST"), &wheel("CURSOR_DOWN_Z_FAST"))),
+        ("Zoom in / out".into(), wheel_pair(&wheel("ZOOM_IN"), &wheel("ZOOM_OUT"))),
+        ("Go to announcement".into(), "Click it".into()),
+        ("Go to a level".into(), "Click the z bar".into()),
+        ("Button name, key".into(), "Hover it".into()),
     ]
+}
+
+/// `Shift+wheel down` + `Shift+wheel up` -> `Shift+wheel down / up`.
+pub fn wheel_pair(a: &str, b: &str) -> String {
+    let split = |s: &str| s.rsplit_once(' ').map(|(p, d)| (p.to_string(), d.to_string()));
+    match (split(a), split(b)) {
+        (Some((pa, da)), Some((pb, db))) if pa == pb => format!("{pa} {da} / {db}"),
+        _ => format!("{a} / {b}"),
+    }
 }
 
 /// The key text of a row: the bindings' triggers, `-` when unbound.
@@ -207,7 +216,7 @@ fn section_header(g: &mut Game, name: &str, x: f32, y: f32, w: f32) -> f32 {
 fn draw_row(g: &Game, action: &str, keys: &str, x: f32, y: f32, w: f32) {
     let s = g.ui.scale;
     let kc = if keys == "-" || keys.chars().all(|c| c == '-' || c == ' ' || c == '/') { col::TEXT_DIM } else { col::TEXT_HI };
-    let kmax = ((w * 0.45) / (GW * s)) as usize;
+    let kmax = ((w * 0.6) / (GW * s)) as usize;
     let keys = super::clip(keys, kmax.max(6));
     let kw = g.font.width(&keys, s);
     let amax = (((w - kw) / (GW * s)) as usize).saturating_sub(1).max(8);
@@ -235,13 +244,13 @@ pub const HINTS: &[&str] = &["welcome", "camera", "select", "toolbar", "help"];
 
 fn hint_content(g: &Game, id: &str) -> (String, Vec<String>, Anchor) {
     let b = &g.binds;
+    // First key (not wheel) of a binding, readable (`1`, `Space`, `F1`).
     let k = |n: &str| {
-        let l = b.label(n);
-        if l.is_empty() {
-            "-".to_string()
-        } else {
-            l
-        }
+        b.triggers(n)
+            .iter()
+            .find(|t| !matches!(t, crate::keys::Trigger::Wheel { .. }))
+            .map(crate::keys::trigger_label)
+            .unwrap_or_else(|| "-".into())
     };
     match id {
         "welcome" => (
@@ -388,7 +397,9 @@ mod tests {
         let r = &SECTIONS[1].1[0];
         assert_eq!(row_keys(&b, r), "Space");
         let m = mouse_rows(&b);
-        assert!(m.iter().any(|(a, k)| a.starts_with("Zoom") && k == "Ctrl+wheel up / Ctrl+wheel down"), "{m:?}");
+        assert!(m.iter().any(|(a, k)| a.starts_with("Zoom") && k == "Ctrl+wheel up / down"), "{m:?}");
+        assert_eq!(wheel_pair("Wheel down", "Wheel up"), "Wheel down / up");
+        assert_eq!(wheel_pair("-", "Wheel up"), "- / Wheel up");
     }
 
     #[test]

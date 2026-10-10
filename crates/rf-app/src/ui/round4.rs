@@ -296,10 +296,10 @@ pub fn draw_settings(g: &mut Game) {
     {
         g.font.draw("Autosave", x, y + 5.0 * s, s, col::TEXT);
         let bh = GH * s + 10.0 * s;
-        let label = g.settings.autosave_label();
+        let label = crate::settings::autosave_label(g.autosave_days);
         let br = Rect::new(x + 17.0 * 8.0 * s, y, 18.0 * 8.0 * s, bh);
         if text_button(&mut g.ui, &g.font, br, &label, BtnState::Normal) {
-            let mut st = g.settings.clone();
+            let mut st = crate::settings::Settings { autosave_days: g.autosave_days, ..Default::default() };
             st.cycle_autosave();
             g.set_autosave_days(st.autosave_days);
         }

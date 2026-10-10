@@ -224,8 +224,17 @@ pub fn rotate_autosaves(dir: &Path, fort: &str, keep: usize) -> Vec<PathBuf> {
         .filter(|p| p.extension().and_then(|x| x.to_str()) == Some(EXT))
         .filter(|p| p.file_stem().and_then(|f| f.to_str()).map(|f| f.starts_with(&prefix)).unwrap_or(false))
         .collect();
-    // The UTC stamp in the name sorts chronologically; newest first.
-    autos.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+    // `<stamp>[-N]`: the UTC stamp sorts chronologically, `-N` counts saves within one second.
+    let key = |p: &PathBuf| {
+        let stem = p.file_stem().and_then(|f| f.to_str()).unwrap_or("");
+        let rest = stem.strip_prefix(&prefix).unwrap_or(stem);
+        let mut parts = rest.split('-');
+        let date = parts.next().unwrap_or("").to_string();
+        let time = parts.next().unwrap_or("").to_string();
+        let n: u32 = parts.next().and_then(|x| x.parse().ok()).unwrap_or(1);
+        (date, time, n)
+    };
+    autos.sort_by_key(|p| std::cmp::Reverse(key(p)));
     let mut gone = Vec::new();
     for p in autos.into_iter().skip(keep.max(1)) {
         if std::fs::remove_file(&p).is_ok() {
@@ -351,6 +360,14 @@ mod tests {
         let info = save_world_tagged(&w, 1, &dir, AUTO_TAG).unwrap();
         assert!(is_autosave(&info.path), "{}", info.path.display());
         assert_eq!(rotate_autosaves(&dir, "Synthfort", 3).len(), 1);
+        // Several autosaves within one second: `-2`, `-3` are newer than the plain name.
+        for n in ["Synthfort-auto-20991231-235959", "Synthfort-auto-20991231-235959-2", "Synthfort-auto-20991231-235959-3"] {
+            std::fs::write(dir.join(format!("{n}.{EXT}")), b"x").unwrap();
+        }
+        rotate_autosaves(&dir, "Synthfort", 2);
+        assert!(dir.join("Synthfort-auto-20991231-235959-3.rfsave").exists());
+        assert!(dir.join("Synthfort-auto-20991231-235959-2.rfsave").exists());
+        assert!(!dir.join("Synthfort-auto-20991231-235959.rfsave").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

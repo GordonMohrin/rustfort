@@ -177,6 +177,12 @@ pub fn parse_probe(v: &serde_json::Value) -> Probe {
     })
 }
 
+/// dfhack-run crashes without a word when nothing listens on DFHack's port.
+fn no_connect() -> String {
+    let port = std::env::var("DFHACK_PORT").unwrap_or_else(|_| "5000".into());
+    format!("dfhack-run could not connect to DFHack (localhost:{port}).")
+}
+
 /// First non-empty line of a tool's output, for error messages.
 fn first_line(s: &str) -> String {
     s.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("(no output)").chars().take(140).collect()
@@ -189,17 +195,23 @@ pub fn probe(df_dir: &Path) -> Probe {
         return Probe::NoDfhackRun(run);
     }
     let Some(tools) = tools_dir() else { return Probe::NoTools };
-    if df_running() == Some(false) {
+    // `RUSTFORT_DF_PROCESS` (tests) checks the process list first; normally DFHack is asked
+    // directly (0.1 s) and the slow process list (up to seconds on a busy machine) is only
+    // read to tell "DF is not running" from "DFHack does not answer".
+    let forced = std::env::var_os("RUSTFORT_DF_PROCESS").is_some();
+    if forced && df_running() == Some(false) {
         return Probe::NotRunning;
     }
     let script = tools.join("rustfort-probe.lua");
-    match run_with_timeout(Command::new(&run).arg("lua").arg("-f").arg(lua_path(&script)), Duration::from_secs(10)) {
-        Err(e) => Probe::NoDfhack(format!("dfhack-run: {e}")),
+    let res = run_with_timeout(Command::new(&run).arg("lua").arg("-f").arg(lua_path(&script)), Duration::from_secs(10));
+    let failed = |msg: String| if df_running() == Some(false) { Probe::NotRunning } else { Probe::NoDfhack(msg) };
+    match res {
+        Err(e) => failed(format!("dfhack-run: {e}")),
         Ok((_, out)) => match json_line(&out) {
             Some(v) => parse_probe(&v),
             // dfhack-run crashes without a word when nothing listens on DFHack's port.
-            None if out.trim().is_empty() => Probe::NoDfhack("DFHack does not answer (dfhack-run could not connect)".into()),
-            None => Probe::NoDfhack(first_line(&out)),
+            None if out.trim().is_empty() => failed(no_connect()),
+            None => failed(first_line(&out)),
         },
     }
 }
@@ -339,7 +351,7 @@ impl ExportJob {
         match json_line(&out) {
             Some(v) if v.get("ok").and_then(|x| x.as_bool()) == Some(true) => {}
             Some(v) => return Err(v.get("error").and_then(|x| x.as_str()).unwrap_or("the exporter refused").to_string()),
-            None if !ok && out.trim().is_empty() => return Err("DFHack does not answer (dfhack-run could not connect)".into()),
+            None if !ok && out.trim().is_empty() => return Err(no_connect()),
             None if !ok => return Err(format!("dfhack-run: {}", first_line(&out))),
             None => return Err(format!("unexpected answer: {}", first_line(&out))),
         }

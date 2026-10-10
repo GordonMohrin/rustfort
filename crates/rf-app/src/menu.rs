@@ -77,6 +77,8 @@ pub struct Menu {
     ui_scale_cli: Option<f32>,
     settings_writable: bool,
     quit: bool,
+    /// `--menu-page import:go`: start the import once DF answers (end-to-end test).
+    auto_import: bool,
 }
 
 fn load_tex(path: &std::path::Path) -> Option<Texture2D> {
@@ -168,11 +170,16 @@ impl Menu {
             ui_scale_cli: args.ui_scale_cli.then_some(args.ui_scale),
             settings_writable: args.screenshot.is_none(),
             quit: false,
+            auto_import: false,
         };
         match args.menu_page.as_deref() {
             Some("load") => m.open_load(0),
             Some("exports") => m.open_load(1),
             Some("import") => m.open_import(),
+            Some("import:go") => {
+                m.auto_import = true;
+                m.open_import();
+            }
             Some("settings") => m.page = Page::Settings,
             _ => {}
         }
@@ -610,7 +617,7 @@ impl Menu {
                     line(&self.font, &format!("Found {}{native} in the world {}.", info.fort, info.world), col::TEXT_GOOD, &mut y);
                     line(&self.font, &format!("Year {}, {} citizens, DFHack {}.", info.year, info.citizens, info.dfhack), col::TEXT, &mut y);
                     y += 8.0 * s;
-                    line(&self.font, "The exporter only reads: Dwarf Fortress keeps running and is never paused or changed. It takes about 15-40 seconds; DF runs a bit slower meanwhile.", col::TEXT, &mut y);
+                    line(&self.font, "The exporter only reads: Dwarf Fortress keeps running and is never paused or changed. It takes about half a minute to a minute; DF runs a bit slower meanwhile.", col::TEXT, &mut y);
                     y += 8.0 * s;
                     let into = crate::importer::export_root().join(crate::importer::export_dir_name(&info.fort_native, &info.fort, crate::save::now_unix()));
                     line(&self.font, &format!("Into: {}  (earlier exports are kept)", into.display()), col::TEXT_DIM, &mut y);
@@ -633,7 +640,7 @@ impl Menu {
                 let ph = if p.phase.is_empty() { "Waiting for DF".to_string() } else { crate::importer::phase_label(&p.phase) };
                 let det = if p.detail.is_empty() { String::new() } else { format!(" ({})", p.detail) };
                 line(&self.font, &format!("{ph}{det}"), col::TEXT_DIM, &mut y);
-                line(&self.font, &format!("Into {}", job.dir.display()), col::TEXT_DIM, &mut y);
+                line(&self.font, &format!("Into {}", short_path(&job.dir)), col::TEXT_DIM, &mut y);
                 cancel = true;
             }
             Some(ImportState::Failed(e)) => {
@@ -668,7 +675,9 @@ impl Menu {
             }
         }
         if let Some(info) = go {
-            if text_button(&mut self.ui, &self.font, Rect::new(c.x + c.w - 200.0 * s, by, 200.0 * s, bh), "Import and play", BtnState::Active) {
+            let clicked = text_button(&mut self.ui, &self.font, Rect::new(c.x + c.w - 200.0 * s, by, 200.0 * s, bh), "Import and play", BtnState::Active);
+            // Test hook `--menu-page import:go`: start as soon as DF is found (once).
+            if clicked || std::mem::take(&mut self.auto_import) {
                 let dfc = df.clone();
                 self.import = Some(ImportState::Starting(std::thread::spawn(move || ExportJob::start(&dfc, &info))));
             }
@@ -749,10 +758,10 @@ impl Menu {
         self.font.draw("Population cap", lx, y + 5.0 * s, s, col::TEXT);
         let mut x = vx;
         let from_save = self.settings.pop_cap.is_none();
-        if text_button(&mut self.ui, &self.font, Rect::new(x, y, 12.0 * GW * s, bh), if from_save { "From the save" } else { "Set:" }, if from_save { BtnState::Active } else { BtnState::Normal }) {
+        if text_button(&mut self.ui, &self.font, Rect::new(x, y, 16.0 * GW * s, bh), if from_save { "From the save" } else { "Set:" }, if from_save { BtnState::Active } else { BtnState::Normal }) {
             self.settings.pop_cap = if from_save { Some(120) } else { None };
         }
-        x += 12.0 * GW * s + 8.0 * s;
+        x += 16.0 * GW * s + 8.0 * s;
         if let Some(cap) = self.settings.pop_cap {
             let mut nc = cap;
             for (t, d) in [("-10", -10), ("-1", -1)] {
@@ -777,7 +786,7 @@ impl Menu {
             Some(true) => "On",
             Some(false) => "Off",
         };
-        if text_button(&mut self.ui, &self.font, Rect::new(vx, y, 14.0 * GW * s, bh), inv, BtnState::Normal) {
+        if text_button(&mut self.ui, &self.font, Rect::new(vx, y, 16.0 * GW * s, bh), inv, BtnState::Normal) {
             self.settings.invasions = match self.settings.invasions {
                 None => Some(true),
                 Some(true) => Some(false),
@@ -822,7 +831,7 @@ impl Menu {
         };
         self.font.draw(st, vx, y, s, sc);
         y += lh;
-        self.font.draw("Click to type a path; Ctrl+V pastes. Applies when you leave this page.", vx, y, s, col::TEXT_DIM);
+        self.font.draw("Click to edit, Ctrl+V pastes; applies on Back.", vx, y, s, col::TEXT_DIM);
         y += lh + 14.0 * s;
         // Hints.
         self.font.draw("First-time hints", lx, y + 5.0 * s, s, col::TEXT);
@@ -882,6 +891,15 @@ impl Menu {
     }
 }
 
+/// A path relative to the working directory when it is inside it (`export\tileshtulon-...`).
+pub fn short_path(p: &std::path::Path) -> String {
+    let cwd = std::env::current_dir().ok().and_then(|c| std::fs::canonicalize(c).ok()).map(|c| crate::importer::plain(&c));
+    match cwd.as_ref().and_then(|c| p.strip_prefix(c).ok()) {
+        Some(rel) => rel.display().to_string(),
+        None => p.display().to_string(),
+    }
+}
+
 /// Word-wrap to at most `n` characters per line.
 pub fn wrap(t: &str, n: usize) -> Vec<String> {
     let n = n.max(10);
@@ -918,6 +936,7 @@ pub async fn run_menu(args: &Args, settings: Settings, start_frame: u32) -> (Opt
         (None, None) => None,
     };
     let mut frame = start_frame;
+    let mut deadline = std::time::Instant::now();
     loop {
         m.input = m.input_state.collect(&m.binds);
         if let Some(sc) = script.as_mut() {
@@ -929,6 +948,11 @@ pub async fn run_menu(args: &Args, settings: Settings, start_frame: u32) -> (Opt
             return (Some((l, frame)), m.settings);
         }
         if let Some(path) = &args.screenshot {
+            if args.shots_at.contains(&frame) {
+                let p = crate::game::extra_shot_path(path, frame);
+                crate::game::save_screenshot(&p);
+                println!("saved {} (title screen, page {:?})", p.display(), m.page);
+            }
             if frame >= args.frames.max(1) {
                 let (w, h) = crate::game::save_screenshot(path);
                 println!("saved {} ({w}x{h}) after {frame} frames (title screen, page {:?})", path.display(), m.page);
@@ -937,6 +961,18 @@ pub async fn run_menu(args: &Args, settings: Settings, start_frame: u32) -> (Opt
         }
         if m.quit {
             return (None, m.settings);
+        }
+        // Without vsync, pace to the frame cap (also keeps screenshot runs in real time).
+        if !args.vsync {
+            let cap = if args.gfps_cli { args.gfps } else { m.settings.gfps }.max(10);
+            let period = std::time::Duration::from_secs_f64(1.0 / cap as f64);
+            deadline += period;
+            let now = std::time::Instant::now();
+            if deadline > now {
+                std::thread::sleep(deadline - now);
+            } else if now - deadline > period {
+                deadline = now;
+            }
         }
         next_frame().await;
     }

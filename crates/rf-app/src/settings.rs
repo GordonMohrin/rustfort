@@ -55,6 +55,14 @@ impl Default for Settings {
     }
 }
 
+/// `Every season`, `Off`, `Every 10 days`.
+pub fn autosave_label(days: u32) -> String {
+    match AUTOSAVE_CHOICES.iter().find(|(d, _)| *d == days) {
+        Some((_, l)) => l.to_string(),
+        None => format!("Every {days} days"),
+    }
+}
+
 /// `saves/settings.json` (or `$RUSTFORT_SETTINGS`).
 pub fn path() -> PathBuf {
     std::env::var_os("RUSTFORT_SETTINGS").map(PathBuf::from).unwrap_or_else(|| crate::save::save_dir().join("settings.json"))
@@ -106,10 +114,7 @@ impl Settings {
     }
 
     pub fn autosave_label(&self) -> String {
-        match AUTOSAVE_CHOICES.iter().find(|(d, _)| *d == self.autosave_days) {
-            Some((_, l)) => l.to_string(),
-            None => format!("Every {} days", self.autosave_days),
-        }
+        autosave_label(self.autosave_days)
     }
 
     /// Next autosave choice (cycles).
