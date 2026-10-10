@@ -262,8 +262,8 @@ which fits tier 5 (Metropolis, 120 regulars + 40 monsters on the wiki) reached b
 
 | # | divergence (DF vs Rustfort) | likely cause | module / FIDELITY row |
 |---|---|---|---|
-| 1 | Sieges kill 14 of 88 (r4 -> r5) and 73 of 87 (r5 -> r6) in DF, 0-4 in Rustfort | siege size: 10 regulars per siege at 87 citizens vs >= 137 goblins in DF; no ambush groups, no mounts (beak dogs) or monsters, invader skills | `invasion.rs` siege tier rule (WRONG by observation), "Sieges vs ambushes" MISSING, "Monsters and mounts" MISSING |
-| 2 | Forgotten beasts: 0 in 3.5 years of DF history, 1-5 per 2 years in Rustfort | arrival 1/4 per season once a cavern is known | `caverns.rs`, "Forgotten beast arrival rate" (now confirmed too high) |
+| 1 | Sieges kill 14 of 88 (r4 -> r5) and 73 of 87 (r5 -> r6) in DF, 0-4 in Rustfort ([r9]: 7 and 26 median, see "Round 9") | siege size: 10 regulars per siege at 87 citizens vs >= 137 goblins in DF; no ambush groups, no mounts (beak dogs) or monsters, invader skills | `invasion.rs` siege tier rule (WRONG by observation), "Sieges vs ambushes" MISSING, "Monsters and mounts" MISSING |
+| 2 | Forgotten beasts: 0 in 3.5 years of DF history, 1-5 per 2 years in Rustfort ([r9]: 0) | arrival 1/4 per season once a cavern is known | `caverns.rs`, "Forgotten beast arrival rate" (now confirmed too high) |
 | 3 | Social skills gain about 2 000 XP per dwarf-year in DF, 0 in Rustfort | conversations, teaching/learning at demonstrations, organization/record keeping give no XP | `social.rs`, `military.rs` (MISSING) |
 | 4 | Military XP: DF 14.5k per dwarf-year, mostly situational awareness (6.1k), melee combat (2.6k), discipline (1.7k), axe (1.8k); Rustfort trains weapon, dodging, armor and shield (2.6-3.8x DF) and never awareness or discipline | flat 3/1/1/1 XP every 100 ticks of training; no sparring, demonstrations or individual drills | `military.rs` training (ESTIMATE) |
 | 5 | Work XP about half of DF; per job Rustfort gives 30 for everything | wiki: 30 per use plus 30 for an item with quality (crafts, furniture: 60), mining, smoothing, engraving and stonecutting only 10 | `lib.rs` `add_xp` callers (WRONG) |
@@ -272,9 +272,9 @@ which fits tier 5 (Metropolis, 120 regulars + 40 monsters on the wiki) reached b
 | 8 | Stress: DF's fort gets more stressed over the window (6 -> 17 stressed); Rustfort's gets happier | fewer deaths (no grief), thought strengths estimated | `social.rs` thought strengths (ESTIMATE) |
 | 9 | Births: 6 alive per 2.18 years in Rustfort, 2 in DF (0 in 1.32 years) | pregnancy rates | `population.rs` "Pregnancy" (ESTIMATE, too high) |
 | 10 | Rustfort makes 30x the flour and 15x the bags, twice the plants and seeds of DF, but no barrels and few meals without help | the r4 orders MillPlants / ConstructBag run every day with plenty of input; farms keep harvesting; raw-plant eating makes seeds | `production.rs` (order conditions OK; consumption balance ESTIMATE) |
-| 11 | Items Rustfort makes have no stored value (1 551 new items), so `fort_wealth()` (created wealth for siege tiers) ignores all new production | `push_item` leaves `value` 0 | `population.rs` `fort_wealth` / `invasion.rs` (WRONG) |
+| 11 | Items Rustfort makes have no stored value (1 551 new items), so `fort_wealth()` (created wealth for siege tiers) ignores all new production ([r9] fixed: `World::fort_history.created_wealth`, durable goods store their value) | `push_item` leaves `value` 0 | `population.rs` `fort_wealth` / `invasion.rs` (WRONG) |
 | 12 | Trees grow in DF (+65 in 2.18 years), never in Rustfort | no sapling growth | MISSING |
-| 13 | Building destroyers wrecked 17 of 31 workshops in DF's last siege | invaders do not attack workshops | `combat.rs` / `defense.rs` (MISSING) |
+| 13 | Building destroyers wrecked 17 of 31 workshops in DF's last siege ([r9]: destroyers wreck 8 buildings per siege median, mostly furniture; workshops 31 -> 30) | invaders do not attack workshops | `combat.rs` / `defense.rs` (MISSING) |
 | 14 | Stockpiles hold items on 37-39 % of their tiles in DF, 25 % in Rustfort (r4 -> r5) | containers are filled more densely (bin volume ESTIMATE), fewer new items to store | `storage.rs` "Bin volume" (ESTIMATE) |
 | 15 | Clothing, cloth, beds, barrels, coffins, digging, smoothing, new zones | Gordon's orders and designations after the start export | player-driven, not a sim error |
 
@@ -318,6 +318,74 @@ The validation runs are headless, so the UI does not change any number above. Wh
 | Squad uniforms (`squads.json`, `uniform_by_position`) | Wache: armor, helm, greaves, gloves, shoes, shield, battle axe | shown per position with the missing pieces (on r5: shields missing for most soldiers); editable per position |
 
 During the r5 -> r6 siege (73 deaths in DF), a box per citizen death would be many boxes: the queue folds the fifth and later boxes of one type, and *Close all* clears them.
+## Round 9: war calibration (items 1, 6, 11, 13)
+
+Changes (`invasion.rs`, `raids.rs`, `warcal.rs`, `caverns.rs`, `defense.rs`, `combat.rs`; details
+in docs/FIDELITY.md):
+
+- **Invasion tier** by population **or** created wealth **or** exported wealth, with the save's
+  own `ENEMY_*_TRIGGER` settings (wiki Difficulty). Gordon's fort (87 citizens, 3.2 M created
+  wealth) is at the Metropolis tier, not the Town tier.
+- **Created wealth** is a persistent counter (`World::fort_history`), seeded with the imported
+  items' value; every made item adds base value x material x quality at creation.
+- **Siege strength per consecutive siege** from the save's settings
+  (`INVASION_DIFFICULTY_FIRST/SECOND/THIRD/SCALING` = 50/300/1000/+500) and DF's per-civ
+  siege count, which the exporter already writes as `siege_tier` in `entities.json`: 2 at r4,
+  4 at r5, 5 at r6, exactly Trussroads' sieges in the gamelog (11 428 300, 11 637 327,
+  11 828 198, 12 016 497, 12 154 860). Cap `INVASION_UNIT_CAP` = 140 without mounts. At r5 the
+  next siege is the 5th: 2 000 strength = 133 creatures (DF: 136 goblins + 7 mounts).
+- **Composition** from the r6 export: 12 % master troops (17 of 136), weapon skill about 6 (3-9)
+  and 10-14 for masters; iron armor (torso 31 %, cap 54 %, legs 31 %, shield 34 %), iron or silver
+  weapons (pikes, long swords, mauls, hammers, scourges...); mounts from the 3rd siege on (DF's
+  "mounted" troops), one per 20 regulars, of the save's `MOUNT_EXOTIC` cave creature (voracious
+  cave crawlers, as in DF); 1-5 ambush squads arrive with each siege (gamelog: 1, 5, 5, 1, 4
+  "An ambush!" lines right after the 5 sieges).
+- **Siege frequency** 25 %, after 2 raids before the first and 3 between sieges (save settings);
+  invasion chance 2/3 per season (ESTIMATE).
+- **Forgotten beasts**: one per cavern layer at most, attracted by wealth / 40 above 5 000
+  (save settings); layers discovered before the import count as spent (ESTIMATE; DF: none in
+  Trussroads' whole life).
+- **Building destroyers** (trolls, cave crawlers, beasts) seek and wreck furniture, workshops,
+  doors... within 10 tiles (wiki).
+- **Bugs:** raiders stuck while leaving (trap victims, paralyzed, crippled) leave their group
+  after 3 days, so the invasion ends; fleeing civilians break off to drink and eat when the
+  threat is more than 2 tiles away.
+
+### Before / after, r5 -> r6 (1.14 years, 6 seeds after, 4 before, standing orders)
+
+| metric | DF | r8 (min / median / max) | r9 (min / median / max) |
+|---|---|---|---|
+| sieges | 1 | 0 / 1 / 1 | 0 / 1 / 1 |
+| invaders (incl. ambushers, mounts) | >= 143 in one siege | 8 / 17 / 18 | 41 / 170 / 181 |
+| mounts | 7 (cave crawlers) | 0 | 0 / 6 / 6 |
+| ambush groups | 4 | 0 (not counted) | 4 / 7 / 8 |
+| hostiles on the map at the end | 147 | 18 / 25 / 26 | 28 / 102 / 123 |
+| citizens lost | **73** | 1 / 1 / 7 | **0 / 26 / 42** |
+| citizens at the end | 15 | 90 / 92 / 94 | 74 / 89 / 92 (migrants refill: median 20, DF 1) |
+| forgotten beasts | 0 | 0 / 2 / 2 | 0 / 0 / 0 |
+| buildings wrecked | 17 of 31 workshops | 0 | 0 / 8 / 20 (workshops 30-31) |
+| stressed or worse at the end | 3 of 15 | | 0 / 8 / 22 |
+| sim speed (ticks/s, 6 sims side by side) | 107 | 36 594 | 20 650 |
+
+### Before / after, r4 -> r5 (2.18 years, 6 seeds after, 4 before, standing orders, restored routines)
+
+| metric | DF | r8 (min / median / max) | r9 (min / median / max) |
+|---|---|---|---|
+| sieges | 2 | 0 / 0 / 1 | 0 / 1 / 2 |
+| invaders | | 0 / 26 / 27 | 33 / 106 / 204 |
+| ambush groups | 6 | 0 (not counted) | 3 / 7 / 10 |
+| citizens lost | **14** | 1 / 2 / 3 | **2 / 7 / 15** (in range) |
+| citizen deaths (events) | 15 | 1 / 2 / 3 | 2 / 7 / 19 (in range) |
+| forgotten beasts | **0** | 1 / 4 / 5 | **0 / 0 / 0** |
+| workshops at the end | 31 | 32 | 30 / 31 / 32 |
+| sim speed (ticks/s) | 80 | 31 572 | 25 948 |
+
+Remaining differences: a seed without a siege in the window loses nobody (DF's siege came 1.14
+years after r5; Rustfort's first chance is the first season with 25 %); losses are about a third
+to a half of DF's (Rustfort's trap corridor and soldiers hold better, invaders do not dig,
+deconstruct or climb); migrants refill the fort after losses (DF: 1 migrant during the fall);
+workshops are rarely wrecked because the mounts walk beside the goblins instead of being ridden
+into the fort. The bigger sieges cost speed while they last (paths: 150 invaders' A*).
 
 ## Limitations
 

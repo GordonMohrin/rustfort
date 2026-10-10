@@ -51,6 +51,8 @@ pub(crate) struct Siege {
     pub leader: u32,
     /// [military2] Spotted (hidden raids start unrevealed).
     pub revealed: bool,
+    /// [war9] Tick the group started to retreat (0 = not yet).
+    pub fled_at: u64,
 }
 
 pub(crate) struct Invasions {
@@ -63,13 +65,20 @@ pub(crate) struct Invasions {
     pub hidden: Vec<u32>,
     /// [military2] Scheduled visits (tick, kind): thieves and snatchers.
     pub pending: Vec<(u64, crate::raids::RaidKind)>,
+    /// [war9] Exported wealth of the world when this session started (trades add to it).
+    pub exported_base: i64,
+    pub exported_base_set: bool,
 }
 
 impl Invasions {
     pub fn new() -> Self {
-        Invasions { enabled: true, sieges: Vec::new(), last_season: -1, next_id: 0, hidden: Vec::new(), pending: Vec::new() }
+        Invasions { enabled: true, sieges: Vec::new(), last_season: -1, next_id: 0, hidden: Vec::new(), pending: Vec::new(), exported_base: 0, exported_base_set: false }
     }
 }
+
+/// [war9] Ticks a leaving raider gets to walk off the map before it gives up (estimate: 3 days,
+/// enough to cross Gordon's 192x192 map twice).
+pub const LEAVE_GIVE_UP: u64 = 3 * rf_core::TICKS_PER_DAY as u64;
 
 /// Population needed for sieges (DF v50; Gordon's observation).
 pub const SIEGE_POPULATION: usize = 80;
@@ -82,10 +91,11 @@ pub const TIER_EXPORTED: [i64; 5] = [500, 2_500, 10_000, 20_000, 30_000];
 /// [r7] Siege force per tier (regulars, monsters), wiki Siege; tiers 1 and 2 send no sieges.
 pub const SIEGE_FORCE: [(usize, usize); 5] = [(0, 0), (0, 0), (10, 0), (40, 5), (120, 40)];
 
-/// [r7] Highest invasion tier (1-5) the fort meets: its population "and one of production or
-/// trade". 0 = none.
+/// [r7] Highest invasion tier (1-5) the fort meets with the Normal triggers. [war9] Its
+/// population **or** its production (created wealth) **or** its trade (exported wealth): wiki
+/// Difficulty, "uses population tier OR (production OR trade)". 0 = none.
 pub fn invasion_tier(pop: usize, created: i64, exported: i64) -> usize {
-    (0..5).rev().find(|&k| pop >= TIER_POPULATION[k] && (created >= TIER_CREATED[k] || exported >= TIER_EXPORTED[k])).map(|k| k + 1).unwrap_or(0)
+    (0..5).rev().find(|&k| pop >= TIER_POPULATION[k] || created >= TIER_CREATED[k] || exported >= TIER_EXPORTED[k]).map(|k| k + 1).unwrap_or(0) // [war9]
 }
 
 /// [r7] Siege force (regulars, monsters) for a fort, `None` if it is not big or rich enough.
@@ -126,20 +136,29 @@ impl Sim {
         self.spawn_siege("GOBLIN", n)
     }
 
-    /// [r7] Exported wealth: value of the goods the fort sold to caravans.
+    /// [r7] Exported wealth: value of the goods the fort sold to caravans. [war9] Kept in
+    /// `World::fort_history` across saves.
     pub fn exported_wealth(&self) -> i64 {
-        self.trade.rep.trades.iter().map(|t| t.1.max(0)).sum()
+        let session: i64 = self.trade.rep.trades.iter().map(|t| t.1.max(0)).sum();
+        let base = if self.combat.inv.exported_base_set { self.combat.inv.exported_base } else { self.world.fort_history.exported_wealth };
+        base + session
     }
 
-    /// [r7] Created wealth (approximation: current value of the fort's items).
+    /// [war9] Created wealth: the value of everything the fort made (`World::fort_history`,
+    /// seeded with the value of the imported fort's items, then each made item adds its value).
     pub fn created_wealth(&self) -> i64 {
-        self.fort_wealth()
+        let h = &self.world.fort_history;
+        if h.seeded {
+            h.created_wealth
+        } else {
+            self.fort_wealth() + h.created_wealth
+        }
     }
 
-    /// [r7] Number of regulars a siege would bring now (`None`: below the siege tier).
+    /// [r7] Number of creatures (regulars and monsters, without mounts) the next siege would
+    /// bring now (`None`: below the siege tier). [war9] From [`Sim::siege_plan`].
     pub fn siege_size(&self) -> Option<usize> {
-        let pop = self.world.citizens().count();
-        siege_force(pop, self.created_wealth(), self.exported_wealth()).map(|f| f.0)
+        self.siege_plan().map(|p| p.regulars + p.monsters)
     }
 
     /// Spawn `n` invaders of `race` at a map edge connected to the fort. They charge at once
@@ -204,6 +223,7 @@ impl Sim {
     /// refresh.
     pub(crate) fn invasion_daily(&mut self, now: u64) {
         use crate::raids::RaidKind;
+        self.war_daily(); // [war9] history counters
         self.military_monthly();
         let season = self.world.calendar.month() / 3;
         let inv = &mut self.combat.inv;
@@ -237,6 +257,7 @@ impl Sim {
             if matches!(kind, RaidKind::Thief | RaidKind::Snatcher) {
                 if !fleeing && now >= start + TICKS_PER_MONTH as u64 {
                     self.combat.inv.sieges[k].fleeing = true;
+                    self.combat.inv.sieges[k].fled_at = now; // [war9]
                     let members = self.combat.inv.sieges[k].members.clone();
                     for s in members {
                         let s = s as usize;
@@ -252,8 +273,23 @@ impl Sim {
             }
             // [military2] A siege also breaks when its leader dies (estimate, see raids.rs).
             let leader_dead = kind == RaidKind::Siege && leader != NONE && self.ai[leader as usize].kind == Kind::Dead && !self.world.units[self.ai[leader as usize].uidx].flags.inactive;
+            // [war9] Members still on the map long after the retreat (paralyzed, knocked out,
+            // crippled or stuck in a trap corridor) leave the group, so the invasion can end.
+            let fled_at = self.combat.inv.sieges[k].fled_at;
+            if fleeing && fled_at > 0 && now >= fled_at + LEAVE_GIVE_UP + rf_core::TICKS_PER_DAY as u64 {
+                let members = self.combat.inv.sieges[k].members.clone();
+                for s in members {
+                    let s = s as usize;
+                    if self.ai[s].kind != Kind::Dead {
+                        self.combat.f[s].leave_since = 1;
+                        self.war_leave_stuck(s, now);
+                    }
+                }
+                self.combat.inv.sieges[k].members.retain(|&m| self.ai[m as usize].kind == Kind::Dead);
+            }
             if !fleeing && (alive * 2 <= total || now >= start + 2 * TICKS_PER_MONTH as u64 || leader_dead) {
                 self.combat.inv.sieges[k].fleeing = true;
+                self.combat.inv.sieges[k].fled_at = now; // [war9]
                 if leader_dead {
                     self.combat.stats.leaders_killed += 1;
                     self.combat.log_line("The invaders' leader has been slain!".into());
@@ -289,6 +325,9 @@ impl Sim {
             self.leave_map(s);
             return;
         }
+        if self.war_leave_stuck(s, now) {
+            return; // [war9] could not get off the map in time
+        }
         let ai = &self.ai[s];
         if ai.path_i < ai.path.len() && *ai.path.last().unwrap() == home {
             self.step(s, now);
@@ -298,6 +337,53 @@ impl Sim {
         } else {
             self.request_path(s, Goals::one(home), now);
         }
+    }
+
+    /// [war9] A raider that has been leaving for `LEAVE_GIVE_UP` ticks without getting off the
+    /// map (stuck in a trap corridor, crippled, cut off) gives up: one that can still walk and
+    /// reach somebody fights on (DF invaders fight when cornered), one that can walk but reach
+    /// nobody slips away through the nearest edge, a helpless one is left lying there as a plain
+    /// hostile. Either way it leaves its raid group, so the invasion can end. True if handled.
+    pub(crate) fn war_leave_stuck(&mut self, s: usize, now: u64) -> bool {
+        let f = &mut self.combat.f[s];
+        if f.leave_since == 0 {
+            f.leave_since = now.max(1);
+            return false;
+        }
+        if now < f.leave_since + LEAVE_GIVE_UP || (f.raid >= 3 && f.leave_since > 1) {
+            return false; // thieves and snatchers keep running
+        }
+        self.combat.stats.leave_gave_up += 1;
+        let sid = self.combat.f[s].siege;
+        if let Some(g) = self.combat.inv.sieges.iter_mut().find(|g| g.id == sid) {
+            g.members.retain(|&m| m as usize != s);
+            if g.leader == s as u32 {
+                g.leader = NONE;
+            }
+        }
+        let walks = self.can_fight(s, now) && !self.combat.f[s].crawl;
+        let t = if walks { self.find_target(s, None) } else { NONE };
+        let name = self.uname(s);
+        let f = &mut self.combat.f[s];
+        f.siege = 0;
+        f.raid = 0;
+        f.leave_since = 0;
+        if t != NONE {
+            f.role = Role::Hostile;
+            f.target = t;
+            self.combat.log_line(format!("{} cannot escape and fights on!", crate::combat::cap_pub(&name)));
+            self.engage_now(s, now);
+        } else if walks {
+            self.leave_map(s);
+        } else {
+            f.role = Role::Hostile;
+            f.target = NONE;
+            f.dormant_until = now + TICKS_PER_MONTH as u64;
+            self.ai[s].path.clear();
+            self.ai[s].path_i = 0;
+            self.ai[s].wake = now + 600;
+        }
+        true
     }
 
     pub(crate) fn leave_map(&mut self, s: usize) {
@@ -326,22 +412,25 @@ mod r7_tests {
     use super::*;
 
     #[test]
-    fn siege_tiers_follow_population_and_wealth() {
-        // Below 80 citizens: no siege however rich.
-        assert_eq!(siege_force(79, 10_000_000, 1_000_000), None);
-        // 80 citizens but poor (no production, no trade): no siege.
-        assert_eq!(siege_force(89, 50_000, 5_000), None);
-        // Town: 80 citizens and 100k created or 10k exported -> 10 regulars.
-        assert_eq!(siege_force(89, 100_000, 0), Some((10, 0)));
-        assert_eq!(siege_force(89, 0, 10_000), Some((10, 0)));
-        // A rich fort of 89 stays at the Town tier (population decides too).
-        assert_eq!(siege_force(89, 5_000_000, 0), Some((10, 0)));
+    fn siege_tiers_follow_population_or_wealth() {
+        // [war9] Wiki Difficulty: population tier OR production OR trade (round 7 needed the
+        // population AND one of the wealth triggers; DF sent 137 goblins to 87 citizens).
+        // Poor and small: no siege tier.
+        assert_eq!(siege_force(19, 4_000, 400), None);
+        assert_eq!(siege_force(79, 99_000, 9_000), None);
+        // Town by population alone, or by created or exported wealth alone.
+        assert_eq!(siege_force(80, 0, 0), Some((10, 0)));
+        assert_eq!(siege_force(10, 100_000, 0), Some((10, 0)));
+        assert_eq!(siege_force(10, 0, 10_000), Some((10, 0)));
+        // Gordon's fort: 87 citizens and 3.2M created wealth reach the Metropolis tier.
+        assert_eq!(siege_force(87, 3_200_000, 0), Some((120, 40)));
+        assert_eq!(invasion_tier(87, 3_200_000, 0), 5);
         // City and Metropolis.
-        assert_eq!(siege_force(110, 200_000, 0), Some((40, 5)));
-        assert_eq!(siege_force(139, 250_000, 25_000), Some((40, 5)));
-        assert_eq!(siege_force(140, 300_000, 0), Some((120, 40)));
-        assert_eq!(siege_force(200, 0, 30_000), Some((120, 40)));
-        assert_eq!(invasion_tier(20, 5_000, 0), 1);
-        assert_eq!(invasion_tier(19, 5_000_000, 0), 0);
+        assert_eq!(siege_force(110, 0, 0), Some((40, 5)));
+        assert_eq!(siege_force(50, 200_000, 0), Some((40, 5)));
+        assert_eq!(siege_force(140, 0, 0), Some((120, 40)));
+        assert_eq!(siege_force(20, 0, 30_000), Some((120, 40)));
+        assert_eq!(invasion_tier(20, 0, 0), 1);
+        assert_eq!(invasion_tier(19, 4_999, 499), 0);
     }
 }

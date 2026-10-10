@@ -114,10 +114,12 @@ const MONTHS_4: u32 = 4 * 33_600;
 fn bad_living_conditions_cause_stress_good_rooms_relieve_it() {
     let (w, cx, cy, hz) = world();
     let mut bad = Sim::new(w.clone(), 7);
+    bad.set_invasions(false); // [war9] a 5k-wealth fort now meets the first invasion tier (ambushes)
     bad.run_ticks(MONTHS_4);
     let mut good_w = w;
     furnish(&mut good_w, cx, cy, hz);
     let mut good = Sim::new(good_w, 7);
+    good.set_invasions(false); // [war9]
     let rep0 = good.social_report();
     assert_eq!(rep0.seats, 5, "five chairs next to tables in the dining hall");
     assert_eq!(rep0.bedrooms, 7);

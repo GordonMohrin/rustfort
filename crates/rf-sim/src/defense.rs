@@ -276,6 +276,10 @@ pub(crate) struct Defense {
     skip: Vec<String>,
     nbuildings: usize,
     pub stats: DefenseStats,
+    /// [war9] Buildings destroyers may wreck: (building id, center tile, z, x1, y1, x2, y2,
+    /// minimum destroyer level), rebuilt when the building count changes.
+    wreck_list: Vec<(i32, u32, i16, i16, i16, i16, i16, u8)>,
+    wreck_n: usize,
 }
 
 impl Default for Defense {
@@ -301,6 +305,8 @@ impl Default for Defense {
             skip: Vec::new(),
             nbuildings: usize::MAX,
             stats: DefenseStats::default(),
+            wreck_list: Vec::new(),
+            wreck_n: usize::MAX,
         }
     }
 }
@@ -1527,6 +1533,185 @@ impl Sim {
         true
     }
 
+    /// [war9] Building kinds a destroyer of level 1 / 2 wrecks (wiki Building destroyer).
+    /// Level 1: statues, windows, archery targets, slabs, wooden doors and hatches; level 2 also
+    /// furniture, workshops, furnaces, depots, doors, floodgates, containers, racks, siege
+    /// engines, pumps, grates, bars and machine parts.
+    fn war_wreck_level(&self, b: &rf_core::Building) -> u8 {
+        if !b.built {
+            return 0;
+        }
+        let wood = self.world.material(b.mat).map(|m| m.is_wood).unwrap_or(false);
+        match b.kind.as_str() {
+            "Statue" | "WindowGlass" | "WindowGem" | "ArcheryTarget" | "Slab" => 1,
+            "Door" | "Hatch" if wood => 1,
+            "Door" | "Hatch" | "Floodgate" | "Chair" | "Bed" | "Table" | "Coffin" | "Workshop" | "Furnace" | "TradeDepot" | "Box" | "Weaponrack" | "Armorstand" | "Cabinet" | "SiegeEngine" | "ScrewPump" | "GrateWall" | "GrateFloor" | "BarsVertical" | "BarsFloor" | "GearAssembly" | "AxleHorizontal" | "AxleVertical" | "WaterWheel" | "Windmill" => 2,
+            "FarmPlot" if b.crops.iter().any(|c| !c.is_empty()) => 2,
+            _ => 0,
+        }
+    }
+
+    fn war_wreck_refresh(&mut self) {
+        if self.def.wreck_n == self.world.buildings.len() {
+            return;
+        }
+        self.def.wreck_n = self.world.buildings.len();
+        let mut list = Vec::new();
+        for b in &self.world.buildings {
+            let lvl = self.war_wreck_level(b);
+            if lvl == 0 {
+                continue;
+            }
+            let Some(t) = self.world.idx(b.center) else { continue };
+            list.push((b.id, t as u32, b.z, b.x1, b.y1, b.x2, b.y2, lvl));
+        }
+        self.def.wreck_list = list;
+    }
+
+    fn war_wreck_goals(&self, c: u32, z: i16, x1: i16, y1: i16, x2: i16, y2: i16) -> Goals {
+        let mut g = Goals::default();
+        for y in (y1 - 1)..=(y2 + 1) {
+            for x in (x1 - 1)..=(x2 + 1) {
+                if let Some(q) = self.world.idx(Pos::new(x, y, z)) {
+                    if self.nav.walkable(q) && self.nav.comp_root(q) == c {
+                        g.push(q as u32);
+                    }
+                }
+            }
+        }
+        g
+    }
+
+    /// [war9] [fighter_think hook] Building destroyers "actively seek out buildings and destroy
+    /// them" within about 10 tiles (wiki), unless a foe is at hand. True if it took the turn.
+    pub(crate) fn war_wreck_think(&mut self, s: usize, now: u64) -> bool {
+        let f = &self.combat.f[s];
+        if f.wreck < 0 && now < f.wreck_at {
+            return false;
+        }
+        if f.role != Role::Hostile || f.hidden {
+            return false;
+        }
+        let race = self.world.units[self.ai[s].uidx].race.clone();
+        let lvl = self.race_info(&race).1;
+        if lvl == 0 {
+            self.combat.f[s].wreck_at = u64::MAX;
+            return false;
+        }
+        let t = self.combat.f[s].target;
+        if self.alive(t) && self.upos(s).dist(self.upos(t as usize)) <= 3 {
+            self.combat.f[s].wreck = -1;
+            self.combat.f[s].wreck_at = now + 50;
+            return false; // a foe at hand comes first
+        }
+        let here = self.ai[s].pos;
+        let c = self.nav.comp_near(here as usize);
+        if c == 0 {
+            return false;
+        }
+        let bid = self.combat.f[s].wreck;
+        if bid >= 0 {
+            let Some(e) = self.def.wreck_list.iter().find(|e| e.0 == bid).copied() else {
+                self.combat.f[s].wreck = -1;
+                return false;
+            };
+            if !self.world.buildings.iter().any(|b| b.id == bid) {
+                self.combat.f[s].wreck = -1;
+                return false;
+            }
+            let goals = self.war_wreck_goals(c, e.2, e.3, e.4, e.5, e.6);
+            if goals.n == 0 {
+                self.combat.f[s].wreck = -1;
+                self.combat.f[s].wreck_at = now + 300;
+                return false;
+            }
+            if goals.as_slice().contains(&here) {
+                let until = self.combat.f[s].wreck_until;
+                if until == 0 {
+                    // Smashing takes a while (estimate: 100 ticks, 200 for workshops/furnaces).
+                    let big = e.3 != e.5 || e.4 != e.6;
+                    let done = now + if big { 200 } else { 100 };
+                    self.combat.f[s].wreck_until = done;
+                    self.ai[s].path.clear();
+                    self.ai[s].path_i = 0;
+                    self.ai[s].wake = done;
+                    return true;
+                }
+                if now < until {
+                    self.ai[s].wake = until;
+                    return true;
+                }
+                self.combat.f[s].wreck = -1;
+                self.combat.f[s].wreck_until = 0;
+                self.combat.f[s].wreck_at = now + 20;
+                self.war_wreck_destroy(s, bid, now);
+                self.ai[s].wake = now + 1;
+                return true;
+            }
+            let ai = &self.ai[s];
+            if ai.path_i < ai.path.len() && goals.as_slice().contains(ai.path.last().unwrap()) {
+                self.step(s, now);
+            } else if self.combat.f[s].repath_at > now + 20 {
+                // The path failed: forget this building for a while.
+                self.combat.f[s].wreck = -1;
+                self.combat.f[s].wreck_at = now + 300;
+                return false;
+            } else {
+                self.combat.f[s].repath_at = now + 20;
+                self.request_path(s, goals, now);
+            }
+            return true;
+        }
+        // Look for a building within 10 tiles on this level.
+        let mut r = Rng::for_unit(self.seed, s, now, 0x3EC);
+        self.combat.f[s].wreck_at = now + 50 + r.below(50) as u64;
+        self.war_wreck_refresh();
+        let up = self.upos(s);
+        let mut best: Option<(i32, i32)> = None;
+        for e in &self.def.wreck_list {
+            if e.7 > lvl || e.2 != up.z {
+                continue;
+            }
+            let dx = if up.x < e.3 { e.3 - up.x } else if up.x > e.5 { up.x - e.5 } else { 0 };
+            let dy = if up.y < e.4 { e.4 - up.y } else if up.y > e.6 { up.y - e.6 } else { 0 };
+            let d = dx.max(dy) as i32;
+            if d > 10 || best.map(|b| (d, e.0) >= (b.0, b.1)).unwrap_or(false) {
+                continue;
+            }
+            best = Some((d, e.0));
+        }
+        let Some((_, bid)) = best else { return false };
+        let e = *self.def.wreck_list.iter().find(|e| e.0 == bid).unwrap();
+        let goals = self.war_wreck_goals(c, e.2, e.3, e.4, e.5, e.6);
+        if goals.n == 0 {
+            return false;
+        }
+        self.combat.f[s].wreck = bid;
+        self.combat.f[s].wreck_until = 0;
+        if goals.as_slice().contains(&here) {
+            self.ai[s].wake = now + 1;
+        } else {
+            self.combat.f[s].repath_at = now + 20;
+            self.request_path(s, goals, now);
+        }
+        true
+    }
+
+    fn war_wreck_destroy(&mut self, s: usize, bid: i32, now: u64) {
+        if self.def.by_id.contains_key(&bid) {
+            self.destroy_building(s, bid, now); // doors, hatches, floodgates (mechanisms)
+        } else {
+            let Some(b) = self.world.buildings.iter().find(|b| b.id == bid) else { return };
+            let (p, noun) = (b.center, war_noun(b));
+            let name = self.uname(s);
+            self.remove_building(bid);
+            self.combat.log_line(format!("{} has destroyed the {noun}!", cap(&name)));
+            self.announce(now, format!("{} has destroyed a {noun}!", cap(&name)), Some(p), AnnouncementKind::Warning);
+        }
+        self.combat.stats.buildings_wrecked += 1;
+        self.def.wreck_n = usize::MAX;
+    }
+
     fn destroy_building(&mut self, s: usize, id: i32, now: u64) {
         let Some(&mi) = self.def.by_id.get(&id) else { return };
         let noun = self.def.mechs[mi].kind.noun();
@@ -1659,6 +1844,19 @@ impl Sim {
     }
 }
 
+
+/// [war9] Noun of a building for announcements ("carpenters workshop", "bed").
+fn war_noun(b: &rf_core::Building) -> String {
+    let base = if b.subtype.is_empty() || b.subtype == "None" { b.kind.clone() } else { format!("{}{}", b.subtype, b.kind) };
+    let mut out = String::new();
+    for (i, ch) in base.chars().enumerate() {
+        if ch.is_ascii_uppercase() && i > 0 && !out.ends_with(' ') {
+            out.push(' ');
+        }
+        out.push(ch.to_ascii_lowercase());
+    }
+    out
+}
 #[cfg(test)]
 mod tests {
     use super::*;

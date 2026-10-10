@@ -55,6 +55,7 @@ pub mod combat;
 pub mod invasion;
 pub mod military;
 mod raids; // [military2] ambushes, thieves, snatchers, siege camps and monsters
+pub mod warcal; // [war9] siege strength, created wealth, forgotten beasts per cavern layer
 pub use raids::RaidKind; // [military2]
 mod barracks; // [military2] barracks, sparring, patrols, uniforms and ammo per squad
 pub use barracks::SquadEquipment; // [military2]
