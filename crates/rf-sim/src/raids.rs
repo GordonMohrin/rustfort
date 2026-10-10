@@ -31,9 +31,14 @@
 //!   last siege (`MIN_RAIDS_BEFORE_SIEGE` / `_BETWEEN_SIEGES`), else an ambush. Siege size and
 //!   composition: see `warcal.rs`. Ambush size: 1 squad from the first tier, 2 from the Town
 //!   tier, 3 at Metropolis; 2-5 goblins per squad.
-//! - Thief visits: 1 in 2 per season if a kobold civilization exists; snatchers: 1 in 3 per
-//!   season with a goblin civilization at war and children in the fort; they arrive on a random
-//!   day of the season.
+//! - Thief visits: 1 in 2 per season if a kobold civilization is at war with the fort;
+//!   snatchers: 1 in 3 per season with a goblin civilization at war that has not sieged the
+//!   fort yet, and children in the fort; they arrive on a random day of the season.
+//!   [gaps10] Calibrated to Gordon's gamelog: Trussroads (68 springs, 16 ambushes and 5 sieges
+//!   from civ 39) saw **no** thief and no snatcher; his kobold civilization is at peace. His
+//!   earlier forts in the same DF install saw 28-45 "Snatcher!" alarms each, mostly before and
+//!   between their first sieges, which the stage rule follows; that snatchers stop for good after
+//!   the first siege is an ESTIMATE (Windrings still got some later, maybe from a second civ).
 //! - Spotting: within `3 + observer/3 - ambusher/4` tiles (at least 1, at most 8; soldiers on
 //!   duty +3), same z +-1, same walk component, 1 in 2 per 10-tick check. Sleeping or
 //!   unconscious dwarves and children spot nobody.
@@ -164,15 +169,25 @@ impl Sim {
         (0..squads).map(|_| 2 + r.below(4) as usize).sum()
     }
 
-    /// Race of the fort's thieves: kobolds (`ITEM_THIEF`) if a kobold civilization exists (or no
-    /// civilizations were exported at all).
+    /// Race of the fort's thieves: kobolds (entity `SKULKING` with `ITEM_THIEF`) if a kobold
+    /// civilization is **at war** with the fort (or no civilizations were exported at all).
+    /// [gaps10] Only hostile civilizations raid (wiki Invasion); Gordon's kobolds (Chulgis) are at
+    /// peace, and his whole Trussroads gamelog has no thief.
     pub(crate) fn thief_race(&self) -> Option<&'static str> {
-        (self.world.entities.is_empty() || self.world.entities.iter().any(|e| e.race == "KOBOLD")).then_some("KOBOLD")
+        let civ = |e: &rf_core::EntityInfo| e.race == "KOBOLD" && e.relation == "War" && (e.kind == "Civilization" || e.kind.is_empty());
+        (self.world.entities.is_empty() || self.world.entities.iter().any(civ)).then_some("KOBOLD")
     }
 
-    /// A goblin civilization at war (`BABYSNATCHER`), or no civilizations exported.
+    /// A goblin civilization at war (entity `EVIL` with `BABYSNATCHER`) that sends snatchers, or
+    /// no civilizations exported. [gaps10] Snatchers are the first stage of the invading
+    /// civilization's raids: once it has started sieging the fort (DF's `siege_tier`, Gordon's
+    /// civ 39: 4 at r5) it sends ambushes and sieges instead (see the module docs).
     pub(crate) fn snatcher_civ(&self) -> bool {
-        self.world.entities.is_empty() || self.world.entities.iter().any(|e| e.race == "GOBLIN" && e.relation == "War")
+        if self.world.entities.is_empty() {
+            return true;
+        }
+        let civ = self.war_enemy_civ();
+        civ != 9_999 && Self::war_count(&self.world.fort_history.sieges, civ) == 0
     }
 
     pub(crate) fn children_count(&self) -> usize {
@@ -1234,6 +1249,37 @@ mod tests {
         sim.run_ticks(rf_core::TICKS_PER_DAY as u32 + 5);
         assert!(sim.combat.inv.sieges[0].fleeing, "the siege breaks with its leader");
         assert_eq!(sim.combat.stats.leaders_killed, 1);
+    }
+
+    #[test]
+    fn thieves_and_snatchers_follow_gordons_history() {
+        // [gaps10] Trussroads: kobolds at peace, goblin civ 39 at war with 4 sieges sent -> no
+        // thief and no snatcher in its whole gamelog.
+        use rf_core::EntityInfo;
+        let civ = |id: i32, race: &str, relation: &str| EntityInfo { id, race: race.into(), kind: "Civilization".into(), relation: relation.into(), ..Default::default() };
+        let (mut sim, _hz, _sz) = fort(50);
+        sim.world.entities = vec![civ(33, "KOBOLD", "Peace"), civ(31, "GOBLIN", "War"), civ(39, "GOBLIN", "War")];
+        sim.world.fort_history.sieges = vec![(39, 4)];
+        assert_eq!(sim.thief_race(), None, "kobolds at peace send no thieves");
+        assert!(!sim.snatcher_civ(), "a civilization that sieges sends no snatchers");
+        let season = 3 * TICKS_PER_MONTH as u64;
+        for k in 0..40 {
+            sim.raids_season(k * season);
+        }
+        assert!(sim.combat.inv.pending.is_empty(), "ten years without visits: {:?}", sim.combat.inv.pending);
+        // At war with the kobolds, and goblins that have not sieged yet: visits come.
+        sim.world.entities[0].relation = "War".into();
+        sim.world.fort_history.sieges.clear();
+        assert_eq!(sim.thief_race(), Some("KOBOLD"));
+        assert!(sim.snatcher_civ());
+        let child = sim.world.units.iter().position(|u| u.is_worker()).unwrap();
+        sim.world.units[child].age = 6.0;
+        sim.world.units[child].race = "DWARF".into();
+        for k in 40..48 {
+            sim.raids_season(k * season);
+        }
+        let kinds: Vec<RaidKind> = sim.combat.inv.pending.iter().map(|p| p.1).collect();
+        assert!(kinds.contains(&RaidKind::Thief) && kinds.contains(&RaidKind::Snatcher), "{kinds:?}");
     }
 
     #[test]
