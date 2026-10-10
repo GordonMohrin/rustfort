@@ -625,9 +625,9 @@ Reading it:
   job"); round 10 found default workshop profiles in Gordon's fort. The wiki's remaining lever,
   maker attributes and preferences for the item or material, belongs to `skills.rs` and is not
   done.
-- 2 years `rustfort bench --standdown` on r5 (seed 1): 87 -> **53** citizens, 148 deaths, the
-  same state hash `cdb44ec6a50757c7` with 1 and N threads (11.6k / 12.6k ticks/s on the loaded
-  machine). Before, migrants refilled the fort after every siege (round 10: 86-90 of 87). Now a
+- 2 years `rustfort bench --standdown` on r5 (seed 1): 87 -> **56** citizens, 144 deaths, the
+  same state hash `507bddc7f80ba526` with 1 and N threads (86.7k / 82.5k ticks/s on a quieter
+  machine; v0.10: 80-106k). Before, migrants refilled the fort after every siege (round 10: 86-90 of 87). Now a
   fort that lost 21 citizens in one siege stays "dangerous" (21 this year, 10.5 the next) and
   draws a wave in about 1 of 4 seasons; the society example shows 86 -> 65 after one siege, then 2
   waves (1 and 4) in 1.7 years.
