@@ -232,3 +232,124 @@ pub(crate) fn repair_units(world: &mut World, m: &Manifest, w: &mut Warnings) {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rf_core::Pos;
+
+    fn temp_dir(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("rf-import-r9-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        d
+    }
+
+    /// A synthetic export with one caravan animal off the map, one caged unit off the map and
+    /// the synthetic citizens, as a pre-round-9 exporter wrote it.
+    fn world_with_offmap() -> World {
+        let mut w = World::synthetic(24, 24, 8);
+        let off = Pos::new(-30000, -30000, -30000);
+        let mut a = w.units[0].clone();
+        a.id = 900;
+        a.pos = off;
+        a.flags = rf_core::UnitFlags { animal: true, tame: true, forest: true, ..Default::default() };
+        let mut c = a.clone();
+        c.id = 901;
+        c.flags.caged = true;
+        c.flags.forest = false;
+        w.units.push(a);
+        w.units.push(c);
+        w.stockpile_options = vec![
+            StockpileOption { path: "food/options/prepared_meals".into(), label: "prepared meals".into() },
+            StockpileOption { path: "food/meat/CREATURE:COW:MUSCLE".into(), label: "cow muscle".into() },
+            StockpileOption { path: "stone/mats/INORGANIC:GRANITE".into(), label: "granite".into() },
+            StockpileOption { path: "misc/options/allow_organic".into(), label: "allow organic".into() },
+        ];
+        w.settings.other = vec![
+            "WEALTH_CREATED=1576145".into(),
+            "WEALTH_EXPORTED=216264".into(),
+            "WEALTH_IMPORTED=253175".into(),
+            "PROGRESS_PRODUCTION=5".into(),
+        ];
+        w
+    }
+
+    #[test]
+    fn pre_round9_offmap_units_become_inactive() {
+        let w = world_with_offmap();
+        let dir = temp_dir("offmap");
+        crate::write_export(&w, &dir).unwrap();
+        // pretend a round-8 exporter wrote it
+        let m = std::fs::read_to_string(dir.join("manifest.json")).unwrap();
+        std::fs::write(dir.join("manifest.json"), m.replace("rf-import::write_export", "2026-10-10e")).unwrap();
+        let (got, rep) = crate::load_export(&dir).unwrap();
+        let u = |id: i32| got.units.iter().find(|u| u.id == id).unwrap().clone();
+        assert!(u(900).flags.inactive, "the caravan animal that left is not simulated");
+        assert!(!u(901).flags.inactive, "a caged unit keeps its state");
+        assert!(got.units.iter().filter(|x| x.id < 900).all(|x| !x.flags.inactive));
+        let all = rep.warnings.join("\n");
+        assert!(all.contains("1 off-map units marked inactive") && all.contains("1 are animals of departed caravans"), "{all}");
+        // a round-9 export is taken as it is
+        std::fs::write(dir.join("manifest.json"), m.replace("rf-import::write_export", "2026-10-10f")).unwrap();
+        let (got, _) = crate::load_export(&dir).unwrap();
+        assert!(!got.units.iter().find(|u| u.id == 900).unwrap().flags.inactive);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stockpile_options_and_wealth_round_trip() {
+        let w = world_with_offmap();
+        let dir = temp_dir("options");
+        crate::write_export(&w, &dir).unwrap();
+        let (got, rep) = crate::load_export(&dir).unwrap();
+        assert_eq!(got.stockpile_options, w.stockpile_options);
+        assert!(rep.warnings.iter().all(|x| !x.contains("stockpile_options")), "{:?}", rep.warnings);
+        let food = options_for(&got.stockpile_options, "food");
+        assert_eq!(food.len(), 2);
+        assert_eq!(food[1], ("food/meat/CREATURE:COW:MUSCLE".to_string(), "cow muscle".to_string()));
+        let x = wealth(&got.settings).unwrap();
+        assert_eq!((x.created, x.exported, x.imported, x.progress_production, x.progress_trade), (1_576_145, 216_264, 253_175, 5, -1));
+        assert!(wealth(&rf_core::GameSettings::default()).is_none());
+        let e = crate::load_extras(&dir);
+        assert_eq!(e.wealth.unwrap().created, 1_576_145);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn exporter_options_layout_loads() {
+        let dir = temp_dir("layout");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("stockpile_options.json"),
+            r#"{"scheme":"category/group/token","misc":["allow_organic","allow_inorganic"],"categories":[
+                {"category":"animals","options":["empty_cages","empty_traps"],"groups":[{"group":"enabled","leaves":[["TOAD","toad"],["","bad"]]}]},
+                {"category":"food","options":["prepared_meals"],"groups":[{"group":"meat","leaves":[["CREATURE:TOAD:MUSCLE","toad muscle"]]},{"group":"cheese_plant","leaves":[]}]}],
+                "source":"test"}"#,
+        )
+        .unwrap();
+        let mut w = Warnings::default();
+        let o = load_stockpile_options(&dir, &mut w);
+        let paths: Vec<&str> = o.iter().map(|x| x.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            vec![
+                "animals/options/empty_cages",
+                "animals/options/empty_traps",
+                "animals/enabled/TOAD",
+                "food/options/prepared_meals",
+                "food/meat/CREATURE:TOAD:MUSCLE",
+                "misc/options/allow_organic",
+                "misc/options/allow_inorganic"
+            ]
+        );
+        assert!(w.finish().join("\n").contains("1 leaves with an empty token"));
+        std::fs::write(
+            dir.join("invasions.json"),
+            r#"[{"id":4,"civ_id":39,"size":148,"year":280,"year_tick":145595,"siege":true,"active":true,"mission":1,"active_size1":130,"active_size2":122,"duration_counter":19506,"total_death_cage_number":36,"layer_source":false}]"#,
+        )
+        .unwrap();
+        let inv = load_invasions(&dir);
+        assert_eq!((inv[0].size, inv[0].year, inv[0].siege, inv[0].active), (148, 280, true, true));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
