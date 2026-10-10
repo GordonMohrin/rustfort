@@ -1,154 +1,180 @@
-# Rustfort: Makro-Vision (Entwurf zur Freigabe)
+# Rustfort: vision
 
-Arbeitstitel „Rustfort“: ein eigener Nachbau des DF-Festungsmodus in Rust. Er bleibt auch bei 200+ Zwergen schnell, verhält sich wie das Original und spielt deinen echten Save weiter.
-Stand 09.10.2026. Es gibt noch keine Zeile Code; dieser Plan muss erst freigegeben werden.
+Rustfort is an independent re-implementation of Dwarf Fortress fortress mode in Rust. It aims
+to stay fast with hundreds of dwarves, to behave like the original, and to continue a fort
+that was started in real Dwarf Fortress.
 
-## 1. Nordstern: drei messbare Ziele
+This document describes what the project is for and how it is meant to work. For what exists
+today, see [PROGRESS.md](PROGRESS.md). For how close each rule is to DF, see
+[docs/FIDELITY.md](docs/FIDELITY.md).
 
-| Ziel | Messung | Heute in echtem DF |
+## 1. The problem
+
+Dwarf Fortress slows down sharply as a fort grows. Past about 100 dwarves, many forts drop far
+below the 100 ticks per second of normal speed, and a game year takes hours of real time.
+
+The cost comes from **units in total**, not from dwarves alone. One fort measured during
+planning had 5 citizens but 229 active units. 98 of them were demons in the sealed underworld
+and 24 were animals in the caverns, and all of them were simulated every tick. With 12,889
+items, DF reached about 220 ticks per second. Its main thread was at its limit, while the
+process used only about 1.4 CPU cores.
+
+## 2. Goals
+
+| goal | how it is measured | status (v0.12) |
 |---|---|---|
-| **Schnell** | Dein importiertes Fort mit 200 Zwergen und 500 weiteren Einheiten läuft headless mit **mindestens 1000 Ticks/s**, mit Grafik mit mindestens 500 (ein Spielmonat etwa 35–70 s). | Razordrums: 229 aktive Einheiten, 12 889 Items, **etwa 220 Ticks/s**. Der Hauptthread ist am Limit, der Prozess nutzt nur etwa 1,4 Kerne deines 5600X (`dwarf-fortress/SCHNELLER-run3.md`). |
-| **Originalgetreu** | Lädt deine Raws aus `E:\…\Dwarf Fortress\data\vanilla` 1:1: 981 Kreaturen, 265 Inorganics, 225 Pflanzen, 163 Reaktionen. Zeitbasis, Bedürfnis-Timer und Gangarten stimmen exakt. | – |
-| **Kontinuität** | Dein aktueller Save wird importiert und läuft weiter. Ein Import-Bericht zeigt, was übernommen, neu erzeugt oder verworfen wurde. | – |
+| **Fast** | An imported fort with 200 dwarves and 500 other units runs headless at **1,000 ticks/s or more**, and at 500 or more with graphics. | Reached by far: the 87-citizen reference fort runs at about 100,000 ticks/s headless, and 487 citizens at about 38,000. |
+| **Faithful** | The raws of the user's installation load 1:1 (vanilla: 981 creatures, 265 inorganics, 225 plants, 163 reactions). The time base, need timers and gaits are exact. The rest behaves like DF as described by the wiki and as observed. | Rules are checked one by one in [docs/FIDELITY.md](docs/FIDELITY.md) and against a real fort's history in [docs/VALIDATION.md](docs/VALIDATION.md). |
+| **Continue your own fort** | A fort from a running DF is imported and plays on in Rustfort. An import report shows what was taken over, regenerated or dropped. | Import from the title screen in about a minute, read-only. |
 
-## 2. Warum DF langsam wird, und unsere Antwort
+## 3. Why DF slows down, and Rustfort's answer
 
-Kernbefund: Das Problem sind **Einheiten insgesamt**, nicht die Zwerge. Razordrums hatte 5 Bürger, aber 229 aktive Einheiten. Davon waren 98 Dämonen in der Hölle (z0–6) und 24 Tiere in der Kaverne, die alle in jedem Tick mitgerechnet wurden.
-
-| Ursache (Wiki / Profiling) | Anteil | Antwort in Rustfort | Schätzung |
+| cause (wiki and profiling) | share | Rustfort's answer | expected gain |
 |---|---|---|---|
-| Einheiten-Züge | über 60 % der Rechenzeit | Eine Einheit rechnet nur, wenn sie etwas zu tun hat („Think-Wheel“). Teure Prüfungen werden gestaffelt. Die Entscheidungsphase läuft parallel. Unerreichbare oder schlafende Kreaturen (Hölle, Kaverne) werden ruhend gestellt. | 5–20x |
-| Sichtlinien Einheit↔Einheit | O(n²) im 26-Kachel-Radius, „slowest part by a wide margin“ | Spatial Hash, Neuberechnung nur bei Bewegung, parallel | 10–50x bei Menschenmengen |
-| Temperatur und Items | Temperatur aus ergibt etwa +100 % FPS | Temperatur wird nur bei aktiven Wärmequellen ausgewertet (lazy). Items liegen in Indizes nach Kategorie, Material und Ort statt in langen Listen. | etwa 10x |
-| Wegfindung | unter 10 % der Einheitenzeit, außer bei eingeschlossenen Einheiten | Zusammenhangskomponenten beantworten „erreichbar?“ in O(1). Dazu kommen Chunk-Portale (HPA*) und Flow-Fields für Lager und Speisesaal. | 5–30x |
-| Flüssigkeiten | im v50-Profiling genannt | Ruhende Chunks schlafen; nur aktive Zellen werden gerechnet. | 3–10x |
-| Jobsuche | jeder Zwerg durchsucht alles | zentraler Matcher mit räumlichem Index | 3–10x |
-| **Nur ein Kern** | Hauptthread am Limit | alle 12 Threads des 5600X, deterministisch | Multiplikator |
+| Unit turns | over 60 % of the time | A unit only thinks when it has something to do (a "think wheel"). Expensive checks are staggered over ticks, and the decision phase runs in parallel. Unreachable or sleeping creatures (underworld, caverns) are set dormant. | 5-20x |
+| Line of sight between units | O(n²) within 26 tiles, "slowest part by a wide margin" | Spatial hashing, recomputed only on movement, in parallel | 10-50x in crowds |
+| Temperature and items | turning temperature off roughly doubles DF's FPS | Temperature only where there are active heat sources. Items are indexed by category, material and place instead of long lists. | about 10x |
+| Pathfinding | under 10 % of unit time, except for trapped units | Connected components answer "reachable?" in O(1). Landmark heuristics and shared flow fields cover common goals. | 5-30x |
+| Fluids | named in v50 profiling | Settled liquid costs nothing; only active cells are computed. | 3-10x |
+| Job search | every dwarf searches everything | Central matching with spatial indexes | 3-10x |
+| **One core** | the main thread is the limit | Use all cores and stay deterministic | multiplier |
 
-Die Faktoren pro Ursache sind Schätzungen. Sie werden ab Meilenstein M0 gemessen.
+The per-cause factors were estimates when the project started, so measuring was planned from
+the first milestone on. The measured results are in [PROGRESS.md](PROGRESS.md).
 
-## 3. Prinzipien
+## 4. Principles
 
-1. **Clean-room.** Als Spezifikation dienen das Wiki und beobachtetes Verhalten; DF wird nicht dekompiliert. Raws und Grafiken werden zur Laufzeit aus deiner Installation gelesen (wie OpenMW mit den Morrowind-Daten) und kommen nie ins Repo. Das Repo bleibt privat.
-2. **Datenmodell DF-kompatibel**, wegen des Save-Imports. Raw-IDs, Tiletypes, Material-Indizes, Einheiten-Felder (Attribute, Skills, Persönlichkeit, Bedürfnisse, Wunden) und die IDs historischer Figuren entsprechen DF. Das Verhalten darf schneller implementiert sein, die Daten müssen passen.
-3. **Deterministisch.** Gleicher Seed und gleiche Befehle ergeben das gleiche Ergebnis, auch bei paralleler Ausführung. Das ermöglicht Replays, Hash-Checks und reproduzierbare Bugs.
-4. **Headless zuerst, mit Agent-API.** Die Simulation ist eine Bibliothek ohne Bildschirm; Darstellung und API docken an. Die API läuft nur auf localhost (keine externen Dienste) und nutzt das dfpilot-Vokabular, sodass Claude-Agenten mit 1000+ Ticks/s mitspielen.
-5. **Erst messen, dann bewerten.** Es gibt von Tag 1 an ein Benchmark-Harness mit der Kurve Ticks/s gegen Population. Dein echter Save ist der Referenz-Benchmark.
+1. **Clean-room.** The specification is the Dwarf Fortress Wiki plus behavior observed in the
+   running game, read-only through DFHack. DF is never decompiled or disassembled.
+2. **DF data only at runtime.** Raws, graphics and fonts are read from the user's own DF
+   installation when Rustfort runs. This is the way OpenMW uses the Morrowind data files. None of
+   them is ever copied into the repository, and neither are exports or saves of real forts.
+3. **A DF-compatible data model**, so that a real fort can be imported: raw ids, tiletypes,
+   material indices, unit fields (attributes, skills, personality, needs, wounds) and
+   historical figure ids follow DF. The behavior may be implemented differently and faster, but
+   the data must match.
+4. **Deterministic.** The same seed and the same commands give the same result, including with
+   parallel execution. That makes replays, hash checks and reproducible bug reports possible. The
+   state hash must not depend on the number of threads.
+5. **Headless first.** The simulation is a library without a screen. The game window, the
+   benchmark and the test tools (validation, crash hunting, save/load checks) are all clients
+   of the same `Sim` API. The original plan also had a localhost-only HTTP API for scripted
+   players. That is not built yet.
+6. **A read-only exporter.** The DFHack exporter only reads. It never pauses DF, never writes
+   to its memory and never installs hooks, so it can run while the player keeps playing.
+7. **Measure first, then judge.** A benchmark harness (ticks/s against population) existed from
+   the first milestone on, and a real fort is the reference benchmark.
 
-## 4. Treue-Stufen
+## 5. Fidelity tiers
 
-| Stufe | Bedeutung | Inhalt |
+| tier | meaning | contents |
 |---|---|---|
-| **A: exakt** | wie DF, Zahl für Zahl | Zeitbasis (1200 Ticks/Tag, 403 200/Jahr); Hunger, Durst und Schlaf; Gangarten (900 = 9 Ticks/Kachel); Raws (Materialien, Kreaturen, Körper, Items); Designations und Kachel-Semantik; Labors, Skills und XP; Lager und Hauling; Werkstatt-Ausgaben; Qualitätsstufen; Flüssigkeitsstufen 0–7 |
-| **B: gleiches Verhalten** | Statistik stimmt, nicht jeder Tick | Gedanken, Stress und Bedürfnisse; Kampf über Gewebeschichten; Migranten- und Karawanen-Rhythmus; Handelswerte; Stimmungen und Artefakte; Belagerungen; Forgotten Beasts; Temperatur; Fluss-Algorithmus |
-| **C: vereinfacht** | spielt sich ähnlich | Politik der Adligen, Justiz, Religion, Auftritte, Wetter, Wildtier-Wanderungen, Details im Hospital |
-| **D: nicht geplant** | – | Adventure-Modus, volle Weltgeschichte und Legends, Nekromantie-Ketten, Modding-Oberfläche |
+| **A: exact** | like DF, number for number | time base (1,200 ticks per day, 403,200 per year); hunger, thirst and sleep; gaits (900 = 9 ticks per tile); raws (materials, creatures, bodies, items); designations and tile semantics; labors, skills and experience; stockpiles and hauling; workshop outputs; quality levels; liquid depths 0-7 |
+| **B: same behavior** | the statistics match, not every tick | thoughts, stress and needs; combat through tissue layers; migrant and caravan rhythm; trade values; strange moods and artifacts; sieges; forgotten beasts; temperature; liquid flow |
+| **C: simplified** | plays similarly | noble politics, justice, religion, performances, weather, wildlife migration, hospital details |
+| **D: not planned** | | adventure mode, full world history and Legends, necromancy chains, a modding interface |
 
-Wichtiger Befund: Fast alle Werkstätten und Öfen (Schreiner, Steinmetz, Schmelze, Brennerei, Küche) sind in DF **fest einprogrammiert und stehen nicht in den Raws**. Die Raws enthalten nur 2 Werkstätten. Diese Werkstätten und Jobs bauen wir nach dem Wiki nach.
+An important finding: almost all workshops and furnaces (carpenter, mason, smelter, still,
+kitchen, ...) are **hard-coded in DF and are not in the raws**. The raws define only two
+workshops. Rustfort rebuilds these workshops and their jobs from the wiki.
 
-## 5. Save-Import
+## 6. Importing a fort
 
-**Weg:** Ein DFHack-Exporter liest den laufenden DF-Speicher und schreibt ein Export-Paket. `rf-import` lädt dieses Paket in Rustfort. Die `.sav`-Datei direkt zu lesen ist **nicht realistisch**: Sie ist ein undokumentierter Dump der internen Strukturen (autosave 3: 22 MB gepackt, 233 MB entpackt, 11 672 zlib-Chunks), und das Format ändert sich mit jeder DF-Version.
+**The route:** a DFHack script reads the running DF and writes an export folder
+([docs/EXPORT_FORMAT.md](docs/EXPORT_FORMAT.md)), and `rf-import` loads that folder into
+Rustfort. Reading DF's `.sav` files directly is not realistic. They are an undocumented dump of
+DF's internal structures, compressed in thousands of zlib chunks (one save: 22 MB packed,
+233 MB unpacked, 11,672 chunks), and the layout changes with every DF version.
 
-**Deine Saves** liegen in `%APPDATA%\Bay 12 Games\Dwarf Fortress\save\`:
+**How an export runs** ([tools/dfhack/README.md](tools/dfhack/README.md)):
 
-| Ordner | Fort | Welt | Größe (entpackt) | Stand |
-|---|---|---|---|---|
-| autosave 3 | **Trussroads** (Run 6) | Zilirróth | 233 MB | heute 22:45 |
-| region3 | **Inchcraft** (dein eigenes) | Angsturstrasp | 335 MB | 06.10. |
+- The work runs in short frame slices (25 ms of Lua per frame by default), so DF keeps running
+  and never freezes. An early whole-map scan in one go had frozen DF for 9-28 s.
+- Units, items and buildings are snapshotted by id and found again in each slice, because DF's
+  lists change between frames.
+- `manifest.json` (versions, date, counts, notes) is written last and marks the export as
+  complete. The rest is JSON and JSON-lines files plus one binary file per z-level.
+- The raws come **from the save itself**, not just from `data/vanilla`. A save contains
+  generated materials (divine metals, forgotten beast materials, syndromes), and material
+  indices are taken over exactly as DF has them.
 
-Die beiden Forts liegen in verschiedenen Welten. Das sind also zwei getrennte Migrationen.
-
-**Ablauf eines Exports:**
-1. DF pausieren und den Tick merken. Ändert sich der Tick während des Exports, bricht der Export ab.
-2. Die Karte in Häppchen exportieren, etwa 300 Blöcke pro Frame. Die Lehre aus BUG-415: Ein Lua-Scan der ganzen Karte fror DF 9–28 s ein. Alternativ zieht ein Rust-Client die Karte über RemoteFortressReader (localhost:5000). Für eine 4x4-Karte dauert das etwa 1–3 Minuten ohne langes Einfrieren.
-3. Die Weltgeschichte (`exportlegends`) wird **nur aus einer Kopie** des Saves gelesen, nie aus dem laufenden Spiel, weil sonst der Save beschädigt werden kann.
-4. Ergebnis ist ein Paket aus `manifest.json` (Versionen, Tick, Zählungen, sha256) und zstd-Dateien: Raws des Saves, Karte pro z-Ebene, Einheiten, historische Figuren, Items, Gebäude, Zonen, Lager, Trupps, Pflanzen, Artefakte, Gravuren. Geschätzt 30–80 MB gepackt.
-
-**Die Raws kommen aus dem Save selbst**, nicht nur aus `vanilla`. Dein Save enthält generierte Materialien: göttliche Metalle, Forgotten-Beast-Stoffe, Syndrome. Die Material-Indizes werden exakt wie in DF übernommen.
-
-| Kategorie | Inhalt |
+| category | contents |
 |---|---|
-| **Muss übernommen werden** | Alle DF-IDs und Next-ID-Zähler; Karte mit Materialien, Adern, Flüssigkeiten, Konstruktionen und Entdeckt-Status; Einheiten mit Körper, Wunden, Skills, Attributen, Persönlichkeit, Bedürfnissen, Stress, Erinnerungen und Beziehungen; Items mit Containern, Verzierungen und Artefakten; Gebäude, Räume und Besitz; Zonen; Lager-Einstellungen; Burrows; Adlige, Trupps, Uniformen; Kalender; die Weltgeschichte in schlanker Form (Figuren mit Bezug zum Fort, Zivilisation) |
-| **Wird neu erzeugt** | Laufende Jobs, Pfade, Erreichbarkeitsdaten, Temperatur, Caches, kurzfristige Emotionen |
-| **Wird verworfen** | Tiefe Weltgeschichte, Meldungen, Kampf-Logs, Grafik-Zustand |
+| **Taken over** | all DF ids and next-id counters; the map with materials, veins, liquids, constructions, engravings and revealed state; units with body, wounds, skills, attributes, personality, needs, stress, memories and relationships; items with containers, decorations and artifacts; buildings, rooms and ownership; zones; stockpile settings; burrows; nobles, squads and uniforms; the calendar; the world in a slim form (civilizations, historical figures the fort refers to) |
+| **Regenerated** | jobs in progress, paths, reachability data, caches, short-term emotions |
+| **Not imported** | deep world history, announcements, combat logs, view state (camera, open screens) |
 
-**Prüfung des Imports:**
-1. Zählungen vergleichen: Einheiten nach Rasse, Items nach Typ und Material, Kacheln nach Material pro z-Ebene.
-2. Block-Hashes vergleichen, die Lua-Exporter und Rust-Importer identisch berechnen.
-3. Prüfen, dass jede Referenz auflösbar ist.
-4. Stichproben: 50 Kacheln und 20 Zwerge Feld für Feld vergleichen.
+**Checking an import:**
 
-**Nur in eine Richtung:** DF → Rustfort. Ein Rückweg nach DF ist nicht realistisch, weil ein einziger Fehler den Save still beschädigt. Dein letzter DF-Save bleibt als eingefrorenes Archiv bestehen.
+1. Counts per kind are compared with the exporter's manifest when loading.
+2. Spot checks against the live game (`rustfort-verify.lua`) compare sampled tiles, citizens,
+   orders, buildings and more, field by field.
+3. Every reference must resolve. What cannot be resolved is repaired and listed as a warning
+   in the import report.
 
-**Wiederverwendbar:**
-- `dwarf-fortress/lua/claude/kartendump.lua` (620 Zeilen, Karten-JSON) als Gerüst. Er ist aber verlustbehaftet, weil er Materialklassen statt Material-Indizes schreibt.
-- Die Frame-Verteilung aus `schau.lua` und `wachen.lua`.
+**One direction only:** DF to Rustfort. Writing a fort back into a DF save is not realistic,
+since a single mistake would silently damage the save. The DF save stays as it was, and the
+export can be repeated at any time: play on in DF, then import the newest state.
 
-## 6. Architektur
+## 7. Architecture
 
 ```
- DF 53.16 + DFHack ──export_fort.lua──▶ fort-export (NDJSON+zstd) ──▶ rf-import
- E:\…\data\vanilla ─────────────────────────────────────────────────▶ rf-raws
-                                                                        │
-          ┌──────────── rf-sim (deterministischer Tick, bevy_ecs + rayon) ◀┘
-          │  perceive ∥ → decide ∥ → resolve (seriell, nach ID) → commit
-          │  rf-world (16³-Chunks, Fluide, Temperatur)  rf-path (Komponenten, HPA*, Flow-Fields)
-          │  rf-items (Slotmap + räumliche Indizes)     rf-jobs (Matcher, Labors, Werkstätten)
-          ▼
-   Snapshot (Triple-Buffer) ──▶ rf-render-gpu (Tileset/CP437, 60 fps)
-                            ──▶ rf-render-tui (ASCII im Terminal, Debug)
-                            ──▶ rf-api (localhost HTTP/JSON, Agenten)
-   rf-save (serde+postcard+zstd, versioniert)    rf-bench (Szenarien, Ticks/s-Kurven)
+ DF + DFHack ──rustfort-export.lua (read-only)──▶ export/<fort>/ ──▶ rf-import ─┐
+ DF install: data/vanilla, Premium graphics ──▶ rf-raws, rf-gfx                │
+                                                                              ▼
+                                        rf-core World (shared data model)
+                                                                              │
+                 rf-sim: deterministic tick (parallel read phases, ordered writes)
+                                                                              │
+          rf-app: game window (sim on its own thread), headless bench, saves ◀┘
 ```
 
-- **Kacheln, Items und Jobs** liegen in eigenen Struct-of-Arrays-Speichern. In der ECS stehen nur Einheiten.
-- **Zufall** ist pro Einheit und Tick geseedet, damit die Thread-Reihenfolge keine Rolle spielt.
-- **Rendering blockiert die Simulation nie**, weil es nur Snapshots liest.
+- Tiles, items and jobs live in their own compact stores and indexes.
+- Random numbers are derived from (seed, slot, tick), so the order of threads does not matter
+  and there is no generator state to save.
+- Drawing never blocks the simulation: the window hands the sim to a worker thread between
+  frames.
 
-## 7. Meilensteine (jeder mit einem Prüfpunkt für dich)
+The crate responsibilities and working rules are in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-| # | Inhalt | Prüfpunkt für dich |
+## 8. Milestones
+
+Each milestone has a checkpoint that shows it is done.
+
+| # | contents | checkpoint |
 |---|---|---|
-| **M0** Fundament | Workspace, Raw-Parser (Templates, Creature-Variations, COPY_TAGS_FROM, Castes), Benchmark-Harness, Stresstest mit 200/400/800 Einheiten auf einer 4x4-Karte | `rustfort raws --stats` zeigt 981/265/225/163. Der Stresstest zeigt die Ticks/s-Kurve. |
-| **M1** Deine Karte | DFHack-Exporter (Karte, Gebäude, Lager) und Viewer (GPU + ASCII) | Du scrollst durch **deine eigene Festung** in Rustfort, und die Kachelzählung pro Material stimmt mit DF überein. |
-| **M2** Leben | Einheiten importieren; Bewegung, Wegfindung, Sichtlinien; essen, trinken, schlafen | Dein Fort läuft 1 Spieljahr headless ohne Massensterben bei mindestens 1000 Ticks/s. Differenztest: Die Bedürfnis-Kurven stimmen mit echtem DF überein. |
-| **M3** Arbeit | Designations, Labors, Hauling, Lager, die Kern-Werkstätten, Landwirtschaft, Brauen, Kochen, Arbeitsaufträge | **Ab hier spielbar:** Du gräbst, baust und produzierst, und das Fort trägt sich selbst. |
-| **M4** Gesellschaft | Gedanken, Stress, Persönlichkeit, Migranten, Adlige und Mandate, Bestattung und Geister, Karawanen und Handel | Stimmung und Stress deiner Zwerge entwickeln sich plausibel; die erste Karawane kommt. |
-| **M5** Kampf | Körper- und Gewebekampf aus den Raws, Wunden, Medizin, Trupps, Belagerungen, Forgotten Beasts | Eine Goblin-Belagerung mit 50 Angreifern läuft bei voller Geschwindigkeit. |
-| **M6** Physik | Flüssigkeiten, Temperatur, Magma, Kavernen, Aquifer | Stresstest geflutete Kaverne und Magma-Schmiede |
-| **M7** Feinschliff | Stimmungen und Artefakte; Premium-Tileset aus deiner Installation; UI-Parität | „Fühlt sich an wie DF“: Das entscheidest du. |
+| **M0** foundation | workspace, raw parser (templates, creature variations, COPY_TAGS_FROM, castes), benchmark harness, stress test with 200/400/800 units on a 4x4 embark | the raw statistics match the install (981/265/225/163); the stress test shows the ticks/s curve |
+| **M1** the map | DFHack exporter (map, buildings, stockpiles) and a viewer | you scroll through your own fort in Rustfort, and the tile counts per material match DF |
+| **M2** life | import of units; movement, pathfinding, line of sight; eating, drinking, sleeping | the fort runs one game year headless at 1,000+ ticks/s without mass deaths; the need curves match real DF |
+| **M3** work | designations, labors, hauling, stockpiles, the core workshops, farming, brewing, cooking, work orders | **playable from here:** dig, build and produce; the fort sustains itself |
+| **M4** society | thoughts, stress, personality, migrants, nobles and mandates, burial and ghosts, caravans and trade | mood and stress develop plausibly; the first caravan arrives |
+| **M5** combat | body and tissue combat from the raws, wounds, medicine, squads, sieges, forgotten beasts | a goblin siege with 50 attackers runs at full speed |
+| **M6** physics | fluids, temperature, magma, caverns, aquifers | stress tests: a flooded cavern and a magma forge |
+| **M7** polish | strange moods and artifacts, the Premium tileset from the user's install, UI parity | it feels like DF |
 
-**Fortschrittsmaß über alle Meilensteine: die Import-Abdeckung.** Sie gibt an, welcher Anteil der Einheiten, Items, Gebäude und Jobs deines Saves tatsächlich simuliert wird. Der Wert ist eine Zahl, die bei jedem Meilenstein steigt.
+**The measure of progress across all milestones is import coverage:** the share of the units,
+items, buildings and jobs of a real fort that Rustfort actually simulates. It is one number,
+and it rises with each milestone.
 
-**Ehrliche Einschätzung:**
-- M0–M2 dauern Tage bis wenige Wochen mit Agenten.
-- M3–M5 sind Monate.
-- 100 % Parität erreichen wir nie, weil DF 20 Jahre Entwicklung enthält.
-- Mit Lücken spielbar wird dein Save ab M3. Wie DF fühlt er sich ab M5 an.
-- Den Export kannst du jederzeit wiederholen. Du spielst in DF also weiter, bis Rustfort bereit ist, und importierst dann den neuesten Stand.
+By v0.12 the milestones M0-M5 and most of M7 are done. Of M6, fluids, magma, caverns and
+aquifers are in, and temperature is not. See [PROGRESS.md](PROGRESS.md).
 
-## 8. Risiken
+Expectations from the start:
 
-1. **Die Breite ist schwieriger als die Geschwindigkeit.** Das größte Risiko sind Bedürfnisse, Stimmungen, Kampf und Materialien.
-2. **Import-Lücken.** Was Rustfort noch nicht kennt, geht beim Import verloren. Der Import-Bericht macht das sichtbar.
-3. **DF-Updates ändern die Datenstrukturen.** Deshalb ist der Exporter auf DF 53.16 und DFHack 53.16-r2 festgelegt.
-4. **Determinismus und Parallelität** verlangen Disziplin ab Tag 1. Replay-Hash-Tests laufen in CI.
-5. **Die gestaffelte Ausführung verschiebt Timings minimal** gegenüber DF. Das wird dokumentiert und per Differenztest begrenzt.
-6. **Rechtliches:** nur privat; keine DF-Dateien im Repo; eigener Name.
+- 100 % parity will never be reached, since DF contains two decades of development.
+- A fort becomes playable with gaps from M3 on, and should feel like DF from M5 on.
 
-## 9. Sofort-Hilfe im echten DF (parallel zum Projekt)
+## 9. Risks
 
-- In den Einstellungen unter Spiel die **experimentelle Multithreading-Option** einschalten. Sie parallelisiert die Sichtlinien.
-- **Eigene Lua-Dauerjobs abspecken:** Sie kosteten 28–39 % der Echtzeit, und ein Karten-Scan verursachte 9–11 s Stalls.
-- **gfps auf 25–30** senken und `timestream` nutzen; das ist gemessen etwa x2.
-- **Einheiten und Items reduzieren:** Tiere schlachten, Kavernen abriegeln, `clean` ausführen. Optional Temperatur aus (etwa +100 %, dann aber ohne Magma- und Feuer-Mechanik).
-
-## 10. Deine Entscheidungen
-
-1. **Welcher Save zuerst?** Trussroads (Run 6, aktuell) oder Inchcraft (dein eigenes)? Ich empfehle das Fort, das du wirklich weiterspielen willst. Die Engine ist für beide dieselbe, nur der Export läuft zweimal.
-2. **Treue-Stufen A–D:** Passt der Schnitt? Vor allem: Adventure-Modus und volle Weltgeschichte bleiben draußen.
-3. **Darstellung:** Zuerst ein GPU-Fenster mit CP437-Schrift und ein ASCII-Debug-Terminal, das Premium-Tileset aus deiner Installation kommt in M7. Oder soll das Tileset schon früher kommen?
-4. **Agent-API als Kernfeature:** ja, damit Claude-Agenten headless mitspielen und testen.
-5. **Repo:** privat als `GordonMohrin/rustfort`, Commits als du mit Claude als Co-Autor, immer pushen.
-6. **Start:** nach Freigabe M0 und M1 parallel mit Agenten (Raw-Parser, Benchmark-Harness, Exporter). Der erste Prüfpunkt für dich ist „deine Festung im Rustfort-Viewer“.
+1. **Breadth is harder than speed.** The biggest risks are needs, moods, combat and materials.
+2. **Import gaps.** What Rustfort does not know yet is lost on import. The import report makes
+   that visible.
+3. **DF updates change the data structures.** The exporter was developed against DF 53.16 and
+   DFHack 53.16-r2, and other versions may need fixes.
+4. **Determinism with parallelism** needs discipline from day one: state hash checks with one
+   and many threads, and exact save/load continuation tests.
+5. **Staggered execution shifts timings slightly** compared with DF. This is documented and
+   bounded by comparing against real DF.
+6. **Legal:** Rustfort is an unofficial fan project. The repository contains no DF files, and
+   the project uses its own name.

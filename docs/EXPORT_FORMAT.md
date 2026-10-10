@@ -9,7 +9,7 @@ Rules:
 - All text is UTF-8. The exporter converts DF's CP437 strings with `dfhack.df2utf`. Tokens can contain spaces (e.g. `PLANT:CAVE MOSS:STRUCTURAL`).
 - Lists are always JSON arrays, even when empty (`[]`). `stockpile` is `null` or an object.
 
-Exports contain data from a real save and **never go into git**. The default location is `rustfort/export/<fort>/`, which is gitignored.
+Exports contain data from a real save and **never go into git**. The title screen's import writes to `export/<fort>-<yyyymmdd-hhmmss>/` in Rustfort's working directory (gitignored). The exporter run by hand writes to the folder given on its command line, and without one to `<DF folder>/rustfort-export/<native fort name in lower case>/`. Rustfort's default fort is the most recently modified complete export under `export/` (see `docs/INSTALL.md`).
 
 ## Directory layout
 
@@ -506,7 +506,7 @@ Written by exporter rev `2026-10-10c` and later. Everything is optional for the 
 
 | building | `flags` |
 |---|---|
-| `Door`, `Hatch` | `door_flags`: `LOCKED` (= `forbidden`, the door sheet's **Lock** button; Gordon's "forbidden doors" that steer invaders into the trap corridor), `CLOSED` or `OPEN` (`closed`), `OPERATED_BY_MECHANISMS`, `TAKEN_BY_INVADERS`, `USED_BY_INTRUDER`, `INTERNAL` (`unused_02`, DF 0.47's "internal"; never set in DF 53). **DF 53 has no pet-passable bit** on doors (`door_flags` has 6 named bits), so `PET_PASSABLE` is never exported. Extra `close_timer`. |
+| `Door`, `Hatch` | `door_flags`: `LOCKED` (= `forbidden`, the door sheet's **Lock** button; the reference fort's "forbidden doors" that steer invaders into the trap corridor), `CLOSED` or `OPEN` (`closed`), `OPERATED_BY_MECHANISMS`, `TAKEN_BY_INVADERS`, `USED_BY_INTRUDER`, `INTERNAL` (`unused_02`, DF 0.47's "internal"; never set in DF 53). **DF 53 has no pet-passable bit** on doors (`door_flags` has 6 named bits), so `PET_PASSABLE` is never exported. Extra `close_timer`. |
 | `Bridge` | `gate_flags`: `RAISED` (else `LOWERED`), `RAISING`, `LOWERING`, `COLLAPSING`, `HAS_SUPPORT`. `direction` = `building_bridgest.direction`: `W` (Left, 0), `E` (Right, 1), `N` (Up, 2), `S` (Down, 3), `RETRACT` (-1). A raised drawbridge is a wall; a raised retracting bridge is open space (wiki "Bridge"). Extras `timer`, `material_amount`. |
 | `Floodgate`, `GrateWall`, `GrateFloor`, `BarsVertical`, `BarsFloor` | `gate_flags`: `CLOSED` (else `OPEN`), `CLOSING`, `OPENING`, `COLLAPSING`, `HAS_SUPPORT` |
 | `Weapon` (upright spikes) | `gate_flags`: `RETRACTED` (else `EXTENDED`), `RETRACTING`, `UNRETRACTING`; `LOADED` if it holds weapons |
@@ -839,7 +839,7 @@ Exporter rev `2026-10-10f`. New files `stockpile_options.json` and `invasions.js
 
 Extras: `chained` (`flags1.chained` or the unit is a chain building's `chained` unit), `chain_building`, `cage_item`, `cage_building` (the built cage holding the cage item, -1), `pos_source` (`unit`, `cage_item`, `offsite`), `in_active_list`.
 
-The importer marks, for exports before rev `2026-10-10f`, every off-map unit that is not caged as inactive (warning `N off-map units marked inactive ...`; Gordon's r5 export: 80 units, all caravan animals). rf-sim already ignored units without a map position (`Kind::Dead`); with the flag set they also leave the animal lists, the population counts and the UI.
+The importer marks, for exports before rev `2026-10-10f`, every off-map unit that is not caged as inactive (warning `N off-map units marked inactive ...`; the reference fort's r5 export: 80 units, all caravan animals). rf-sim already ignored units without a map position (`Kind::Dead`); with the flag set they also leave the animal lists, the population counts and the UI.
 
 ### squads.json: ammunition, per-position uniforms, patrol routes, supplies
 

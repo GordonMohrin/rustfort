@@ -7,21 +7,28 @@ visible through open space, and a fast sim loop.
 ```
 rustfort.cmd                                                # repo root: build if needed, then the title screen
 cargo run --release -p rf-app                               # the title screen (same as `play` without a world)
-cargo run --release -p rf-app -- play --export export/tileshtulon
+cargo run --release -p rf-app -- play --export export/<folder>
 cargo run --release -p rf-app -- play --synthetic --size 192,192,153
 cargo run --release -p rf-app -- bench --ticks 100000       # headless ticks/s + phase times
-cargo run --release -p rf-app -- play --load saves/Trussroads-20261009-222118.rfsave
+cargo run --release -p rf-app -- play --load saves/<fort>-<yyyymmdd-hhmmss>.rfsave
 cargo run --release -p rf-app -- savebench                  # save + load time and size
 ```
 
 `play` without `--export`, `--load`, `--synthetic`/`--size` or `--screenshot` opens the title
 screen (round 6, below). With one of them the game starts directly, as before: the world comes
-from `rf_import::find_export` (`--export DIR`, env `RUSTFORT_EXPORT`, or `export/tileshtulon`).
-If there is none, or the import fails, you get `World::synthetic(96,96,40)` (the reason is shown
-as the first announcement). The window title names the loaded world.
+from `rf_import::find_export`: `--export DIR`, else env `RUSTFORT_EXPORT`, else the most recently
+modified complete export under `export/` (a folder with `manifest.json`). If there is none, or
+the import fails, you get `World::synthetic(96,96,40)` (the reason is shown as the first
+announcement). The window title names the loaded world.
 
-The DF install is `rf_gfx::df_dir()` (env `RUSTFORT_DF_DIR`, else the folder from the settings,
-else the Steam default). From it the app reads, at runtime only:
+The DF install is `rf_gfx::df_dir()`, which forwards to `rf_raws::df_dir()`: env
+`RUSTFORT_DF_DIR`, else the folder from the settings, else the Steam install (registry and every
+Steam library in `libraryfolders.vdf`; on Linux `~/.steam/steam`, `~/.local/share/Steam`, the
+Flatpak path), else common default paths; a folder counts when it has `data/vanilla`
+(`rf_raws::df_dir_status()` also says which source found it). See `docs/INSTALL.md`. Without a
+DF install the app does not fail: the title screen says "Dwarf Fortress not found" and points
+to Settings or `RUSTFORT_DF_DIR` (as plain text, without DF's art and font). From the install
+the app reads, at runtime only:
 - `data/art/title_background.png` and `df_logo.png` for the title screen;
 - `data/art/curses_640x300.png`, the 8x12 CP437 font of the Steam UI;
 - keybindings, from `%APPDATA%\Bay 12 Games\Dwarf Fortress\prefs\interface.txt`, then
@@ -35,7 +42,8 @@ Like DF's title screen: DF's own background art and logo from the install (a pla
 and text logo without them), "RUSTFORT" below, and a column of buttons:
 
 - **Continue** loads the newest save in `saves/` (autosaves count), else the newest complete
-  export in `export/`, else the default export. The line under the button says what that is.
+  export in `export/`, else the export named by `RUSTFORT_EXPORT`; it is greyed out when there is
+  none (the first start). The line under the button says what it loads.
 - **Load game**: two tabs, *Saves* (fort, game date, when saved, size; autosaves marked
   `[auto]`) and *DF exports* (every `export/*/manifest.json`: fort, year, when exported,
   folder). A click loads it.
@@ -45,8 +53,8 @@ and text logo without them), "RUSTFORT" below, and a column of buttons:
   autosave interval (off / week / month / season / year) and how many autosaves to keep,
   population cap and invasions for new imports ("From the save", or a value: applied when a
   fresh export or synthetic fort starts, never to a loaded save), the DF folder (a text field:
-  click, type or Ctrl+V, "Default"; it says whether DF and DFHack are there), and "Show them
-  again" for the first-time hints. Back (or Esc) writes the file.
+  click, type or Ctrl+V, "Default" = automatic detection; it says whether DF and DFHack are
+  there), and "Show them again" for the first-time hints. Back (or Esc) writes the file.
 - **Quit**.
 
 Loading runs in a thread (world, then the Premium graphics), with a progress bar on the title
@@ -70,7 +78,7 @@ switch) and goes back to the title screen.
 2. The dialog shows what it found ("Found Trussroads (Tileshtulon) in the world Zilirróth. Year
    278, 88 citizens"), that the export only reads, and the target folder
    `export/<fort>-<yyyymmdd-hhmmss>/` (UTC; earlier exports are kept).
-3. **Import and play** runs `dfhack-run lua -f tools/dfhack/rustfort-export.lua <dir> --any-fort`
+3. **Import and play** runs `dfhack-run lua -f tools/dfhack/rustfort-export.lua <dir>`
    (the exporter returns at once and works in frame slices inside DF) and polls `progress.json`
    about every frame: a bar from the exporter's phase and `i/n` detail (phases weighted by their
    measured share, the map is about half), the phase name, the seconds so far. "Cancel export"
@@ -84,8 +92,8 @@ install DFHack), the scripts not found (start from the repo with `rustfort.cmd`)
 DFHack not answering (dfhack-run crashes silently when nothing listens on its port), no fort
 loaded. Retry checks again.
 
-Measured on 10.10.2026 against Gordon's running fort (year 279, while other builds kept the
-machine busy): check 0.3 s; export 64 s wall, 36 s of Lua inside DF, 997 frames, 68 MB; DF kept
+Measured on 10.10.2026 against the reference fort running in DF (year 279, while other builds
+kept the machine busy): check 0.3 s; export 64 s wall, 36 s of Lua inside DF, 997 frames, 68 MB; DF kept
 running; Rustfort loaded the result and started at "3rd Granite, 279" with 87 citizens.
 
 Paths: the scripts are found in `$RUSTFORT_TOOLS_DIR`, `tools/dfhack` in the working directory,
@@ -242,7 +250,7 @@ position to jump there.
   - *Kitchen*: every cookable or brewable kind in stock (plants, fruit, seeds, drinks, meat,
     fish, eggs, cheese, milk, flour, fat) with DF's cook and brew toggles
     (`LABOR_KITCHEN_*_ALLOWED/RESTRICTED/CANNOT`, `Sim::set_kitchen`). Plump helmets start as
-    "no cook" (Gordon's rule) when the save has no entry for them.
+    "no cook" (a player rule of the reference fort) when the save has no entry for them.
   - *Advanced: all labors*: the old grid, citizens x labors with DF's `unit_labor` names in tabs
     (Core, Farming & food, Wood & stone, Crafts & metal, Health & other). Cells show the related
     skill level; click a cell to toggle (`Sim::set_labor`), click a column header to toggle it
@@ -398,8 +406,8 @@ position to jump there.
   (top-level items, not forbidden, owned, rotten, built or artifacts) by value with a search
   field; "Bring N to the depot" calls `Sim::move_to_depot`. When a caravan appears
   (`Sim::trade_status`), the log says "A caravan from X has arrived." (unless the sim announced
-  it) and, if your DF `announcements.txt` gives `CARAVAN_ARRIVAL` the `BOX` (or `P`) flag, as
-  yours does, the game pauses with a box offering Trade / Go to depot / OK.
+  it) and, if your DF `announcements.txt` gives `CARAVAN_ARRIVAL` the `BOX` (or `P`) flag (as
+  the reference install's does), the game pauses with a box offering Trade / Go to depot / OK.
 - **Nobles** (round 4, `ui/nobles.rs`): every position of `World::nobles` with its holder and
   mandates. How each is filled follows the vanilla dwarf entity raws: manager, bookkeeper,
   broker, chief medical dwarf, militia commander, sheriff, captain of the guard and hammerer are
@@ -425,7 +433,7 @@ position to jump there.
 
 ### Round 10: tasks, hauling, build keys, context menu, look lines, crash guard
 
-- **Tasks** (DF `D_JOBLIST`, `t` in Gordon's prefs; the toolbar's Tasks button): every current
+- **Tasks** (DF `D_JOBLIST`, `t` in the reference install's prefs; the toolbar's Tasks button): every current
   job with its worker and place, in tabs All / Designations / Building / Workshops / Hauling /
   Medical / Military / Personal / Other with counts, plus "Only without worker". Sources:
   `Sim::jobs()` (dig, chop, gather), `Sim::construction_jobs()` (constructions, smoothing,
@@ -572,16 +580,17 @@ position to jump there.
 
 ## Saving
 
-Saves are the whole `rf_core::World` as bincode, zstd-compressed (level 3, multithreaded), in
-`saves/<fort>-<yyyymmdd-hhmmss>.rfsave` (UTC) relative to the working directory, or in
-`$RUSTFORT_SAVE_DIR`. A small header (fort, game date, seed) lets the load menu list saves
-without unpacking them. Saving clones the world and writes in a background thread, so play
-goes on. Loading rebuilds the simulation with `Sim::new(world, seed)` (jobs in progress and
-paths start fresh, like after an import); designations, buildings, stockpiles, zones, work
-orders, labors and needs are all in the world and survive.
+Saves hold the whole `rf_core::World` plus an exact snapshot of the simulation (format 2:
+MessagePack with named fields, zstd-compressed, behind a header with length and CRC-32; see
+`docs/SAVES.md`), in `saves/<fort>-<yyyymmdd-hhmmss>.rfsave` (UTC) relative to the working
+directory, or in `$RUSTFORT_SAVE_DIR`. The header (fort, game date, seed) lets the load menu
+list saves without unpacking them. Saving clones the world and writes in a background thread,
+so play goes on. Loading restores the simulation exactly (unit AI, jobs, paths), so save, load
+and play on gives the same state hash as uninterrupted play. Saves of v0.9 and older (format 1,
+bincode) are converted on load.
 
-Measured on the real fort (192x192x150, 320 units, 14.4k items, 1177 buildings):
-save 0.07 s, 1.4 MB on disk (45.5 MB raw bincode); load 0.11 s plus 0.05 s `Sim::new`.
+Measured on the reference fort (192x192x150, r5) after 20,000 ticks: 3.4 MB on disk; save about
+0.8 s, load plus `Sim::new` about 0.65 s (`docs/SAVES.md`).
 
 ## Speed model
 
@@ -594,7 +603,7 @@ UI wants it back. At "max" the allowance is unlimited; at 1x/2x/5x a tick accumu
 100/200/500 ticks/s.
 
 Measured on the real fort (round-3 export, 357 units, running siege), `--speed max`, game span
-tick 60,000 to 260,000 (`RUSTFORT_MEASURE=60000,260000`), Ryzen 5 5600X with other builds
+tick 60,000 to 260,000 (`RUSTFORT_MEASURE=60000,260000`), on a 6-core desktop CPU with other builds
 running:
 
 | | ticks/s | frame CPU | FPS |
@@ -697,7 +706,7 @@ screenshots under `target/`, never in git.
 - `script.rs`: scripted input.
 - `bench.rs`: headless benchmark.
 - `simthread.rs`: the sim worker thread (`SimHandle` derefs to `Sim` while the UI holds it).
-- `save.rs`: save games (bincode + zstd), save list, `savebench`; (round 6) tagged autosaves and
+- `save.rs`: save games (format 2: MessagePack + zstd; older bincode saves via `rf-save-v09`), save list, `savebench`; (round 6) tagged autosaves and
   their rotation.
 - `ui/help.rs` (round 6): controls overview and first-time hints.
 - Feel round: `ui/rclick.rs` (right-click priority), `ui/alerts.rs` (`visible_hostiles`),
