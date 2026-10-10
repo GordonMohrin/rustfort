@@ -439,7 +439,7 @@ position to jump there.
   The list is rebuilt twice a second while the screen is open.
 - **Hauling** (`D_HAULING`, Shift+h): the hauling routes of the import (`World::haul_routes`)
   with their stops (position with "Go"), departure conditions and linked stockpiles.
-  Read-only: Rustfort does not simulate minecarts, and Gordon's fort has no routes.
+  Round 12 made it an editor (see below).
 - **Build hotkey chains** from `interface.txt`: `b`, then the category key
   (`HOTKEY_BUILDING_WORKSHOP` o, `_FURNITURE` f, `_CONSTRUCTION` n, `_FARMPLOT` p, `_WELL`
   Shift+l), then the building. Workshops have DF's sub-groups: `HOTKEY_BUILDING_FURNACE` (u),
@@ -472,6 +472,54 @@ position to jump there.
   the sim runs (a clone, about 60-270 ms on the real fort).
 - **Title screen > Settings > Announcements...**: the same announcement table as in the game
   (round 9), saved in `saves/settings.json`.
+
+### Round 12: hauling editor, machines, siege engines, tracks (tag `[app12]`, `ui/round12.rs`)
+
+- **Hauling** (`D_HAULING`, Shift+h) is an editor now. **New route** / **Delete route**; per
+  route its live state from `Sim::route_status` (trips, each cart and where it is, items
+  loaded), the vehicles (`x` unassigns; **Assign minecart (n)** opens a list of the fort's free
+  minecarts and wheelbarrows, `Sim::assign_vehicle`) and the stops. **Add stop (click on the
+  map)** closes the screen; click a track stop or track tile (`Sim::add_route_stop`, the screen
+  comes back with the new stop; right-click returns without one). Per stop: position ("track
+  stop" / "track" / "no track"), **Go**, `x` (`Sim::remove_route_stop`), the departure
+  condition as DF's chips (*right away*, *when full*, *when empty*, *any time*; *no wait*, *wait
+  1 day*, *wait 7 days*; *Push* / *Ride* / *Guide* and the direction N/S/E/W), written in the
+  exporter's text form `Push North after 1200 ticks when >= 100% full`
+  (`Sim::set_stop_conditions`), and the linked stockpiles (**+ Take from pile** / **+ Give to
+  pile**, then click a stockpile: `Sim::link_stop_pile`; `x` unlinks). The stops of the routes
+  are drawn on the map (numbered, the selected route's stops joined by a line) while the screen
+  or its map tools are open or a track stop is selected; carts assigned to routes always get a
+  cyan frame and their route number (carts that are not lying on the ground, e.g. riding a
+  track, are drawn there from the item's position).
+- **Build > Machines** (DF `m`: screw pump `p`, water wheel `h`, windmill `m`, gear assembly
+  `g`, horizontal axle `a`, vertical axle Shift+a, roller `r`; plus the track stop, DF
+  Constructions Shift+k) and **Build > Siege engines** (DF Military `y`: ballista `b`, catapult
+  `p`, bolt thrower). Placement goes through `Sim::can_place_dir` / `Sim::place_building_dir`
+  (rf-sim `build_api.rs`, `[app12]`) with a **direction**: the buttons in the build menu header
+  or **Tab** (Shift+Tab back) choose "pump from north/east/south/west" (the pump turns 1x2 /
+  2x1), the water wheel's axis (3x1 / 1x3), the roller's push direction, the track stop's dump
+  direction or the engine's facing; the ghost shows an arrow (pumps: the water's way, input to
+  output). Horizontal axles and rollers are dragged as straight lines of up to 10 tiles (rollers
+  along their direction). Pumps, wheels, windmills, gears and axles may hang over open space;
+  rollers, track stops and siege engines need flat floor.
+- **Machine sheet**: powered or not with the reason (wheel: needs flowing water below;
+  windmill: needs wind; others: connect to a power source), the wiki power numbers (water
+  wheel makes 100 and uses 10, axles 1 per tile, gears 5, pumps 10, rollers 2 per tile), the
+  pump's direction in words and **Pump by hand** (`Sim::set_pump_manual`, an operator works the
+  pump), the fort's networks (`Sim::power_report`) and **Power overlay on the map**: machines
+  green = running, red = no power, grey = not built. Rollers and track stops have direction
+  buttons (they set `Building::direction`); a track stop lists the route stops on it and opens
+  Hauling.
+- **Siege engine sheet**: facing, ammo (ballista arrows / stones / bolts: loaded and in the
+  fort), the target, **Aim at a tile...** (click the target: `Sim::aim_siege_engine(id,
+  Some(tile))`, the map shows a line and a crosshair) and **Fire at will**
+  (`aim_siege_engine(id, None)`).
+- **Map sprites** (rf-gfx `machines.rs`, `[app12]`): DF Premium's screw pumps by direction,
+  water wheels, windmills, gear assemblies, axles, rollers, track stops on their track,
+  ballistas, catapults (with construction stages) and bolt throwers by facing, and **minecart
+  tracks**: a floor with the TRACK special (carved with Smooth > Carve track, or built with
+  Build > Constructions > Track) shows `TRACK_CARVED_*` / `TRACK_CONSTRUCTED_STONE|WOOD_*` with
+  its directions, so corners, crossings and ends are visible.
 
 ### Feel round: right-click, seen hostiles, portraits (tag `[feel-ui]`)
 
@@ -603,6 +651,14 @@ rustfort play --screenshot target/shots/a.png --frames 20 --view 48,48,22,1 \
   40 days until it petitions), `fake-raid[:thief|snatcher|ambush|abducted|death|mood]` (a sim-like
   line through the announcement path), `force-raid[:siege|ambush|thief|snatcher]`
   (`Sim::force_raid`) and `fake-fights` (two made-up fights).
+- Round 12: `power` (power overlay), `r12-machines` (demo machines and siege engines around the
+  camera through the real placement API, marked built), `r12-track` (a carved track loop
+  around the camera), `r12-route` (a 2-stop route through the round-12 API between the two
+  stockpiles nearest the camera, with conditions and a minecart: an unused large pot becomes the
+  minecart, since Trussroads has none), `r12-select:<kind|subtype>` (select the last such
+  building and center on it), `r12-aim` (the selected siege engine aims 8 tiles north),
+  `r12-dir:<n>` (direction n for the active Build tool, after `place:<label>`). Example:
+  `--view 98,88,126,2 --ui "r12-machines,r12-select:Ballista,r12-aim"`.
 - Round 10: `tasks[:tab]`, `hauling`, `bpath:<Workshops/Farming|Workshops/Furnaces|Furniture|...>`
   (build menu at a hotkey-chain level), `ctx` (context menu of the camera's tile), `engraved`
   (select an engraved tile of quality superior or better), `items-tile` (the tile with the most
@@ -646,7 +702,12 @@ screenshots under `target/`, never in git.
 - `ui/help.rs` (round 6): controls overview and first-time hints.
 - Feel round: `ui/rclick.rs` (right-click priority), `ui/alerts.rs` (`visible_hostiles`),
   `ui/panels.rs` (`draw_portrait`), rf-gfx `Gfx::portrait` / `creature::evaluate_portrait`.
-- Round 10: `ui/round10.rs` (Tasks and Hauling screens, build hotkey tree `BUILD_KEYS` and the
+- Round 12: `ui/round12.rs` (Hauling editor, build directions and ghost arrow, machine / siege
+  engine / track stop / roller sheet sections, power overlay, route stops and carts on the map,
+  aim tool, `--ui` demo states), rf-sim `build_api.rs` `[app12]` (machine and siege engine
+  build options, `build_directions`, `build_size`, `can_place_dir`, `place_building_dir`) and
+  rf-gfx `machines.rs` (machine, track, roller, track stop and siege engine sprites).
+- Round 10: `ui/round10.rs` (Tasks screen, build hotkey tree `BUILD_KEYS` and the
   key bar, map context menu, look lines and item groups, crash snapshot and dialog, title-screen
   announcement page) and `crash.rs` (panic hook, `saves/crash.log`).
 - Round 9: `ui/round9.rs` (announcement types and settings, box queue, raid boxes, petitions,

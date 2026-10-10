@@ -228,6 +228,14 @@ pub fn draw_build_menu(g: &mut Game, toolbar_y: f32) -> f32 {
     };
     let maxc = ((w - 2.0 * pad) / (8.0 * s)) as usize;
     g.font.draw(&clip(&title, maxc), r.x + pad, r.y + pad, s, title_c);
+    // [app12] The Machines tab toggles the power overlay.
+    if cur_cat == "Machines" {
+        let bw = 15.0 * 8.0 * s;
+        let st = if g.r12.power_overlay { BtnState::Active } else { BtnState::Normal };
+        if super::text_button(&mut g.ui, &g.font, Rect::new(r.x + w - pad - bw, r.y + pad - 3.0 * s, bw, GH * s + 4.0 * s), "Power overlay", st) {
+            g.r12.power_overlay = !g.r12.power_overlay;
+        }
+    }
     // [app12] Buildings with a direction: the direction buttons replace the hint.
     let dir_drawn = match g.tool {
         Tool::Build(i) => super::round12::draw_dir_buttons(g, i, r.x + pad, r.y + pad + lh, w - 2.0 * pad),

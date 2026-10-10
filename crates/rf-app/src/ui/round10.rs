@@ -936,6 +936,9 @@ pub fn look_lines(g: &Game, p: Pos) -> Vec<(String, Color)> {
         };
         v.push((line, col::TEXT));
     }
+    if let Some(l) = super::round12::track_line(tt) {
+        v.push((l, col::TEXT_CYAN)); // [app12] track directions
+    }
     if let Some(e) = g.sim.engraving_at(p) {
         let (q, mark) = QUALITY[e.quality.min(5) as usize];
         let surf = if e.floor { "floor" } else { "wall" };

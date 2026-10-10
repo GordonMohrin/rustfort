@@ -195,11 +195,11 @@ pub fn ghost_extras(g: &Game, i: usize, lo: Pos, hi: Pos) {
 /// was drawn (the caller skips its own hint).
 pub fn draw_dir_buttons(g: &mut Game, i: usize, x: f32, y: f32, w: f32) -> bool {
     let dirs = g.sim.build_directions(i);
-    if dirs.is_empty() || g.build_opts.get(i).map(|o| o.dragged && o.kind == "AxleHorizontal").unwrap_or(false) {
+    let Some(kind) = g.build_opts.get(i).map(|o| o.kind) else { return false };
+    if dirs.is_empty() {
         return false;
     }
     let s = g.ui.scale;
-    let kind = g.build_opts[i].kind;
     let cur = cur_dir(g, i);
     let mut bx = x;
     g.font.draw("Direction (Tab):", bx, y, s, col::TEXT_DIM);
@@ -593,7 +593,27 @@ pub fn draw_hauling(g: &mut Game) {
     apply(g, act);
 }
 
-/// " (track stop)" / " (track)" / " (no track!)" for a stop position.
+/// Look line of a track tile: "Carved track: north, east (corner)."
+pub fn track_line(tt: &rf_core::TiletypeInfo) -> Option<String> {
+    if tt.special != rf_core::TtSpecial::Track {
+        return None;
+    }
+    let names: Vec<&str> = [('N', "north"), ('S', "south"), ('E', "east"), ('W', "west")].iter().filter(|(c, _)| tt.direction.contains(*c)).map(|e| e.1).collect();
+    let ns = tt.direction.contains('N') || tt.direction.contains('S');
+    let ew = tt.direction.contains('E') || tt.direction.contains('W');
+    let shape = match names.len() {
+        1 => "end",
+        2 if ns && ew => "corner",
+        2 => "straight",
+        3 => "T-junction",
+        4 => "crossing",
+        _ => "",
+    };
+    let kind = if tt.material == rf_core::TtMaterial::Construction { "Constructed track" } else { "Carved track" };
+    Some(format!("{kind}: {} ({shape}).", names.join(", ")))
+}
+
+/// " (track stop)" / " (track)" / " (no track)" for a stop position.
 pub fn track_here(g: &Game, p: Pos) -> &'static str {
     let w = &g.sim.world;
     if w.buildings.iter().any(|b| b.kind == "Trap" && b.subtype == "TrackStop" && b.contains(p)) {
@@ -948,6 +968,35 @@ pub fn draw_map_overlay(g: &mut Game) {
         draw_rectangle(r.x, r.y, r.w, r.h, Color::new(0.03, 0.03, 0.04, 0.85));
         g.font.draw(msg, r.x + 6.0 * s, r.y + 4.0 * s, s, col::TEXT);
     }
+    // Track directions (while working with tracks or routes): a line from each track tile's
+    // centre to every side it connects to.
+    let track_mode = routes_visible(g)
+        || matches!(g.tool, Tool::Construct(rf_sim::ConstructionKind::Track) | Tool::Detail(rf_sim::DetailKind::CarveTrack))
+        || matches!(g.tool, Tool::Build(i) if g.build_opts.get(i).map(|o| matches!(o.kind, "Rollers") || o.subtype == "TrackStop").unwrap_or(false));
+    if track_mode {
+        let c = Color::new(0.45, 0.85, 1.0, 0.75);
+        let th = (tp / 12.0).max(1.5);
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let p = Pos::new(x, y, z);
+                let Some(t) = g.sim.world.tile(p) else { continue };
+                if t.hidden() {
+                    continue;
+                }
+                let tt = g.sim.world.tiletypes.get(t.tt);
+                if tt.special != rf_core::TtSpecial::Track {
+                    continue;
+                }
+                let m = g.cam.to_screen(x as f32 + 0.5, y as f32 + 0.5);
+                draw_circle(m.x, m.y, th, c);
+                for (ch, dx, dy) in [('N', 0.0, -0.5), ('S', 0.0, 0.5), ('E', 0.5, 0.0), ('W', -0.5, 0.0)] {
+                    if tt.direction.contains(ch) {
+                        draw_line(m.x, m.y, m.x + dx * tp, m.y + dy * tp, th, c);
+                    }
+                }
+            }
+        }
+    }
     // Carts assigned to routes: the moving ones (not lying on the ground) are drawn here,
     // all of them get a marker.
     let carts: Vec<(usize, i32)> = g.sim.world.haul_routes.iter().enumerate().flat_map(|(k, r)| r.vehicles.iter().map(move |&v| (k, v))).collect();
@@ -1037,6 +1086,15 @@ pub fn ui_arg(g: &mut Game, k: &str, v: &str) -> bool {
             }
         }
         "r12-machines" => demo_machines(g),
+        "r12-track" => demo_track(g),
+        "r12-stoptool" => {
+            // The "add stop" map tool of the first route (shows stops and track directions).
+            if let Some(r) = g.sim.world.haul_routes.first().map(|r| r.id) {
+                g.screen = Screen::None;
+                g.r10.haul_sel = Some(r);
+                g.tool = Tool::RouteStop(r);
+            }
+        }
         "r12-select" => {
             // Select the first building of a kind (`r12-select:ScrewPump`).
             if let Some(b) = g.sim.world.buildings.iter().rev().find(|b| b.kind == v || b.subtype == v) {
@@ -1087,6 +1145,44 @@ fn demo_route(g: &mut Game) {
     g.r10.haul_sel = Some(r);
 }
 
+/// A carved track loop around the camera (screenshots: the floor tiles' tiletypes are set to
+/// DF's `*FloorTrack<dirs>`, like a finished "carve track" designation).
+fn demo_track(g: &mut Game) {
+    let c = Pos::new(g.cam.x as i16, g.cam.y as i16, g.cam.z as i16);
+    let (x0, y0, x1, y1) = (c.x - 6, c.y - 1, c.x + 6, c.y + 2);
+    let on = |x: i16, y: i16| (x0..=x1).contains(&x) && (y0..=y1).contains(&y) && (x == x0 || x == x1 || y == y0 || y == y1);
+    let mut n = 0;
+    for y in y0..=y1 {
+        for x in x0..=x1 {
+            if !on(x, y) {
+                continue;
+            }
+            let p = Pos::new(x, y, c.z);
+            let mut d = String::new();
+            for (dx, dy, l) in [(0, -1, 'N'), (0, 1, 'S'), (1, 0, 'E'), (-1, 0, 'W')] {
+                if on(x + dx, y + dy) {
+                    d.push(l);
+                }
+            }
+            let w = &g.sim.world;
+            if w.tile(p).is_none() || w.tt(p).shape != rf_core::Shape::Floor {
+                continue;
+            }
+            let pre = match w.tt(p).material {
+                rf_core::TtMaterial::Construction => "Constructed",
+                rf_core::TtMaterial::Mineral => "Mineral",
+                _ => "Stone",
+            };
+            let Some(tt) = w.tiletypes.by_name(&format!("{pre}FloorTrack{d}")).or_else(|| w.tiletypes.by_name(&format!("StoneFloorTrack{d}"))) else { continue };
+            if let Some(t) = g.sim.world.tile_mut(p) {
+                t.tt = tt;
+                n += 1;
+            }
+        }
+    }
+    g.set_status(format!("{n} track tiles"));
+}
+
 /// Demo machines around the camera (screenshots): a pump, a wheel, axles, a gear, rollers on
 /// a track stop line, a ballista, a catapult and a bolt thrower, placed through the real
 /// placement API and marked built.
@@ -1110,7 +1206,22 @@ fn demo_machines(g: &mut Game) {
     let mut n = 0;
     for &(k, sub, ax, ay, bx, by, d) in plan {
         let Some(i) = find(k, sub) else { continue };
-        let (lo, hi) = (c.offset(ax, ay, 0), c.offset(bx, by, 0));
+        let (mut lo, mut hi) = (c.offset(ax, ay, 0), c.offset(bx, by, 0));
+        // The planned spot, else the nearest free one (rings around it).
+        'search: for r in 0..14i16 {
+            for dy in -r..=r {
+                for dx in -r..=r {
+                    if dx.abs() != r && dy.abs() != r {
+                        continue;
+                    }
+                    let (l2, h2) = (lo.offset(dx, dy, 0), hi.offset(dx, dy, 0));
+                    if g.sim.can_place_dir(i, l2, h2, d).is_ok() {
+                        (lo, hi) = (l2, h2);
+                        break 'search;
+                    }
+                }
+            }
+        }
         match g.sim.place_building_dir(i, lo, hi, d) {
             Ok(id) => {
                 if let Some(b) = g.sim.world.buildings.iter_mut().find(|b| b.id == id) {
