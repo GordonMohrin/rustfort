@@ -48,6 +48,8 @@
 //!   (threshold: 8 requests per tick), so the sim is effectively single-threaded today.
 
 pub mod build_api;
+pub mod defense; // [defense]
+pub use defense::{DefenseStats, MechKind}; // [defense]
 // [combat]
 pub mod combat;
 pub mod invasion;
@@ -348,6 +350,8 @@ enum Kind {
 enum Task {
     Idle,
     Wander,
+    /// [defense] Walk to lever (building id) and pull it.
+    PullLever(i32),
     GoJob(u32),
     Job(u32),
     GoDrink(i32),
@@ -525,6 +529,8 @@ pub struct Sim {
     ind: industry::Ind,
     /// [combat] Combat, military and invasions (see `combat`, `military`, `invasion`).
     combat: combat::Combat,
+    /// [defense] Doors, bridges, levers, traps (see `defense`).
+    def: defense::Defense,
 }
 
 #[inline]
@@ -622,6 +628,7 @@ impl Sim {
             store: storage::Store::default(), // [industry]
             ind: industry::Ind::default(),    // [industry]
             combat: combat::Combat::default(), // [combat]
+            def: defense::Defense::default(), // [defense]
         };
         sim.init_plants();
         sim.init_units();
@@ -633,6 +640,7 @@ impl Sim {
         sim.init_social(); // [social]
         sim.init_storage(); // [industry]
         sim.init_combat(); // [combat]
+        sim.init_defense(); // [defense]
         sim.rebuild_food_lists();
         sim.rebuild_haul();
         sim
@@ -969,6 +977,7 @@ impl Sim {
         let item_pos = |id: i32| self.item_idx.get(&id).map(|&i| self.world.items[i as usize].pos);
         let (activity, job_pos): (&str, Option<Pos>) = match (ai.kind, ai.task) {
             (Kind::Dead, _) => ("Dead", None),
+            (_, Task::PullLever(b)) => ("Pull the Lever", self.world.building(b).map(|b| b.center)), // [defense]
             (_, Task::Idle) | (_, Task::Wander) => ("No Job", None),
             (_, Task::GoJob(j)) | (_, Task::Job(j)) => {
                 let job = &self.jobs[j as usize];
@@ -1137,6 +1146,7 @@ impl Sim {
             self.social_pass(now); // [social]
         }
         self.combat_tick(now); // [combat]
+        self.defense_tick(now); // [defense]
         let t0 = Instant::now();
         for s in 0..self.ai.len() {
             if self.ai[s].wake <= now {
@@ -1449,7 +1459,7 @@ impl Sim {
                 }
             }
             let q = self.nav.idx(nx as usize, ny as usize, z);
-            if self.nav.walkable(q) {
+            if self.nav.walkable(q) || self.defense_pet_door(s, q as u32) { // [defense] pet-passable doors
                 self.move_to(s, q as u32, now);
                 return true;
             }
@@ -1460,6 +1470,9 @@ impl Sim {
     fn move_to(&mut self, s: usize, q: u32, now: u64) {
         self.stats.steps += 1;
         let p = self.world.pos_of(q as usize);
+        if self.def.trap_tile(q) {
+            self.def.pending.push((s as u32, q)); // [defense] traps and pressure plates
+        }
         let ai = &mut self.ai[s];
         ai.pos = q;
         let t = ai.speed + ai.frac;
@@ -1518,6 +1531,9 @@ impl Sim {
             // [social] Tantrum, depression, obliviousness or insanity: no work.
             self.wander(s, now, &mut r);
             return;
+        }
+        if self.defense_try_job(s, now) {
+            return; // [defense] Pull the Lever
         }
         let ai = &self.ai[s];
         let labors = ai.labors;
@@ -1591,6 +1607,7 @@ impl Sim {
     fn arrive(&mut self, s: usize, now: u64) {
         let task = self.ai[s].task;
         match task {
+            Task::PullLever(b) => self.defense_arrive_lever(s, b, now), // [defense]
             Task::Wander | Task::Idle => {
                 self.ai[s].task = Task::Idle;
                 let mut r = Rng::for_unit(self.seed, s, now, 5);
@@ -1736,6 +1753,7 @@ impl Sim {
     fn cancel_task(&mut self, s: usize) {
         let task = self.ai[s].task;
         match task {
+            Task::PullLever(b) => self.defense_cancel_lever(s, b), // [defense]
             Task::GoJob(j) | Task::Job(j) => {
                 if self.jobs[j as usize].claimed == s as u32 {
                     self.jobs[j as usize].claimed = NONE;

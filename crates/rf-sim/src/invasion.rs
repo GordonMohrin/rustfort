@@ -221,11 +221,11 @@ impl Sim {
                 }
             }
         }
-        if outside.is_empty() {
-            any
-        } else {
-            outside
+        let edges = if outside.is_empty() { any } else { outside };
+        if edges.is_empty() {
+            return self.defense_sealed_edges(); // [defense] sealed fort: they still arrive outside
         }
+        edges
     }
 
     /// Daily: season-start siege check, retreat and end of sieges, monthly military refresh.

@@ -48,39 +48,24 @@ pub struct PopulationInfo {
 
 impl Sim {
     /// Pull a lever (toggles all linked buildings: bridges, doors, floodgates, hatches).
+    /// [defense] Like DF this queues a "Pull the Lever" job: an idle citizen who can reach the
+    /// lever walks there and pulls it; linked buildings react after the mechanism delay.
+    /// `pull_lever_now` pulls it at once.
     pub fn pull_lever(&mut self, building_id: i32) {
-        if let Some(b) = self.world.buildings.iter_mut().find(|b| b.id == building_id) {
-            if let Some(i) = b.flags.iter().position(|f| f == "ACTIVE") {
-                b.flags.remove(i);
-            } else {
-                b.flags.push("ACTIVE".into());
-            }
-        }
+        self.defense_pull_lever(building_id);
     }
 
     /// Set or clear a building flag such as `LOCKED`, `FORBIDDEN`, `PET_PASSABLE` (doors, hatches).
+    /// [defense] Door/hatch locks, floodgate state and plate settings take effect immediately.
     pub fn set_building_flag(&mut self, building_id: i32, flag: &str, on: bool) {
-        if let Some(b) = self.world.buildings.iter_mut().find(|b| b.id == building_id) {
-            b.flags.retain(|f| f != flag);
-            if on {
-                b.flags.push(flag.to_string());
-            }
-        }
+        self.defense_set_flag(building_id, flag, on);
     }
 
     /// Link a lever/pressure plate to a target building (DF: needs mechanisms).
+    /// [defense] Targets: doors, hatches, floodgates, bridges, upright spikes. Instant (no
+    /// mechanic job or mechanisms needed yet).
     pub fn link_building(&mut self, trigger_id: i32, target_id: i32) -> Result<(), String> {
-        let ok = self.world.buildings.iter().any(|b| b.id == target_id);
-        if !ok {
-            return Err("no such target".into());
-        }
-        if let Some(b) = self.world.buildings.iter_mut().find(|b| b.id == trigger_id) {
-            if !b.links.contains(&target_id) {
-                b.links.push(target_id);
-            }
-            return Ok(());
-        }
-        Err("no such lever".into())
+        self.defense_link(trigger_id, target_id)
     }
 
     /// Current caravan at the depot, if any.

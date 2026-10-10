@@ -49,6 +49,11 @@ pub struct Nav {
     blocked: Vec<u64>,
     any_blocked: bool,
     pub rebuilds: u64,
+    // [defense] Building overrides (bit sets, allocated on first use): lowered bridges and
+    // hatches give a floor over open space; locked hatches block stairs/ramps through them.
+    floor_force: Vec<u64>,
+    novert: Vec<u64>,
+    any_override: bool,
 }
 
 impl Nav {
@@ -81,6 +86,9 @@ impl Nav {
             blocked,
             any_blocked: !blocked_tiles.is_empty(),
             rebuilds: 0,
+            floor_force: Vec::new(), // [defense]
+            novert: Vec::new(),      // [defense]
+            any_override: false,     // [defense]
         };
         let tiles = &world.tiles;
         let mut min_traffic = 2;
@@ -137,6 +145,42 @@ impl Nav {
         }
     }
 
+    /// [defense] Tile is blocked by a building (closed floodgate, locked door, raised bridge, ...).
+    pub fn is_blocked_tile(&self, i: usize) -> bool {
+        self.is_blocked(i)
+    }
+
+    /// [defense] A building provides a floor on tile `i` (lowered bridge, hatch cover).
+    pub fn set_floor_override(&mut self, i: usize, on: bool) {
+        Self::set_bit(&mut self.floor_force, i, on, self.flags.len());
+        self.any_override = true;
+    }
+
+    /// [defense] No vertical movement through tile `i` (locked hatch over stairs or a ramp).
+    pub fn set_novert(&mut self, i: usize, on: bool) {
+        Self::set_bit(&mut self.novert, i, on, self.flags.len());
+        self.any_override = true;
+    }
+
+    fn set_bit(v: &mut Vec<u64>, i: usize, on: bool, n: usize) {
+        if v.is_empty() {
+            if !on {
+                return;
+            }
+            *v = vec![0u64; n / 64 + 1];
+        }
+        if on {
+            v[i / 64] |= 1 << (i % 64);
+        } else {
+            v[i / 64] &= !(1 << (i % 64));
+        }
+    }
+
+    #[inline]
+    fn bit(v: &[u64], i: usize) -> bool {
+        !v.is_empty() && v[i / 64] & (1 << (i % 64)) != 0
+    }
+
     /// Movement flags of tile `i` from the tile itself and the tiles directly below/above.
     pub fn compute(&self, tiles: &[Tile], i: usize) -> u8 {
         let t = &tiles[i];
@@ -148,19 +192,21 @@ impl Nav {
         }
         let z = i / self.layer;
         let below_solid = z > 0 && self.shape(tiles[i - self.layer].tt).is_solid();
-        let stand = s.has_floor() || (s.is_open() && s != Shape::EndlessPit && below_solid);
+        let forced = self.any_override && Self::bit(&self.floor_force, i); // [defense]
+        let stand = forced || s.has_floor() || (s.is_open() && s != Shape::EndlessPit && below_solid);
         let depth = t.liquid & rf_core::liquid::DEPTH_MASK;
         let magma = t.liquid & rf_core::liquid::MAGMA != 0;
         let liquid_ok = depth < 4 && !(magma && depth > 0);
         if stand && liquid_ok && !self.is_blocked(i) {
             f |= WALK;
-            if s.allows_up() {
+            let vert = !(self.any_override && Self::bit(&self.novert, i)); // [defense] locked hatch
+            if s.allows_up() && vert {
                 f |= UP;
             }
-            if s.allows_down() {
+            if s.allows_down() && vert {
                 f |= DOWN;
             }
-            if s == Shape::Ramp && z + 1 < self.dz && !self.shape(tiles[i + self.layer].tt).is_solid() {
+            if s == Shape::Ramp && vert && z + 1 < self.dz && !self.shape(tiles[i + self.layer].tt).is_solid() {
                 f |= RAMP;
             }
         }

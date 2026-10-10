@@ -1207,6 +1207,9 @@ impl Sim {
 
     /// Wielded weapon: (item index, weapon template).
     pub(crate) fn wielded(&mut self, s: usize) -> Option<(usize, u16)> {
+        if s == self.def.trap_unit {
+            return self.def.trap_weapon; // [defense] weapon traps, falling stones, upright spikes
+        }
         let uidx = self.ai[s].uidx;
         let inv = self.world.units[uidx].inventory.clone();
         for id in inv {
@@ -2304,6 +2307,9 @@ impl Sim {
         }
         // Hostile without target: look for one.
         let invader = self.combat.f[s].siege > 0 || self.world.units[self.ai[s].uidx].invader_civ >= 0;
+        if self.defense_destroyer_think(s, now, invader) {
+            return; // [defense] building destroyers smash locked doors in their way
+        }
         if now < self.combat.f[s].dormant_until {
             self.ai[s].wake = self.combat.f[s].dormant_until;
             return;
