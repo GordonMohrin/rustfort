@@ -130,7 +130,7 @@ reported as a floor (`min_tier`). Once the exporter writes the engravings into
 | Engravings of the live fort | exported to `engravings.json` (16 246 on 10.10.2026: pos, quality, floor/wall, tile material, engraver) and loaded into `World::engravings`, so room value counts them; the DF-reported level is still a floor (`min_tier`), see the note below | in `world.event.engravings` | FIXED r7 (exporter) |
 | Dining | chair next to a table in a dining zone -> DiningQuality; else LackTables / NoDining | w:Dining room | OK |
 | Bedroom thoughts | own bedroom -> BedroomQuality; bed outside a room -> LackBedroom; floor -> SleptFloor... | w:Bedroom | OK |
-| Temples, taverns, libraries | meeting zones recognized by name | DF locations | ESTIMATE |
+| Temples, taverns, libraries | meeting zones recognized by name | DF locations | ESTIMATE (r8: DF's locations, occupations, holders and values are now exported to `World::locations`) |
 
 ## population.rs
 
@@ -212,6 +212,18 @@ reported as a floor (`min_tier`). Once the exporter writes the engravings into
    `BedroomQuality` thought our tiers are still about 2 below DF's (4/83 exact, 15/83 within one);
    read as `severity` = tier they fit (47/83 exact, 77/83 within one). Which reading is right
    decides whether `min_tier` can go.
+   **r8 (exporter):** DF 53.16 keeps no value for personal rooms: `building_civzonest` has no
+   value field, `dfhack.buildings.getRoomDescription` returns `""` for every v50 zone and piece of
+   furniture, and the zone vmethods `getPersonalValue` / `getArchValue` return 0. DF's verdict on a
+   bedroom exists only as the owner's quality thought (now also exported per zone as
+   `room_thought_severity`). With the r6 export (15 more bedrooms, year 280) the `severity = tier`
+   reading fits 7/14 exactly and 13/14 within one, `severity + 2` 1/14 and 2/14; together with r5,
+   **54/97 exact and 90/97 within one tier**. So the thought severity is the wiki tier index
+   (0 meager .. 7 royal), not tier - 2, and our room values are already in the right range; the
+   remaining spread (mostly our value one tier below DF at 250-500) fits the missing overlap and
+   enclosure rules. Locations do carry DF's value (`location_value`): Trussroads' temples range
+   990-68 369 and are named by DF's difficulty thresholds (Temple 2 000, Temple Complex 10 000;
+   guildhalls 2 000 / 10 000).
 2. Meal quality from the cook's skill; fertilizer.
 3. Miasma from rotting corpses and food.
 4. Room overlap and unenclosed penalties.
@@ -351,3 +363,21 @@ Wiki pages checked: Combat, Material science, Attack, Armor, Wound, Blood, Pain,
 - **Survival:** 88 -> 90 citizens, the same as master.
 - **Speed:** about 59.6k ticks/s, against master's 61.4k measured back to back on the same busy machine (4 agents building at once). That is within the noise.
 - **Combat cost:** the combat phase stays at about 0.11 us/tick.
+
+# Export data (round 8)
+
+What the round-8 exporter (`tools/dfhack/rustfort-export.lua`, rev `2026-10-10e`) brings into
+`World` for the round-8 simulation modules, checked against the live game with
+`rustfort-verify.lua` (docs/EXPORT_FORMAT.md "Additions for round 8").
+
+| data | status | notes |
+|---|---|---|
+| Work details (name, labors, members, mode, icon) | NEW r8, OK | `World::work_details`, `Unit::work_details`; 12/12 match the live game. DF 53 has no per-detail "no other work" flag: `no_other_work` is always false, the per-unit switch is the unit extra `only_do_assigned_jobs` |
+| Stockpile settings below category level | NEW r8, OK | `StockpileSettings::filters` with DF's full settings (`category/group/token`, `*`, `!token`), `use_links_only`, `give_to`, `take_from`; 110/110 sampled leaves and 43/43 piles' links match. `StockpileSettings::filter_allows` / `filter_option` give the semantics. ESTIMATE: the names and order of the "other material" lists follow DFHack's stockpiles plugin (lengths match DF) |
+| Kitchen exclusions | NEW r8, OK | `World::kitchen`; Trussroads: 269 "no cook", 0 "no brew" |
+| Locations, occupations, holders, values | NEW r8, OK | `World::locations` (23 on Trussroads), DF's `location_value`; tier names derived from DF's difficulty thresholds (DFHack's rule), not read from DF |
+| Justice cases | NEW r8, OK | `World::crimes` (328 at the site, 60 sentenced); running punishments via `rf_import::load_extras`. `Jail N` keeps DF's `prison_time` unit (not confirmed: months?) |
+| Animals: owner, training, pasture, slaughter, pregnancy | NEW r8, OK | `Unit::pet_owner/training/pasture/slaughter/pregnancy`; pasture from the Pen zones' `assigned_units` |
+| Milk, grazing, shearing, eggs per caste | NEW r8, OK | caste flags (`MILKABLE`, `GRAZER`, `LAYS_EGGS`, pseudo-flag `SHEARABLE`) plus `rf_import::AnimalProducts` (milk material and frequency, grazer value, shearable layers, egg materials, clutch/litter size) |
+| Hauling routes | NEW r8, synthetic only | `World::haul_routes`; Trussroads has none |
+| DF's value of personal rooms | not available | DF 53.16 keeps none (see "Known gaps" item 1); the owner's quality thought is exported instead |
