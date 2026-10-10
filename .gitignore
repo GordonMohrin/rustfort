@@ -11,3 +11,7 @@
 *.bak
 .claude/
 /saves/
+saves/
+*.rfsave
+*.rfsave.bak
+crash.log
