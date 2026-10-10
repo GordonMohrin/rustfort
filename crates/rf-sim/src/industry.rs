@@ -442,6 +442,9 @@ impl Sim {
     pub(crate) fn ind_available(&self, f: u8, r: &Recipe) -> bool {
         let c = &self.ind.census;
         let p = &self.prod.census;
+        if f >= crate::animals::F_FIRST {
+            return self.animals_available(f); // [animals]
+        }
         let fuel = !self.needs_fuel(r) || c.fuel > 0;
         fuel && match f {
             F_CHARCOAL | F_ASH | F_CRAFTS_WOOD | F_WOOD_ITEM => p.logs > 0,
@@ -549,6 +552,9 @@ impl Sim {
     pub(crate) fn ind_claim(&mut self, s: usize, r: u8, qjob: &BuildingJob, site: u32, c: u32, now: u64, wj: &mut WJob) -> bool {
         let rec = &RECIPES[r as usize];
         let crate::production::Input::Ind(f) = rec.input else { return false };
+        if f >= crate::animals::F_FIRST {
+            return self.animals_claim(s, f, site, c, now, wj); // [animals]
+        }
         let kind = if qjob.item_type.is_empty() { rec.item_type.to_string() } else { qjob.item_type.clone() };
         let subtype = if qjob.item_subtype.is_empty() { rec.item_subtype.to_string() } else { qjob.item_subtype.clone() };
         let mats = self.job_mats(&qjob.mat);
@@ -653,6 +659,10 @@ impl Sim {
     pub(crate) fn ind_finish(&mut self, s: usize, wj: &WJob, recipe: u8, now: u64) {
         let rec = &RECIPES[recipe as usize];
         let crate::production::Input::Ind(f) = rec.input else { return };
+        if f >= crate::animals::F_FIRST {
+            self.animals_finish(s, wj, f, now); // [animals]
+            return;
+        }
         let site = wj.site as usize;
         let ij = self.ind.jobs.get(s).cloned().unwrap_or_default();
         let mut r = Rng::for_unit(self.seed, s, now, 31);

@@ -82,39 +82,23 @@ impl Sim {
 
     // ---------------------------------------------------------------- animals
     pub fn animals(&self) -> Vec<AnimalInfo> {
-        self.world
-            .units
-            .iter()
-            .filter(|u| u.flags.animal && u.flags.tame && !u.flags.dead)
-            .map(|u| AnimalInfo {
-                unit: u.id,
-                race: u.race.clone(),
-                caste: u.caste.clone(),
-                training: u.training.clone(),
-                owner: u.pet_owner,
-                pasture: u.pasture,
-                slaughter: u.slaughter,
-                pregnant: u.pregnancy > 0,
-                ..Default::default()
-            })
-            .collect()
+        self.animal_infos() // [animals]
     }
 
+    /// Mark (or unmark) a tame animal for slaughter; pets cannot be slaughtered (DF).
     pub fn set_slaughter(&mut self, unit_id: i32, on: bool) {
-        if let Some(u) = self.world.units.iter_mut().find(|u| u.id == unit_id) {
-            u.slaughter = on;
-        }
+        self.animal_set_slaughter(unit_id, on); // [animals]
     }
 
     /// Assign an animal to a pasture/pen civzone (-1 = none).
     pub fn assign_pasture(&mut self, unit_id: i32, zone_id: i32) {
-        if let Some(u) = self.world.units.iter_mut().find(|u| u.id == unit_id) {
-            u.pasture = zone_id;
-        }
+        self.animal_assign_pasture(unit_id, zone_id); // [animals]
     }
 
     /// Request training (`War`, `Hunting`, `Tame`) for an animal; a trainer does it.
-    pub fn request_training(&mut self, _unit_id: i32, _kind: &str) {}
+    pub fn request_training(&mut self, unit_id: i32, kind: &str) {
+        self.animal_request_training(unit_id, kind); // [animals]
+    }
 
     // ---------------------------------------------------------------- locations
     /// Turn a civzone into a location (`Temple`, `Tavern`, `Library`, `Guildhall`, `Hospital`).
