@@ -341,6 +341,8 @@ pub(crate) struct Fighter {
     pub repath_at: u64,
     pub threat: u32,
     pub calm_since: u64,
+    /// [chaos10] The alert burrow is unreachable for this civilian until then: behave normally.
+    pub alert_skip_until: u64,
     pub equip_at: u64,
     pub train_at: u64,
     pub siege: u16,
@@ -400,6 +402,7 @@ impl Default for Fighter {
             repath_at: 0,
             threat: NONE,
             calm_since: 0,
+            alert_skip_until: 0, // [chaos10]
             equip_at: 0,
             train_at: 0,
             siege: 0,

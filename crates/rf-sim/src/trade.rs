@@ -1072,7 +1072,7 @@ impl Sim {
         let uidx = self.ai[s].uidx;
         let inv = std::mem::take(&mut self.world.units[uidx].inventory);
         for id in inv {
-            self.destroy_item(id);
+            self.destroy_with_contents(id); // [chaos10] contents leave with their container
         }
         self.world.units[uidx].flags.inactive = true;
         self.cancel_task(s);

@@ -208,8 +208,14 @@ fn spawn_worker() -> Option<Worker> {
                 while left > 0 && !gb.load(Ordering::Acquire) {
                     let n = chunk.min(left).min(u32::MAX as u64);
                     let t = Instant::now();
-                    // [app10] A panicking tick hands the sim back with the message.
+                    // [app10] A panicking tick hands the sim back with the message (the UI shows the
+                    // crash dialog); [chaos10] an automatic rescue save of the world is written first.
                     if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| sim.run_ticks(n as u32))) {
+                        let dir = crate::save::save_dir();
+                        match crate::save::save_world_tagged(&sim.world, sim.seed, &dir, "crash") {
+                            Ok(info) => eprintln!("rustfort: the simulation crashed; rescue save written to {}", info.path.display()),
+                            Err(err) => eprintln!("rustfort: the simulation crashed; rescue save failed: {err}"),
+                        }
                         panic = Some(panic_text(e.as_ref()));
                         break;
                     }

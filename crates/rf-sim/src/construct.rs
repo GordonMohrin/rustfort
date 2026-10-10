@@ -939,78 +939,91 @@ impl Sim {
             return false;
         }
         let up = self.nav.xyz(pos);
-        let no_mat = now < self.cx.no_mat_until;
-        let mut best = (i32::MAX, NONE);
-        let mut best_goals = Goals::default();
-        for j in 0..self.cx.jobs.len() {
-            let job = &self.cx.jobs[j];
-            if !job.live || job.claimed != NONE || job.blocked_until > now || labors & job.kind.labor() == 0 {
-                continue;
-            }
-            if no_mat && matches!(job.kind, CK::Build(_)) && job.item < 0 {
-                continue;
-            }
-            // [r7] Civilian alert: only work tiles inside the burrow; no refuse dumping.
-            if (job.kind == CK::Dump || self.alert_blocks(s, job.tile as usize)) && self.alert_restricted(s) {
-                continue;
-            }
-            let target = if job.kind == CK::Dump {
-                match self.item_idx.get(&job.item) {
-                    Some(&ii) if self.cx_dumpable(ii as usize) => match self.world.idx(self.world.items[ii as usize].pos) {
-                        Some(t) => t,
-                        None => continue,
-                    },
-                    _ => continue,
-                }
-            } else {
-                job.tile as usize
-            };
-            let d = manhattan(up, self.nav.xyz(target));
-            if (d, j as u32) >= best {
-                continue;
-            }
-            let g = if job.kind == CK::Dump {
-                if self.cx_dump_goals(c, self.nav.xyz(target)).n == 0 {
+        // [chaos10] A loop, not recursion: under a civilian alert every planned construction
+        // without material inside the burrow cost one stack frame (and a rescan of all jobs),
+        // so a few thousand of them overflowed the stack and crashed the game.
+        let mut tries = 0u32;
+        let (j, job, best_goals) = loop {
+            let no_mat = now < self.cx.no_mat_until;
+            let mut best = (i32::MAX, NONE);
+            let mut best_goals = Goals::default();
+            for j in 0..self.cx.jobs.len() {
+                let job = &self.cx.jobs[j];
+                if !job.live || job.claimed != NONE || job.blocked_until > now || labors & job.kind.labor() == 0 {
                     continue;
                 }
-                self.cx_item_goals(job.item, c)
-            } else {
-                self.cx_goals(job, c)
-            };
-            if g.n == 0 {
-                continue;
+                if no_mat && matches!(job.kind, CK::Build(_)) && job.item < 0 {
+                    continue;
+                }
+                // [r7] Civilian alert: only work tiles inside the burrow; no refuse dumping.
+                if (job.kind == CK::Dump || self.alert_blocks(s, job.tile as usize)) && self.alert_restricted(s) {
+                    continue;
+                }
+                let target = if job.kind == CK::Dump {
+                    match self.item_idx.get(&job.item) {
+                        Some(&ii) if self.cx_dumpable(ii as usize) => match self.world.idx(self.world.items[ii as usize].pos) {
+                            Some(t) => t,
+                            None => continue,
+                        },
+                        _ => continue,
+                    }
+                } else {
+                    job.tile as usize
+                };
+                let d = manhattan(up, self.nav.xyz(target));
+                if (d, j as u32) >= best {
+                    continue;
+                }
+                let g = if job.kind == CK::Dump {
+                    if self.cx_dump_goals(c, self.nav.xyz(target)).n == 0 {
+                        continue;
+                    }
+                    self.cx_item_goals(job.item, c)
+                } else {
+                    self.cx_goals(job, c)
+                };
+                if g.n == 0 {
+                    continue;
+                }
+                best = (d, j as u32);
+                best_goals = g;
             }
-            best = (d, j as u32);
-            best_goals = g;
-        }
-        if best.1 == NONE {
-            self.cx.seen[s] = self.cx.epoch;
-            self.cx.next[s] = now + crate::RESEARCH_TICKS + (s as u64 % 64);
-            return false;
-        }
-        let j = best.1 as usize;
-        let job = self.cx.jobs[j];
-        if let CK::Build(_) = job.kind {
-            if job.item < 0 {
-                match self.cx_find_material(job.tile, c, now) {
-                    Some(id) => {
-                        self.reserve(id);
-                        self.cx.jobs[j].item = id;
-                    }
-                    None if self.alert_restricted(s) => {
-                        // [r7] Nothing inside the burrow: skip this job for a while (only for
-                        // this search), the fort-wide "no material" pause stays untouched.
-                        self.cx.jobs[j].blocked_until = now + crate::RESEARCH_TICKS;
-                        return self.construct_try(s, now);
-                    }
-                    None => {
-                        self.cx.no_mat_until = now + rf_core::TICKS_PER_DAY as u64;
-                        self.cx.stats.no_material += 1;
-                        return self.construct_try(s, now);
+            if best.1 == NONE {
+                self.cx.seen[s] = self.cx.epoch;
+                self.cx.next[s] = now + crate::RESEARCH_TICKS + (s as u64 % 64);
+                return false;
+            }
+            let j = best.1 as usize;
+            let job = self.cx.jobs[j];
+            if let CK::Build(_) = job.kind {
+                if job.item < 0 {
+                    match self.cx_find_material(job.tile, c, now) {
+                        Some(id) => {
+                            self.reserve(id);
+                            self.cx.jobs[j].item = id;
+                        }
+                        None if self.alert_restricted(s) => {
+                            // [r7] Nothing inside the burrow: skip this job for a while (only for
+                            // this search), the fort-wide "no material" pause stays untouched.
+                            self.cx.jobs[j].blocked_until = now + crate::RESEARCH_TICKS;
+                            tries += 1;
+                            if tries >= 64 {
+                                self.cx.seen[s] = self.cx.epoch;
+                                self.cx.next[s] = now + crate::RESEARCH_TICKS + (s as u64 % 64);
+                                return false;
+                            }
+                            continue;
+                        }
+                        None => {
+                            self.cx.no_mat_until = now + rf_core::TICKS_PER_DAY as u64;
+                            self.cx.stats.no_material += 1;
+                            continue;
+                        }
                     }
                 }
             }
-        }
+            break (j, job, best_goals);
+        };
         if job.kind == CK::Dump {
             self.reserve(job.item);
         }

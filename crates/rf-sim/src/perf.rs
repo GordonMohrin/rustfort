@@ -158,12 +158,30 @@ impl Sim {
         self.items_dirty = false;
         let n = self.world.items.len();
         let Some(first) = (0..n).find(|&r| self.imeta[r].dead) else { return };
+        let mut gone: Vec<i32> = Vec::new(); // [chaos10]
         for r in first..n {
             if self.imeta[r].dead {
                 let id = self.world.items[r].id;
                 // Only forget the id if it still points here (the newest item with an id wins).
                 if self.item_idx.get(&id) == Some(&(r as u32)) {
                     self.item_idx.remove(&id);
+                    gone.push(id);
+                }
+            }
+        }
+        // [chaos10] Buildings (planted seeds, consumed trap ammo) and units (eaten food) must
+        // not keep the ids of items that no longer exist: the UI and saves would carry them.
+        if !gone.is_empty() {
+            gone.sort_unstable();
+            let dead = |id: &i32| gone.binary_search(id).is_ok();
+            for b in &mut self.world.buildings {
+                if b.items.iter().any(dead) {
+                    b.items.retain(|id| !dead(id));
+                }
+            }
+            for u in &mut self.world.units {
+                if u.inventory.iter().any(dead) {
+                    u.inventory.retain(|id| !dead(id));
                 }
             }
         }

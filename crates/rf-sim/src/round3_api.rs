@@ -78,11 +78,32 @@ impl Sim {
 
     /// Put a unit into a squad position (or remove it with `unit_id = -1`).
     pub fn assign_squad_member(&mut self, squad_id: i32, position: usize, unit_id: i32) {
+        // [chaos10] an unknown unit (stale UI selection) or squad changes nothing; a unit sits
+        // in one squad position only, and the unit it replaces leaves the squad (as in DF)
+        if (unit_id >= 0 && self.world.unit(unit_id).is_none()) || !self.world.squads.iter().any(|s| s.id == squad_id) || position > 64 {
+            return;
+        }
+        if unit_id >= 0 {
+            for s in self.world.squads.iter_mut() {
+                for (k, m) in s.members.iter_mut().enumerate() {
+                    if *m == unit_id && (s.id != squad_id || k != position) {
+                        *m = -1;
+                    }
+                }
+            }
+        }
         if let Some(s) = self.world.squads.iter_mut().find(|s| s.id == squad_id) {
             if s.members.len() <= position {
                 s.members.resize(position + 1, -1);
             }
+            let prev = s.members[position];
             s.members[position] = unit_id;
+            if prev >= 0 && prev != unit_id {
+                if let Some(u) = self.world.units.iter_mut().find(|u| u.id == prev && u.squad_id == squad_id) {
+                    u.squad_id = -1;
+                    u.squad_position = -1;
+                }
+            }
         }
         if let Some(u) = self.world.units.iter_mut().find(|u| u.id == unit_id) {
             u.squad_id = squad_id;

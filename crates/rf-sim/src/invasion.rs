@@ -392,6 +392,12 @@ impl Sim {
         let uidx = self.ai[s].uidx;
         let inv = std::mem::take(&mut self.world.units[uidx].inventory);
         for id in inv {
+            // [chaos10] the quiver's arrows (any container's contents) leave with it
+            if let Some(inner) = self.contents.get(&id).cloned() {
+                for c in inner {
+                    self.destroy_item(c);
+                }
+            }
             self.destroy_item(id);
         }
         self.world.units[uidx].flags.inactive = true;
