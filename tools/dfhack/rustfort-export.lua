@@ -23,6 +23,7 @@
 --        plants.jsonl creatures.json + (round 2) work_orders.jsonl plant_raws.json burrows.json squads.json
 --        + (round 3) creature_raws.json weapon_raws.json armor_raws.json
 --        + (round 4) entities.json nobles.json settings.json hist_figs.json caravans.json diplomats.json
+--        + (round 5) engravings.json
 
 local VERSION = 1
 -- round 2 (2026-10-10a): work orders, workshop jobs, crops, plant raws, mods, gaits
@@ -31,7 +32,8 @@ local VERSION = 1
 --                        corpse creature tokens, heavy aquifer tile flag
 -- round 4 (2026-10-10c): building flags/links/direction + trap contents, entities, nobles + mandates, settings,
 --                        hist fig names, caravans, diplomats
-local SCRIPT_REV = '2026-10-10c'
+-- round 5 (2026-10-10d): engravings.json (world.event.engravings)
+local SCRIPT_REV = '2026-10-10d'
 
 -- ------------------------------------------------------------------------------------------- args
 local args = { ... }
@@ -1468,6 +1470,92 @@ local function export_buildings()
   counts.buildings = n
 end
 
+-- ------------------------------------------------------------------------------------------- engravings
+-- round 5: engravings.json = rf_core::Engraving for every entry of world.event.engravings (DF 53.16:
+-- the v50 home of the engraving list). pos is the engraved tile (the wall tile itself for wall
+-- engravings; the side flags say which faces show it), floor = engraving_flags.floor, quality 0..5,
+-- mat = palette index of the tile's material (same rules as map/zNNN.bin, added to the palette),
+-- engraver = unit id of the artist's historical figure (-1 if dead or off the map), skill = skill_rating.
+local export_engravings
+do
+  local vcache = {}   -- block key -> vein map
+  local cpos          -- df.coord owned by this script (construction lookup)
+  local function tile_mat(x, y, z)
+    local blk = dfhack.maps.getTileBlock(x, y, z)
+    if not blk then return 0xFFFF end
+    local lx, ly = x & 15, y & 15
+    local tt = blk.tiletype[lx][ly]
+    local d = blk.designation[lx][ly].whole
+    local cls = TT_MAT[tt]
+    if cls == C_STONE or cls == C_SOIL or cls == C_POOL or cls == C_BROOK or cls == C_RIVER then
+      return try(layer_mat, x, y, z, (d >> 10) & 15) or 0xFFFF
+    elseif cls == C_MINERAL then
+      local key = (z * 4096 + (y >> 4)) * 4096 + (x >> 4)
+      local veins = vcache[key]
+      if not veins then veins = vein_map(blk); vcache[key] = veins end
+      return veins[lx * 16 + ly] or try(layer_mat, x, y, z, (d >> 10) & 15) or 0xFFFF
+    elseif cls == C_CONS then
+      cpos.x, cpos.y, cpos.z = x, y, z
+      local con = df.construction.find(cpos)
+      return con and palidx(con.mat_type, con.mat_index) or 0xFFFF
+    elseif cls == C_FEATURE then
+      return feature_mat(blk, d)
+    elseif cls == C_LAVA or cls == C_MAGMA then
+      return palfind('INORGANIC:OBSIDIAN')
+    end
+    return 0xFFFF
+  end
+  local HF_UNIT = {}
+  local function engraver(hfid)
+    if hfid == nil or hfid < 0 then return -1 end
+    local u = HF_UNIT[hfid]
+    if u == nil then u = (try(hf_unit, hfid)) or -1; HF_UNIT[hfid] = u end
+    return u
+  end
+  function export_engravings()
+    phase = 'engravings'
+    cpos = df.coord:new()
+    local out, seen = {}, {}
+    local n_floor, n_wall, n_nomat, n_unit = 0, 0, 0, 0
+    local i = 0
+    while true do
+      local list = df.global.world.event.engravings   -- re-fetched after every yield
+      if i >= #list then break end
+      local g = list[i]
+      local ok, s = pcall(function()
+        local x, y, z = g.pos.x, g.pos.y, g.pos.z
+        local key = (z * 4096 + y) * 4096 + x
+        if seen[key] then return nil end   -- the vector shifted between frames
+        seen[key] = true
+        local fl = g.flags.floor and true or false
+        local mat = tile_mat(x, y, z)
+        local uid = engraver(g.artist)
+        local qv = math.max(0, math.min(5, g.quality or 0))
+        if fl then n_floor = n_floor + 1 else n_wall = n_wall + 1 end
+        if mat == 0xFFFF then n_nomat = n_nomat + 1 end
+        if uid >= 0 then n_unit = n_unit + 1 end
+        local sides = {}
+        for _, k in ipairs({ 'north', 'south', 'east', 'west', 'northwest', 'northeast', 'southwest', 'southeast' }) do
+          if flag(g.flags, k) then sides[#sides + 1] = ja(k) end
+        end
+        return jobj({ 'pos', jpos(x, y, z), 'quality', ji(qv), 'floor', jb(fl), 'mat', ji(mat),
+                      'engraver', ji(uid), 'skill', ji(g.skill_rating or 0),
+                      -- extras (not in rf_core::Engraving)
+                      'artist_hf', ji(g.artist or -1), 'sides', jarr(sides), 'hidden', jb(flag(g.flags, 'hidden')),
+                      'art_id', ji(g.art_id or -1), 'art_subid', ji(g.art_subid or -1),
+                      'masterpiece_event', ji(g.masterpiece_event or -1) })
+      end)
+      if not ok then warn('engraving', s) elseif s then out[#out + 1] = s end
+      i = i + 1
+      if i % 32 == 0 then phase_detail = i .. '/' .. #list; checkpoint() end
+    end
+    write_file(OUT .. '/engravings.json', '[\n' .. table.concat(out, ',\n') .. '\n]\n')
+    counts.engravings = #out
+    note(('round 5 engravings: %d (%d floor, %d wall), %d without resolvable material, %d engravers still on the map; pos = engraved tile (walls: the wall tile, sides = visible faces)')
+         :format(#out, n_floor, n_wall, n_nomat, n_unit))
+  end
+end
+
 -- ------------------------------------------------------------------------------------------- work orders
 local function cond_json(c)
   local it = c.item_type
@@ -2439,6 +2527,7 @@ local function main()
   export_units()
   export_items()
   export_buildings()
+  export_engravings()      -- round 5: after the map, before the materials (adds tile materials to the palette)
   export_work_orders()
   export_plant_raws()      -- before the materials: adds the plants' STRUCTURAL/DRINK/SEED materials to the palette
   export_burrows_squads()
@@ -2492,7 +2581,8 @@ local function finish()
                        'work_orders', 'plant_raws', 'building_jobs', 'farm_plots', 'burrows', 'squads',
                        'burrow_tiles', 'creature_raws', 'weapon_raws', 'armor_raws', 'unit_needs', 'unit_emotions',
                        'unit_values', 'unit_relationships', 'unit_wounds', 'entities', 'nobles', 'mandates', 'hist_figs',
-                       'caravans', 'diplomats', 'building_links', 'levers', 'locked_doors', 'traps', 'trade_depots' }) do
+                       'caravans', 'diplomats', 'building_links', 'levers', 'locked_doors', 'traps', 'trade_depots',
+                       'engravings' }) do
     cnt[#cnt + 1] = k
     cnt[#cnt + 1] = ji(counts[k] or 0)
   end

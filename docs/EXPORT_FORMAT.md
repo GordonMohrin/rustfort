@@ -37,6 +37,7 @@ export/<fort>/
   hist_figs.json     rf_core::HistFigName array: every referenced historical figure (round 4, optional)
   caravans.json      rf_core::Caravan array: merchant caravans (round 4, optional)
   diplomats.json     diplomats / outpost liaisons (round 4, optional; rf_import::load_extras)
+  engravings.json    rf_core::Engraving array: DF's existing engravings (round 5, optional)
   progress.json      exporter status, rewritten about once per second (not imported)
   error.json         only if the export aborted (not imported)
   export.lock        only while an export is running
@@ -607,3 +608,26 @@ At the first probe of 10.10.2026 a dwarven caravan (civ 29) was `Leaving` with 5
 ### manifest.json: round-4 keys
 
 New `counts`: `entities`, `nobles`, `mandates`, `hist_figs`, `caravans`, `diplomats`, `building_links` (lever/plate → target links), `levers`, `locked_doors`, `traps`, `trade_depots`. The importer compares all of them except `diplomats` with what it loaded. New phases in `max_slice_by_phase`: `history` (the merchant-event scan, 1 000 events per check), `entities`, `nobles`, `settings`, `trade`, `hist_figs`.
+
+## Additions for round 5 (still format v1)
+
+Exporter revision `2026-10-10d`. The only new file is `engravings.json`; the importer loads it when present into `World::engravings`, so room values count DF's existing engravings.
+
+### engravings.json
+
+One `rf_core::Engraving` per entry of `world.event.engravings` (the DF v50 home of the engraving list; DF 53.16 had 16 246 in Trussroads on 10.10.2026):
+
+| field | source |
+|---|---|
+| `pos` | `engraving.pos`: the engraved tile. Wall engravings sit on the wall tile itself. |
+| `quality` | `engraving.quality` clamped to 0..5 (ordinary .. masterful) |
+| `floor` | `engraving_flags.floor`: true for floors, false for walls |
+| `mat` | palette index of the engraved tile's material, by the same rules as `map/zNNN.bin` (layer stone, vein mineral, construction, feature); added to the palette if missing |
+| `engraver` | unit id of `engraving.artist` (a historical figure) when that unit is alive and on the map, else -1 |
+| `skill` | `engraving.skill_rating` |
+
+Extras (ignored by the importer): `artist_hf` (historical figure id), `sides` (which faces of a wall show the engraving: `north`, `south`, `east`, `west`, `northwest`, ...), `hidden`, `art_id`, `art_subid`, `masterpiece_event`.
+
+The importer drops engravings outside the map and a second engraving on the same tile, clamps `quality` to 5, and replaces an unknown or out-of-range `mat` with the material of the tile. Each repair is a warning in `ImportReport::warnings`.
+
+New `counts` key: `engravings` (compared with what was loaded). New phase in `max_slice_by_phase`: `engravings` (the budget is checked every 32 entries).

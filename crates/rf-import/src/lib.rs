@@ -12,10 +12,11 @@
 //! `burrows.json` into `World::squads` / `World::burrows`; the round-2 layout of the last two
 //! loads as well) and round 4 (`entities.json`, `nobles.json`, `settings.json`, `hist_figs.json`,
 //! `caravans.json` into `World::entities` / `nobles` / `settings` / `hist_figs` / `caravans`;
-//! building flags, mechanism links and directions come with `buildings.jsonl`).
+//! building flags, mechanism links and directions come with `buildings.jsonl`) and round 5
+//! (`engravings.json` into `World::engravings`).
 
 use rf_core::{
-    tile_flags, ArmorRaw, Building, Burrow, Calendar, Caravan, CreatureRaw, Dims, EntityInfo, GameSettings, HistFigName, Item,
+    tile_flags, ArmorRaw, Building, Burrow, Calendar, Caravan, CreatureRaw, Dims, Engraving, EntityInfo, GameSettings, HistFigName, Item,
     MaterialInfo, Meta, NoblePosition, Plant, Pos, Shape, Squad, Tile, TiletypeInfo, TiletypeTable, TtMaterial, TtSpecial, Unit,
     WeaponRaw, World, NO_MAT,
 };
@@ -78,6 +79,8 @@ pub struct ImportReport {
     pub settings: bool,
     /// Mechanism links from levers/pressure plates to the buildings they operate.
     pub building_links: usize,
+    /// Round-5 data: DF's existing engravings (`engravings.json`; 0 when the export predates it).
+    pub engravings: usize,
     pub warnings: Vec<String>,
     pub seconds: f64,
 }
@@ -717,6 +720,8 @@ pub fn load_export(dir: &Path) -> Result<(World, ImportReport), ImportError> {
         if has_settings { optional(dir, "settings.json", "settings", &mut w) } else { default_settings() };
     let hist_figs: Vec<HistFigName> = optional(dir, "hist_figs.json", "hist_figs", &mut w);
     let caravans: Vec<Caravan> = optional(dir, "caravans.json", "caravans", &mut w);
+    // Round-5 file (optional): DF's existing engravings.
+    let engravings: Vec<Engraving> = optional(dir, "engravings.json", "engravings", &mut w);
 
     let mut world = World {
         meta: Meta {
@@ -760,6 +765,7 @@ pub fn load_export(dir: &Path) -> Result<(World, ImportReport), ImportError> {
         settings,
         hist_figs,
         caravans,
+        engravings,
         // keeps this compiling when other rounds add World fields
         ..Default::default()
     };
@@ -787,6 +793,7 @@ pub fn load_export(dir: &Path) -> Result<(World, ImportReport), ImportError> {
         caravans: world.caravans.len(),
         settings: has_settings,
         building_links: trigger_links(&world),
+        engravings: world.engravings.len(),
         warnings: {
             let mut list = w.finish();
             for n in &manifest.notes {
@@ -931,6 +938,8 @@ fn validate(world: &mut World, m: &Manifest, w: &mut Warnings) {
     }
     // Round-4 data: mechanism links, noble holders that are not on the map.
     repair_links(world, w);
+    // Round-5 data: engravings.
+    repair_engravings(world, w);
     let unit_ids: std::collections::HashSet<i32> = world.units.iter().map(|u| u.id).collect();
     let gone = world.nobles.iter().filter(|n| n.holder >= 0 && !unit_ids.contains(&n.holder)).count();
     if gone > 0 {
@@ -969,6 +978,7 @@ fn validate(world: &mut World, m: &Manifest, w: &mut Warnings) {
         ("hist_figs", world.hist_figs.len()),
         ("caravans", world.caravans.len()),
         ("building_links", trigger_links(world)),
+        ("engravings", world.engravings.len()),
         ("levers", world.buildings.iter().filter(|b| b.kind == "Trap" && b.subtype == "Lever").count()),
         ("traps", world.buildings.iter().filter(|b| b.kind == "Trap").count()),
         ("locked_doors", world.buildings.iter().filter(|b| b.flags.iter().any(|f| f == "LOCKED")).count()),
@@ -979,6 +989,53 @@ fn validate(world: &mut World, m: &Manifest, w: &mut Warnings) {
                 w.add("counts", format!("{key}: manifest says {want}, imported {got}"));
             }
         }
+    }
+}
+
+/// Round-5 `engravings.json` repairs: engravings off the map are dropped, a second engraving
+/// on the same tile is dropped (DF keeps one per tile; the simulation indexes them by tile),
+/// quality is clamped to 0..5 and an unknown or out-of-range material falls back to the
+/// material of the engraved tile.
+fn repair_engravings(world: &mut World, w: &mut Warnings) {
+    if world.engravings.is_empty() {
+        return;
+    }
+    let n_mat = world.materials.len();
+    let mut seen = std::collections::HashSet::new();
+    let (mut off, mut dup, mut qual, mut mat) = (0usize, 0usize, 0usize, 0usize);
+    let mut list = std::mem::take(&mut world.engravings);
+    list.retain_mut(|e| {
+        let Some(i) = world.idx(e.pos) else {
+            off += 1;
+            return false;
+        };
+        if !seen.insert(i) {
+            dup += 1;
+            return false;
+        }
+        if e.quality > 5 {
+            e.quality = 5;
+            qual += 1;
+        }
+        if e.mat == NO_MAT || e.mat as usize >= n_mat {
+            let t = world.tiles[i].mat;
+            e.mat = if (t as usize) < n_mat { t } else { NO_MAT };
+            mat += 1;
+        }
+        true
+    });
+    world.engravings = list;
+    if off > 0 {
+        w.add("engravings", format!("{off} engravings outside the map dropped"));
+    }
+    if dup > 0 {
+        w.add("engravings", format!("{dup} engravings on an already engraved tile dropped"));
+    }
+    if qual > 0 {
+        w.add("engravings", format!("{qual} engravings with quality above 5 (masterful) clamped"));
+    }
+    if mat > 0 {
+        w.add("engravings", format!("{mat} engravings without a valid material use the tile's material"));
     }
 }
 
@@ -1026,6 +1083,8 @@ pub fn write_export(world: &World, dir: &Path) -> Result<(), ImportError> {
     write_json("settings.json", to_json(&world.settings))?;
     write_json("hist_figs.json", to_json(&world.hist_figs))?;
     write_json("caravans.json", to_json(&world.caravans))?;
+    // Round-5 file (optional for the importer; always written here).
+    write_json("engravings.json", to_json(&world.engravings))?;
     let plane = world.dims.x as usize * world.dims.y as usize;
     for z in 0..world.dims.z as usize {
         let mut buf = Vec::with_capacity(plane * TILE_RECORD_BYTES);
@@ -1072,6 +1131,7 @@ pub fn write_export(world: &World, dir: &Path) -> Result<(), ImportError> {
         ("hist_figs", world.hist_figs.len()),
         ("caravans", world.caravans.len()),
         ("building_links", trigger_links(world)),
+        ("engravings", world.engravings.len()),
     ] {
         counts.insert(k.to_string(), v as i64);
     }
@@ -1836,6 +1896,60 @@ mod tests {
         assert_eq!(x.diplomats.len(), 1);
         assert_eq!(x.mandates.len(), 1);
         assert_eq!((x.mandates[0].noble, x.mandates[0].position.as_str(), x.mandates[0].mode.as_str()), (13937, "MAYOR", "Make"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn round5_engravings_load_from_the_export() {
+        let mut w = World::synthetic(16, 16, 6);
+        // the engraved floor tile (3,4,2) is granite (palette 0), the wall (5,4,2) magnetite (2)
+        let fi = w.idx(Pos::new(3, 4, 2)).unwrap();
+        w.tiles[fi].mat = 0;
+        let wi = w.idx(Pos::new(5, 4, 2)).unwrap();
+        w.tiles[wi].mat = 2;
+        let dir = temp_dir("round5engr");
+        write_export(&w, &dir).unwrap();
+        // the DFHack exporter's layout, with its extra fields
+        std::fs::write(
+            dir.join("engravings.json"),
+            r#"[
+{"pos":{"x":3,"y":4,"z":2},"quality":4,"floor":true,"mat":0,"engraver":7,"skill":12,"artist_hf":3886,"sides":[],"hidden":false,"art_id":28,"art_subid":165,"masterpiece_event":-1},
+{"pos":{"x":5,"y":4,"z":2},"quality":9,"floor":false,"mat":65535,"engraver":-1,"skill":0,"artist_hf":3915,"sides":["east"],"hidden":false,"art_id":1,"art_subid":2,"masterpiece_event":-1},
+{"pos":{"x":5,"y":4,"z":2},"quality":1,"floor":false,"mat":0,"engraver":-1,"skill":0},
+{"pos":{"x":3,"y":40,"z":2},"quality":1,"floor":true,"mat":0,"engraver":-1,"skill":0}
+]"#,
+        )
+        .unwrap();
+        let (got, rep) = load_export(&dir).unwrap();
+        assert_eq!(rep.engravings, 2);
+        assert_eq!(got.engravings.len(), 2);
+        let f = &got.engravings[0];
+        assert_eq!((f.pos, f.quality, f.floor, f.mat, f.engraver, f.skill), (Pos::new(3, 4, 2), 4, true, 0, 7, 12));
+        let wl = &got.engravings[1];
+        // quality clamped to masterful, missing material taken from the engraved wall tile
+        assert_eq!((wl.pos, wl.quality, wl.floor, wl.mat, wl.engraver), (Pos::new(5, 4, 2), 5, false, 2, -1));
+        for frag in ["1 engravings outside the map", "1 engravings on an already engraved tile", "clamped", "tile's material"] {
+            assert!(rep.warnings.iter().any(|x| x.contains(frag)), "{frag}: {:?}", rep.warnings);
+        }
+        // round trip through write_export keeps them
+        let dir2 = temp_dir("round5engr2");
+        write_export(&got, &dir2).unwrap();
+        let (again, rep2) = load_export(&dir2).unwrap();
+        assert_eq!(again.engravings.len(), 2);
+        assert!(!rep2.warnings.iter().any(|x| x.contains("engravings")), "{:?}", rep2.warnings);
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&dir2);
+    }
+
+    #[test]
+    fn export_without_engravings_file_loads_none() {
+        let w = World::synthetic(16, 16, 6);
+        let dir = temp_dir("noengr");
+        write_export(&w, &dir).unwrap();
+        std::fs::remove_file(dir.join("engravings.json")).unwrap();
+        let (got, rep) = load_export(&dir).unwrap();
+        assert!(got.engravings.is_empty());
+        assert_eq!(rep.engravings, 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

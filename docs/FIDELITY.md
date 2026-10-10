@@ -127,7 +127,7 @@ reported as a floor (`min_tier`). Once the exporter writes the engravings into
 | Room value | furniture + floors (rough 1x, smooth 4x, constructed 7x material value) + bordering walls (1x / 5x / 9x) + engravings (10 x material value x 1/2/3/4/5/12) | w:Room, w:Engraving | FIXED |
 | Overlapping rooms | no penalty | -75 % for each room sharing floor (w:Room) | MISSING |
 | Unenclosed rooms | no penalty | partial penalty on tile value (w:Room) | MISSING |
-| Engravings of the live fort | not exported (16 233 in DF); the DF-reported room level is used as a floor | in `world.event.engravings` | MISSING (exporter) |
+| Engravings of the live fort | exported to `engravings.json` (16 246 on 10.10.2026: pos, quality, floor/wall, tile material, engraver) and loaded into `World::engravings`, so room value counts them; the DF-reported level is still a floor (`min_tier`), see the note below | in `world.event.engravings` | FIXED r7 (exporter) |
 | Dining | chair next to a table in a dining zone -> DiningQuality; else LackTables / NoDining | w:Dining room | OK |
 | Bedroom thoughts | own bedroom -> BedroomQuality; bed outside a room -> LackBedroom; floor -> SleptFloor... | w:Bedroom | OK |
 | Temples, taverns, libraries | meeting zones recognized by name | DF locations | ESTIMATE |
@@ -207,8 +207,11 @@ reported as a floor (`min_tier`). Once the exporter writes the engravings into
 
 ## Known gaps worth doing next (economy & society)
 
-1. Export `world.event.engravings` (16 233 in Gordon's fort) so room values match DF without
-   the `min_tier` floor.
+1. ~~Export `world.event.engravings`~~ FIXED r7: exported and counted. Bedrooms now score
+   269-1 586 and the dining hall 2 826 (were 119-503). Under the `severity + 2` reading of DF's
+   `BedroomQuality` thought our tiers are still about 2 below DF's (4/83 exact, 15/83 within one);
+   read as `severity` = tier they fit (47/83 exact, 77/83 within one). Which reading is right
+   decides whether `min_tier` can go.
 2. Meal quality from the cook's skill; fertilizer.
 3. Miasma from rotting corpses and food.
 4. Room overlap and unenclosed penalties.
