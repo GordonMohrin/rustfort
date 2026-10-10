@@ -1644,6 +1644,9 @@ impl Sim {
         if self.defense_try_job(s, now) { // [military2] levers inside the alert burrow too
             return; // [defense] Pull the Lever
         }
+        if restricted && self.alert_burial(s, now) {
+            return; // [military2] burial inside the alert burrow
+        }
         if !restricted && self.society_decide(s, now) {
             return; // [society] burial, depot hauling, broker
         }

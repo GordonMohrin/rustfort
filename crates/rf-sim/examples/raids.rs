@@ -43,7 +43,8 @@ fn main() {
     sim.run_ticks(10);
     let citizens0 = sim.world.citizens().count();
     let t0 = Instant::now();
-    let arrived = sim.force_raid(kind, n, monsters);
+    let none = get("--kind").as_deref() == Some("none");
+    let arrived = if none { 0 } else { sim.force_raid(kind, n, monsters) };
     println!("forced {kind:?}: {arrived} creatures arrived (hidden: {})", sim.world.units.iter().filter(|u| sim.unit_hidden(u.id)).count());
     let mut done = 0u64;
     let mut calm_since: Option<u64> = None;
@@ -85,7 +86,7 @@ fn main() {
                 }
             }
         }
-        if sim.raids().is_empty() {
+        if sim.raids().is_empty() && !none {
             break;
         }
     }

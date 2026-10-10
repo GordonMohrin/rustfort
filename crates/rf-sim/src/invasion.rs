@@ -112,9 +112,10 @@ impl Sim {
         self.combat.inv.enabled
     }
 
-    /// True while invaders are on the map.
+    /// True while invaders are on the map ([r8] that have been seen: hidden ambushers, thieves
+    /// and snatchers do not count until they are spotted).
     pub fn siege_active(&self) -> bool {
-        !self.combat.inv.sieges.is_empty()
+        self.combat.inv.sieges.iter().any(|g| g.revealed) // [military2]
     }
 
     /// Debug/UI: start a goblin siege right now (size from the fort's invasion tier, at least

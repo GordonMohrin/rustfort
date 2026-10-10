@@ -249,6 +249,43 @@ impl Sim {
         best.map(|b| (b.3, b.1, b.2))
     }
 
+    /// [military2] Burial under the alert: a corpse and a coffin both inside the burrow (the
+    /// same claim as `society_decide`, with the burrow filter).
+    pub(crate) fn alert_burial(&mut self, s: usize, now: u64) -> bool {
+        if self.pop.bury.is_empty() || self.ai[s].labors & crate::labor::HAUL_BODY == 0 {
+            return false;
+        }
+        let c = self.nav.comp_near(self.ai[s].pos as usize);
+        if c == 0 {
+            return false;
+        }
+        for k in 0..self.pop.bury.len() {
+            let j = &self.pop.bury[k];
+            if j.claimed != NONE {
+                continue;
+            }
+            let (cid, tile) = (j.corpse, j.tile);
+            let Some(&ii) = self.item_idx.get(&cid) else { continue };
+            let ii = ii as usize;
+            let m = &self.imeta[ii];
+            if m.dead || m.hauling || m.reserved > 0 || m.blocked_until > now {
+                continue;
+            }
+            let Some(ct) = self.world.idx(self.world.items[ii].pos) else { continue };
+            if self.alert_blocks(s, ct) || self.alert_blocks(s, tile as usize) || self.nav.comp_near(ct) != c || self.nav.comp_near(tile as usize) != c {
+                continue;
+            }
+            self.set_hauling(cid, true);
+            self.haul_remove(cid);
+            self.pop.bury[k].claimed = s as u32;
+            self.ai[s].task = Task::GoPickup(cid, tile);
+            let g = self.item_goals(cid);
+            self.request_path(s, g, now);
+            return true;
+        }
+        false
+    }
+
     /// [r7] Idle civilians under the alert mill about inside the burrow instead of wandering.
     pub(crate) fn alert_mill(&mut self, s: usize, now: u64) -> bool {
         if !self.alert_restricted(s) || !self.in_alert(self.ai[s].pos as usize) {
