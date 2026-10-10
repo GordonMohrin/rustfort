@@ -55,6 +55,8 @@ pub struct R10Ui {
     // ---- crash guard
     pub crash: Option<Crash>,
     pub snap: Option<Snap>,
+    /// Test hook (`--ui crash:ui`): panic once in the next interface frame.
+    pub test_panic: bool,
 }
 
 // ====================================================================== tasks
@@ -80,8 +82,10 @@ pub enum TaskRef {
     Detail,
     /// Planned construction (wall, floor, ...).
     Construction,
-    /// Other construction-type job (deconstruction, dumping): no cancel API.
+    /// Other construction-type job (deconstruction): no cancel API.
     ConstructionOther,
+    /// Carry an item marked for dumping to the garbage dump (cancel = unmark the item).
+    Dump,
     /// A building waiting to be built.
     Unbuilt(i32),
     /// Workshop queue entry `k` of building `bid`.
@@ -134,7 +138,7 @@ fn construction_ref(caption: &str) -> (TaskCat, TaskRef) {
     } else if caption.starts_with("Construct ") {
         (TaskCat::Building, TaskRef::Construction)
     } else if caption.contains("Dump") {
-        (TaskCat::Hauling, TaskRef::ConstructionOther)
+        (TaskCat::Hauling, TaskRef::Dump)
     } else {
         (TaskCat::Building, TaskRef::ConstructionOther)
     }
@@ -337,22 +341,23 @@ pub fn draw_tasks(g: &mut Game) {
         let by = y + 1.0 * s;
         let bh = row_h - 4.0 * s;
         let mut bx = xs[3];
+        // Suspend and "do now" exist for workshop jobs (DF's job list has them there).
         let shop = matches!(t.what, TaskRef::Shop { .. });
-        let sst = if !shop { BtnState::Disabled } else if t.suspended { BtnState::Active } else { BtnState::Normal };
-        if text_button(&mut g.ui, &g.font, Rect::new(bx, by, bw, bh), if t.suspended { "Resume" } else { "Suspend" }, sst) {
-            act = TaskAct::Suspend(i);
+        if shop {
+            let sst = if t.suspended { BtnState::Active } else { BtnState::Normal };
+            if text_button(&mut g.ui, &g.font, Rect::new(bx, by, bw, bh), if t.suspended { "Resume" } else { "Suspend" }, sst) {
+                act = TaskAct::Suspend(i);
+            }
+            let first = matches!(t.what, TaskRef::Shop { k: 0, .. });
+            let dst = if !first && !t.suspended { BtnState::Normal } else { BtnState::Disabled };
+            if text_button(&mut g.ui, &g.font, Rect::new(bx + bw + 4.0 * s, by, bw, bh), "Do now", dst) {
+                act = TaskAct::DoNow(i);
+            }
+            if g.ui.hovered(Rect::new(bx + bw + 4.0 * s, by, bw, bh)) {
+                g.ui.tooltip = Some(("Move this job to the front of the workshop queue".into(), vec2(bx, by - 4.0)));
+            }
         }
-        bx += bw + 4.0 * s;
-        let first = matches!(t.what, TaskRef::Shop { k: 0, .. });
-        let dst = if shop && !first && !t.suspended { BtnState::Normal } else { BtnState::Disabled };
-        if text_button(&mut g.ui, &g.font, Rect::new(bx, by, bw, bh), "Do now", dst) {
-            act = TaskAct::DoNow(i);
-        }
-        if g.ui.hovered(Rect::new(bx, by, bw, bh)) {
-            let tip = if shop { "Move this job to the front of the workshop queue" } else { "Only workshop jobs can be moved forward (Rustfort has no job priorities yet)" };
-            g.ui.tooltip = Some((tip.into(), vec2(bx, by - 4.0)));
-        }
-        bx += bw + 4.0 * s;
+        bx += 2.0 * (bw + 4.0 * s);
         let can_cancel = !matches!(t.what, TaskRef::Unit | TaskRef::ConstructionOther);
         if text_button(&mut g.ui, &g.font, Rect::new(bx, by, bw, bh), "Cancel", if can_cancel { BtnState::Normal } else { BtnState::Disabled }) {
             act = TaskAct::Cancel(i);
@@ -362,6 +367,7 @@ pub fn draw_tasks(g: &mut Game) {
                 TaskRef::Unit => "A creature's own activity cannot be cancelled here",
                 TaskRef::ConstructionOther => "No cancel for this job yet",
                 TaskRef::Unbuilt(_) => "Cancel: remove the planned building",
+                TaskRef::Dump => "Cancel: the items here are no longer marked for dumping",
                 _ => "Cancel this job (the designation is removed)",
             };
             g.ui.tooltip = Some((tip.into(), vec2(bx, by - 4.0)));
@@ -433,6 +439,12 @@ pub fn cancel_task(g: &mut Game, t: &TaskRow) {
             g.sim.build_construction(ConstructionKind::Remove, p, p);
         }
         TaskRef::Unbuilt(bid) => g.sim.remove_building(*bid),
+        TaskRef::Dump => {
+            let ids: Vec<i32> = g.sim.world.items.iter().filter(|it| it.pos == p && it.flags.dump).map(|it| it.id).collect();
+            for id in ids {
+                g.sim.set_item_flag(id, "dump", false);
+            }
+        }
         TaskRef::Shop { bid, k } => {
             if let Some(b) = g.sim.world.buildings.iter_mut().find(|b| b.id == *bid) {
                 if *k < b.jobs.len() {
@@ -1078,9 +1090,6 @@ pub fn update(g: &mut Game) {
     if due {
         take_snapshot(g);
     }
-    if g.screen == Screen::Tasks && g.sim.ticks() != 0 && now - g.r10.tasks_at > 0.5 {
-        g.r10.tasks_dirty = true;
-    }
 }
 
 fn on_crash(g: &mut Game, origin: &'static str, msg: String) {
@@ -1261,6 +1270,9 @@ pub fn hides_sheet(g: &Game) -> bool {
 
 /// Draw the round-10 screens and overlays (from `overlay::draw_ui`).
 pub fn draw_screens(g: &mut Game) {
+    if std::mem::take(&mut g.r10.test_panic) {
+        panic!("test panic in the interface (--ui crash:ui)");
+    }
     match g.screen {
         Screen::Tasks => draw_tasks(g),
         Screen::Hauling => draw_hauling(g),
@@ -1305,10 +1317,11 @@ pub fn ui_arg(g: &mut Game, k: &str, v: &str) -> bool {
             }
         }
         "ctx" => {
-            // Context menu at the mouse tile (or the camera center).
-            let p = g.tile_at(g.mouse()).unwrap_or(Pos::new(g.cam.x as i16, g.cam.y as i16, g.cam.z as i16));
+            // Context menu for the tile at the camera center (a scripted `rclick` tests the
+            // real path).
+            let p = Pos::new(g.cam.x as i16, g.cam.y as i16, g.cam.z as i16);
             let items = context_items(g, p);
-            g.r10.ctx = Some(Ctx { pos: p, at: g.mouse(), items });
+            g.r10.ctx = Some(Ctx { pos: p, at: vec2(screen_width() / 2.0, screen_height() / 2.0), items });
         }
         "bpath" => {
             // Build menu at a chain position: `bpath:Workshops/Farming`.
@@ -1355,12 +1368,21 @@ pub fn ui_arg(g: &mut Game, k: &str, v: &str) -> bool {
                 g.cam.y = g.cam.ty;
             }
         }
-        "crash" => {
-            // Simulate a caught panic (`crash:ui` = interface, else simulation).
-            let origin = if v == "ui" { "interface" } else { "simulation" };
-            take_snapshot(g);
-            on_crash(g, origin, "test crash requested with --ui crash".into());
-        }
+        "crash" => match v {
+            // Real panics through the real paths: `crash:sim` breaks the world behind the sim's
+            // back so the next tick panics on the worker; `crash:ui` panics in the interface.
+            "sim" => {
+                take_snapshot(g);
+                g.sim.world.units.clear();
+                g.paused = false;
+            }
+            "ui" => g.r10.test_panic = true,
+            // Only the dialog (no panic).
+            _ => {
+                take_snapshot(g);
+                on_crash(g, "simulation", "test crash requested with --ui crash".into());
+            }
+        },
         _ => return false,
     }
     true

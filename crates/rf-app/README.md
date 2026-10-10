@@ -402,6 +402,56 @@ position to jump there.
   are edible raw or cooked according to the save's plant raws; rotten and dumped items do not
   count.
 
+### Round 10: tasks, hauling, build keys, context menu, look lines, crash guard
+
+- **Tasks** (DF `D_JOBLIST`, `t` in Gordon's prefs; the toolbar's Tasks button): every current
+  job with its worker and place, in tabs All / Designations / Building / Workshops / Hauling /
+  Medical / Military / Personal / Other with counts, plus "Only without worker". Sources:
+  `Sim::jobs()` (dig, chop, gather), `Sim::construction_jobs()` (constructions, smoothing,
+  engraving, dumping), unbuilt buildings, workshop queues (`Building::jobs`; the worker is the
+  citizen whose job target is in the workshop) and `Sim::unit_status` for everything else
+  (hauling, medical care, soldiers, eating/drinking/sleeping). Clicking a row closes the screen,
+  centers on the place and selects the worker (or the building/tile). Workshop jobs have
+  Suspend/Resume and "Do now" (moves the job to the front of the queue); designations,
+  smoothing/engraving, planned constructions, planned buildings, workshop jobs and dump marks
+  can be cancelled. Deconstructions and a creature's own activities cannot (no sim API yet).
+  The list is rebuilt twice a second while the screen is open.
+- **Hauling** (`D_HAULING`, Shift+h): the hauling routes of the import (`World::haul_routes`)
+  with their stops (position with "Go"), departure conditions and linked stockpiles.
+  Read-only: Rustfort does not simulate minecarts, and Gordon's fort has no routes.
+- **Build hotkey chains** from `interface.txt`: `b`, then the category key
+  (`HOTKEY_BUILDING_WORKSHOP` o, `_FURNITURE` f, `_CONSTRUCTION` n, `_FARMPLOT` p, `_WELL`
+  Shift+l), then the building. Workshops have DF's sub-groups: `HOTKEY_BUILDING_FURNACE` (u),
+  `_FARMING` (f: farmer, quern, millstone, still, kitchen, fishery, butcher) and
+  `_WORKSHOPS_CLOTHING_LEATHER` (l: leather works, loom, clothier, dyer, tanner). So `b o t` is
+  the mason's workshop, `b o f l` the still, `b o u l` the smelter, `b n l` a wall. A key bar
+  under the top bar shows where the chain is and what each key does; menu buttons carry their
+  key ("Still (l)"). Esc goes back one level (first from placing to the list), a clicked tab
+  moves the chain there. Chair and door share `r` in DF: pressing it again cycles. Designations
+  were already DF's chains (`m` then `m`/`u`/`t`/`r`/`x`, `v` then smooth/engrave ...).
+- **Map context menu**: right-click with no tool active opens a menu for the tile under the
+  mouse: select each creature, open each building or zone, cancel the dig designation, the
+  smoothing/engraving designation or a planned construction, look at the tile. Esc, a second
+  right-click or a click elsewhere closes it. A tile with nothing on it deselects as before.
+- **Look lines** (tile sheet): "A rough floor of rock salt, never smoothed." / "A smoothed wall
+  of granite." / "A constructed wall of ...", and for engraved tiles "The floor is engraved with
+  a superior image of the fortress. *", the engraver with skill level and the value. DF does not
+  export the picture's subject, so the subject is a generic stand-in (the sheet says so). The
+  hover box adds "Masterful engraving ☼". Items are grouped in the sheet and the hover box
+  ("6 x +iron bucket+"); a group's F/D toggles act on all its items.
+- **Crash guard** (`crash.rs`, `simthread.rs`, `ui/round10.rs`): every panic is written with
+  thread, place and backtrace to `saves/crash.log`. A panic in a sim tick (worker thread or
+  inline) is caught: the worker hands the sim back with the message and stops ticking. A panic
+  in the frame's input/drawing code is caught in `game::run`. Either way the crash dialog
+  replaces the window's content: error, place, the last good state, and **Save last good
+  state** (`saves/<fort>-crash-<time>.rfsave`), **Save it and continue from there** (saves,
+  then loads it), **Save current state (may be broken)** (sim panics) or **Save now** / **Try
+  to continue** (interface panics), **Return to title**, **Quit**. The last good state is an
+  in-memory copy of the world taken when the game starts and then every 60 s of real time while
+  the sim runs (a clone, about 60-270 ms on the real fort).
+- **Title screen > Settings > Announcements...**: the same announcement table as in the game
+  (round 9), saved in `saves/settings.json`.
+
 ## Saving
 
 Saves are the whole `rf_core::World` as bincode, zstd-compressed (level 3, multithreaded), in
@@ -483,6 +533,14 @@ rustfort play --screenshot target/shots/a.png --frames 20 --view 48,48,22,1 \
   40 days until it petitions), `fake-raid[:thief|snatcher|ambush|abducted|death|mood]` (a sim-like
   line through the announcement path), `force-raid[:siege|ambush|thief|snatcher]`
   (`Sim::force_raid`) and `fake-fights` (two made-up fights).
+- Round 10: `tasks[:tab]`, `hauling`, `bpath:<Workshops/Farming|Workshops/Furnaces|Furniture|...>`
+  (build menu at a hotkey-chain level), `ctx` (context menu of the camera's tile), `engraved`
+  (select an engraved tile of quality superior or better), `items-tile` (the tile with the most
+  items on the level), and the test hooks `fake-route` (a 2-stop route between the first two
+  stockpiles), `crash` (the crash dialog alone), `crash:sim` (a real panic on the sim thread:
+  the units are removed behind the sim's back) and `crash:ui` (a real panic in the interface).
+  `--menu-page announcements` opens the title screen's announcement page. Example:
+  `--script "4:key b; 6:key o; 8:key f; 10:key l"` ends with the still being placed.
 - Round 6: `--menu` shows the title screen even with `--screenshot` (the script can click on,
   and the frame count continues into the game); `--menu-page load|exports|import|settings`
   opens a page; `--menu-page import:go` starts the import as soon as DF answers (end-to-end
@@ -516,6 +574,9 @@ screenshots under `target/`, never in git.
 - `save.rs`: save games (bincode + zstd), save list, `savebench`; (round 6) tagged autosaves and
   their rotation.
 - `ui/help.rs` (round 6): controls overview and first-time hints.
+- Round 10: `ui/round10.rs` (Tasks and Hauling screens, build hotkey tree `BUILD_KEYS` and the
+  key bar, map context menu, look lines and item groups, crash snapshot and dialog, title-screen
+  announcement page) and `crash.rs` (panic hook, `saves/crash.log`).
 - Round 9: `ui/round9.rs` (announcement types and settings, box queue, raid boxes, petitions,
   squad equipment/ammo/patrol/barracks tabs, patrol tool and route overlay, combat reports per
   fight, DF skill names and experience bars).

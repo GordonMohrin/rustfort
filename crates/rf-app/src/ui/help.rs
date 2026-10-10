@@ -70,6 +70,8 @@ pub const SECTIONS: &[(&str, &[HelpRow])] = &[
             r("Squads", &["D_SQUADS"]),
             r("Nobles", &["D_NOBLES"]),
             r("Reports", &["D_ANNOUNCE"]),
+            r("Tasks", &["D_JOBLIST"]),    // [app10]
+            r("Hauling", &["D_HAULING"]), // [app10]
         ],
     ),
     (
@@ -98,6 +100,7 @@ pub fn mouse_rows(b: &Bindings) -> Vec<(String, String)> {
         ("Designate / place".into(), "Drag, or click+click".into()),
         ("3D box".into(), "Change z in between".into()),
         ("Back out".into(), "Right click".into()),
+        ("Tile actions (no tool)".into(), "Right click".into()), // [app10] context menu
         ("Pan".into(), "Middle drag".into()),
         ("Level up / down".into(), wheel_pair(&wheel("CURSOR_UP_Z"), &wheel("CURSOR_DOWN_Z"))),
         ("10 levels".into(), wheel_pair(&wheel("CURSOR_UP_Z_FAST"), &wheel("CURSOR_DOWN_Z_FAST"))),
