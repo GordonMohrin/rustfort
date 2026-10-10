@@ -173,6 +173,7 @@ impl Sim {
             members.push(s as u32);
         }
         let _ = first;
+        self.ranged_arm_siege(&members); // [ranged] bowmen
         self.combat.inv.sieges.push(Siege { members: members.clone(), start: now, fleeing: false, race: race.into() });
         self.combat.stats.sieges += 1;
         self.combat.stats.invaders_spawned += members.len() as u64;

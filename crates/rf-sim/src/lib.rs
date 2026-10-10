@@ -55,6 +55,8 @@ pub mod combat;
 pub mod invasion;
 pub mod military;
 pub use combat::CombatStats;
+mod ranged; // [ranged]
+pub use ranged::RangedStats; // [ranged]
 pub mod round3_api;
 pub mod round4_api;
 pub use round4_api::{PopulationInfo, TradeOffer, TradeStatus};
@@ -545,6 +547,8 @@ pub struct Sim {
     trade: trade::Trade,
     /// [defense] Doors, bridges, levers, traps (see `defense`).
     def: defense::Defense,
+    /// [ranged] Launchers, ammo, shooters, archery targets (see `ranged`).
+    ranged: ranged::Ranged,
 }
 
 #[inline]
@@ -646,6 +650,7 @@ impl Sim {
             pop: population::Pop::default(), // [society]
             trade: trade::Trade::default(), // [society]
             def: defense::Defense::default(), // [defense]
+            ranged: ranged::Ranged::default(), // [ranged]
         };
         sim.init_plants();
         sim.init_units();
