@@ -140,7 +140,8 @@ impl Sim {
     /// Units currently hostile to the fort (invaders, wild predators, monsters).
     pub fn hostiles(&self) -> Vec<i32> {
         // [combat] caged and off-map units are no threat
-        self.world.units.iter().filter(|u| u.flags.hostile && !u.flags.dead && !u.flags.caged && !u.flags.inactive).map(|u| u.id).collect()
+        // [military2] hidden (not yet spotted) ambushers, thieves and snatchers are not shown
+        self.world.units.iter().filter(|u| u.flags.hostile && !u.flags.dead && !u.flags.caged && !u.flags.inactive && !self.unit_hidden(u.id)).map(|u| u.id).collect()
     }
 
     /// Recent combat report lines (DF "Reports" screen), newest last.

@@ -156,6 +156,30 @@ pub struct Squad {
     pub uniform: Vec<String>,
     /// Name of the active alert/schedule routine, e.g. `Active/Training`, `Inactive`.
     pub schedule: String,
+    /// [military2] Barracks civzone building ids assigned to the squad (DF `squad.rooms`;
+    /// exported as `barracks`).
+    pub barracks: Vec<i32>,
+    /// [military2] Patrol route waypoints (DF patrol routes; followed with a `Patrol` order).
+    pub patrol: Vec<Pos>,
+    /// [military2] Per-position uniform override (same entry format as `uniform`); an empty
+    /// list (or a missing position) uses the squad's `uniform`.
+    pub position_uniforms: Vec<Vec<String>>,
+    /// [military2] Squad ammunition settings (DF squad ammo screen).
+    pub ammo: Vec<SquadAmmo>,
+}
+
+/// [military2] One ammunition entry of a squad (DF `squad_ammo_spec`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SquadAmmo {
+    /// `SUBTYPE[@material]`, e.g. `ITEM_AMMO_BOLTS@INORGANIC:IRON`, `ITEM_AMMO_BOLTS@WOOD`
+    /// (a class: `WOOD`, `BONE`, `METAL`) or just `ITEM_AMMO_BOLTS`.
+    pub item: String,
+    /// Total rounds for the squad (DF amount).
+    pub amount: i32,
+    /// Use in combat / for training (DF flags `use_combat`, `use_training`).
+    pub combat: bool,
+    pub training: bool,
 }
 
 /// A burrow (DF `burrow`).

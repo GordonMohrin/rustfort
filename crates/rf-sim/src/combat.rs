@@ -359,6 +359,23 @@ pub(crate) struct Fighter {
     pub listed_wound: bool,
     /// [audit-combat] Helpless from a syndrome (paralysis, unconsciousness, webs) until.
     pub syn_until: u64,
+    /// [military2] Sneaking raider not spotted yet (ambushers, thieves, snatchers).
+    pub hidden: bool,
+    /// [military2] Raid kind code (`raids::RaidKind::code`), 0 = none.
+    pub raid: u8,
+    /// [military2] Thieves: item id going for / item id stolen (-1 none).
+    pub want: i32,
+    pub loot: i32,
+    /// [military2] Slot of the unit this one carries (snatched child, rescued patient).
+    pub carry: u32,
+    /// [military2] Slot of the unit carrying this one.
+    pub carried_by: u32,
+    /// [military2] Patrol: index of the next waypoint.
+    pub patrol_i: u16,
+    /// [military2] Training spot inside the barracks (tile), NONE = none.
+    pub spot: u32,
+    /// [military2] Cannot stand (broken leg): crawls at a fraction of the walking speed.
+    pub crawl: bool,
 }
 
 impl Default for Fighter {
@@ -390,6 +407,15 @@ impl Default for Fighter {
             listed_bleed: false,
             listed_wound: false,
             syn_until: 0,
+            hidden: false,
+            raid: 0,
+            want: -1,
+            loot: -1,
+            carry: NONE,
+            carried_by: NONE,
+            patrol_i: 0,
+            spot: NONE,
+            crawl: false,
         }
     }
 }
@@ -422,6 +448,30 @@ pub struct CombatStats {
     pub traps_jammed: u64,
     /// [audit-combat] Syndromes (venom, breath) that took hold.
     pub syndromes: u64,
+    /// [military2] Ambushes, thieves and snatchers that arrived; raids spotted.
+    pub ambushes: u64,
+    pub thieves: u64,
+    pub snatchers: u64,
+    pub raids_spotted: u64,
+    /// [military2] Items grabbed by thieves / carried off the map.
+    pub items_stolen: u64,
+    pub items_lost: u64,
+    /// [military2] Children carried off the map by snatchers.
+    pub children_abducted: u64,
+    /// [military2] Siege monsters (trolls, beak dogs), sieges that camped, leaders killed.
+    pub monsters_spawned: u64,
+    pub siege_camps: u64,
+    pub leaders_killed: u64,
+    /// [military2] Patients carried to a bed (Recover wounded); units that had to crawl.
+    pub rescues: u64,
+    pub crawlers: u64,
+    /// [military2] Barracks: sparring bouts, sparring injuries, demonstrations watched,
+    /// nights slept in barracks beds, patrol waypoints reached.
+    pub sparring: u64,
+    pub sparring_injuries: u64,
+    pub demonstrations: u64,
+    pub barracks_sleeps: u64,
+    pub patrol_points: u64,
 }
 
 /// Combat, military and invasion state of the simulation.
@@ -444,6 +494,8 @@ pub(crate) struct Combat {
     pub inv: crate::invasion::Invasions,
     /// Hospital zones (x1, y1, x2, y2, z).
     pub hospitals: Vec<(i16, i16, i16, i16, i16)>,
+    /// [military2] Units carrying another unit right now (cheap check in `move_to`).
+    pub carriers: u32,
 }
 
 impl Default for Combat {
@@ -464,6 +516,7 @@ impl Default for Combat {
             mil: Default::default(),
             inv: crate::invasion::Invasions::new(),
             hospitals: Vec::new(),
+            carriers: 0,
         }
     }
 }
@@ -1172,6 +1225,9 @@ impl Sim {
             self.rebuild_fort_list();
         }
         if now % 10 == 0 {
+            if !self.combat.inv.hidden.is_empty() {
+                self.raid_detect(now); // [military2] spotting hidden raiders
+            }
             if !self.combat.hostiles.is_empty() {
                 self.threat_scan(now);
             }
@@ -1318,6 +1374,9 @@ impl Sim {
 
     /// One attack of slot `a` on slot `d` (adjacent). Returns true if `d` died.
     pub(crate) fn attack(&mut self, a: usize, d: usize, now: u64) -> bool {
+        if self.combat.f[a].hidden {
+            self.raid_reveal(a, now); // [military2] an ambusher strikes: revealed
+        }
         self.ensure_body(a);
         self.ensure_body(d);
         self.combat.stats.attacks += 1;
@@ -1935,6 +1994,10 @@ impl Sim {
         }
         let was = self.combat.f[s].uncon_until;
         self.combat.f[s].uncon_until = was.max(until);
+        if self.combat.f[s].carry != NONE {
+            let now = self.ticks;
+            self.carry_unlink(s, now); // [military2] a carrier that passes out drops its load
+        }
         if was <= self.ticks {
             self.combat.stats.unconscious += 1;
             let n = self.uname(s);
@@ -2000,6 +2063,7 @@ impl Sim {
             return;
         }
         let name = self.uname(s);
+        self.carry_unlink(s, now); // [military2] drop a carried unit / let go of the carrier
         self.drop_gear(s);
         self.release_rest(s);
         let fort = self.ai[s].kind == Kind::Worker;
@@ -2176,6 +2240,7 @@ impl Sim {
                 }
             }
             self.sync_wounds(s);
+            self.health_gait(s); // [military2] crawl while unable to stand
             if done {
                 self.combat.f[s].listed_wound = false;
             } else {
@@ -2236,6 +2301,10 @@ impl Sim {
             return;
         }
         let f = &self.combat.f[s];
+        if f.carried_by != NONE {
+            self.ai[s].wake = u64::MAX; // [military2] being carried: the carrier moves us
+            return;
+        }
         if f.uncon_until > now {
             self.ai[s].wake = f.uncon_until;
             return;
@@ -2361,6 +2430,9 @@ impl Sim {
 
     /// Hostiles and retaliating creatures.
     fn fighter_think(&mut self, s: usize, now: u64) {
+        if self.combat.f[s].raid != 0 && self.raid_think(s, now) {
+            return; // [military2] siege camps, thieves, snatchers
+        }
         if !self.caverns.powers.is_empty() && self.syndrome_breath(s, now) {
             return; // [audit-combat] forgotten beast breath and webs
         }
@@ -2406,8 +2478,8 @@ impl Sim {
             // [defense] Helpless hostiles (paralyzed or knocked out, e.g. by a trap) are still
             // finished off by soldiers on duty; civilians ignore them.
             let helpless = !self.can_fight(h, now);
-            if self.ai[h].kind == Kind::Dead || self.combat.f[h].role == Role::Leave {
-                continue;
+            if self.ai[h].kind == Kind::Dead || self.combat.f[h].role == Role::Leave && self.combat.f[h].raid < 3 || self.combat.f[h].hidden {
+                continue; // [military2] hidden raiders are unseen; fleeing thieves are chased
             }
             // [audit-combat] A lurking (dormant) hostile is still seen by soldiers on duty (wiki
             // Military: they "will attack any hostiles they encounter"); checked every 100 ticks
@@ -2497,6 +2569,15 @@ impl Sim {
                 self.ai[s].wake = now + 200;
             }
             Sub::Rest(b) => {
+                if self.cannot_stand(s) && self.rescue_available(s) {
+                    // [military2] Cannot walk: lie down and wait to be carried (Recover wounded).
+                    self.release_rest(s);
+                    self.combat.f[s].sub = Sub::Resting(-1);
+                    self.ai[s].path.clear();
+                    self.ai[s].path_i = 0;
+                    self.ai[s].wake = now + 200;
+                    return;
+                }
                 if self.ai[s].path_i < self.ai[s].path.len() {
                     self.step(s, now);
                 } else {
@@ -2512,6 +2593,12 @@ impl Sim {
                 }
             }
             _ => {
+                if self.cannot_stand(s) && self.rescue_available(s) {
+                    // [military2] Wait on the floor for a dwarf with Recover wounded.
+                    self.combat.f[s].sub = Sub::Resting(-1);
+                    self.ai[s].wake = now + 200;
+                    return;
+                }
                 // Hospital beds first, then the own bed, then any free bed (wiki Health care).
                 let pos = self.ai[s].pos as usize;
                 let c = self.nav.comp_near(pos);
@@ -2576,6 +2663,7 @@ impl Sim {
                 (Some(_), _) => ("Fight", tpos),
                 (None, crate::military::Duty::Train) => ("Train", None),
                 (None, crate::military::Duty::Station(t)) => ("Station", Some(self.world.pos_of(t as usize))),
+                (None, crate::military::Duty::Patrol) => ("Patrol", None), // [military2]
                 (None, _) => ("Soldier", None),
             },
             Role::Civilian => (if f.threat != NONE { "Flee" } else { "Go to Burrow" }, None),

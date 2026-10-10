@@ -18,35 +18,56 @@
 //! - They retreat when half of them are dead or after two months, walking back to their
 //!   map edge and leaving the map.
 //!
+//! - [r8] Season starts now go through `raids.rs`: a quarter of the invasions are sieges (with a
+//!   camp, monsters from the City tier and a leader), the rest hidden ambushes; thieves and
+//!   snatchers visit too. A siege also retreats when its leader dies.
+//!
 //! # Estimates
 //! - Chance per season start once the threshold is met: 1 in 3. [r7] Created wealth is the
 //!   current value of the fort's items (DF counts the value of everything the fort made);
-//!   exported wealth is the value of the goods sold to caravans in this session. Siege
-//!   monsters (trolls, beak dogs) are not spawned yet. Equipment shares (copper 45 %, bronze 25 %, iron 30 %; mail shirt 70 %,
+//!   exported wealth is the value of the goods sold to caravans in this session. [r8] Siege
+//!   monsters (trolls, beak dogs) are spawned by `raids.rs`. Equipment shares (copper 45 %, bronze 25 %, iron 30 %; mail shirt 70 %,
 //!   helm 60 %, leggings 40 %); invader skills 2-7 in the weapon, attributes 750-1250.
 
 use crate::combat::Role;
 use crate::path::Goals;
-use crate::rng::Rng;
 use crate::{AnnouncementKind, Kind, Sim, NONE};
-use rf_core::{tile_flags, Pos, Skill, Unit, UnitFlags, TICKS_PER_MONTH};
+use rf_core::{tile_flags, Pos, TICKS_PER_MONTH};
 
+/// A raid group on the map (siege, ambush, thief or snatcher; see `raids.rs`).
 pub(crate) struct Siege {
     pub members: Vec<u32>,
     pub start: u64,
     pub fleeing: bool,
     pub race: String,
+    /// [military2] Stable id (`Fighter::siege`).
+    pub id: u16,
+    pub kind: crate::raids::RaidKind,
+    /// [military2] Camp tile (arrival point) and the tick the siegers charge.
+    pub camp: u32,
+    pub charge_at: u64,
+    pub charged: bool,
+    /// [military2] Slot of the leader (best weapon skill), `NONE` if none.
+    pub leader: u32,
+    /// [military2] Spotted (hidden raids start unrevealed).
+    pub revealed: bool,
 }
 
 pub(crate) struct Invasions {
     pub enabled: bool,
     pub sieges: Vec<Siege>,
     pub last_season: i32,
+    /// [military2] Last raid id handed out.
+    pub next_id: u16,
+    /// [military2] Slots of hidden raiders, ascending.
+    pub hidden: Vec<u32>,
+    /// [military2] Scheduled visits (tick, kind): thieves and snatchers.
+    pub pending: Vec<(u64, crate::raids::RaidKind)>,
 }
 
 impl Invasions {
     pub fn new() -> Self {
-        Invasions { enabled: true, sieges: Vec::new(), last_season: -1 }
+        Invasions { enabled: true, sieges: Vec::new(), last_season: -1, next_id: 0, hidden: Vec::new(), pending: Vec::new() }
     }
 }
 
@@ -73,7 +94,7 @@ pub fn siege_force(pop: usize, created: i64, exported: i64) -> Option<(usize, us
     (t >= 3).then(|| SIEGE_FORCE[t - 1])
 }
 
-const GOBLIN_WEAPONS: &[(&str, &str)] = &[
+pub(crate) const GOBLIN_WEAPONS: &[(&str, &str)] = &[
     ("ITEM_WEAPON_SPEAR", "spearman"),
     ("ITEM_WEAPON_SWORD_SHORT", "swordsman"),
     ("ITEM_WEAPON_MACE", "maceman"),
@@ -91,9 +112,10 @@ impl Sim {
         self.combat.inv.enabled
     }
 
-    /// True while invaders are on the map.
+    /// True while invaders are on the map ([r8] that have been seen: hidden ambushers, thieves
+    /// and snatchers do not count until they are spotted).
     pub fn siege_active(&self) -> bool {
-        !self.combat.inv.sieges.is_empty()
+        self.combat.inv.sieges.iter().any(|g| g.revealed) // [military2]
     }
 
     /// Debug/UI: start a goblin siege right now (size from the fort's invasion tier, at least
@@ -120,117 +142,21 @@ impl Sim {
         siege_force(pop, self.created_wealth(), self.exported_wealth()).map(|f| f.0)
     }
 
-    /// Spawn `n` invaders of `race` at a map edge connected to the fort.
+    /// Spawn `n` invaders of `race` at a map edge connected to the fort. They charge at once
+    /// (natural sieges camp first, see `raids.rs`).
+    /// No camp and no leader rule (the round-3 behavior, kept for tests and debugging).
     pub fn spawn_siege(&mut self, race: &str, n: usize) -> usize {
-        let now = self.ticks;
-        self.combat_sync_units();
-        let tiles = self.edge_tiles();
-        if tiles.is_empty() || n == 0 {
-            self.announce(now, "The invaders could not find a way to the fortress.".into(), None, AnnouncementKind::Warning);
-            return 0;
-        }
-        let mut r = Rng::for_unit(self.seed, 0, now, 0x5E1E);
-        let start = tiles[r.below(tiles.len() as u32) as usize];
-        let sp = self.nav.xyz(start as usize);
-        let mut near = tiles.clone();
-        near.sort_by_key(|&t| (crate::manhattan(sp, self.nav.xyz(t as usize)), t));
-        let raw = self.world.creature_raws.iter().find(|c| c.token == race);
-        let (body_size, walk) = raw
-            .and_then(|c| c.castes.first())
-            .map(|c| (if c.body_size > 0 { c.body_size } else { 60_000 }, if c.walk_speed > 0 { c.walk_speed } else { 900 }))
-            .unwrap_or((60_000, 900));
-        let civ = self.world.units.iter().filter(|u| u.flags.hostile && u.invader_civ >= 0).map(|u| u.invader_civ).next().unwrap_or(9_999);
-        let mut next_id = self.world.units.iter().map(|u| u.id).max().unwrap_or(0) + 1;
-        let first = self.world.units.len();
-        let mut kit = Vec::new();
-        for k in 0..n {
-            let tile = near[k % near.len()];
-            let p = self.world.pos_of(tile as usize);
-            let (wtok, prof) = GOBLIN_WEAPONS[r.below(GOBLIN_WEAPONS.len() as u32) as usize];
-            let metal = match r.below(100) {
-                0..=44 => "INORGANIC:COPPER",
-                45..=69 => "INORGANIC:BRONZE",
-                _ => "INORGANIC:IRON",
-            };
-            let skill = match wtok {
-                "ITEM_WEAPON_SPEAR" => "SPEAR",
-                "ITEM_WEAPON_SWORD_SHORT" => "SWORD",
-                "ITEM_WEAPON_MACE" => "MACE",
-                "ITEM_WEAPON_AXE_BATTLE" => "AXE",
-                _ => "WHIP",
-            };
-            let attr = |r: &mut Rng| 750 + r.below(501) as i32;
-            let unit = Unit {
-                id: next_id,
-                race: race.into(),
-                caste: if r.chance(1, 2) { "MALE".into() } else { "FEMALE".into() },
-                name: String::new(),
-                profession: prof.to_ascii_uppercase(),
-                custom_profession: prof.into(),
-                pos: p,
-                flags: UnitFlags { hostile: true, ..Default::default() },
-                civ_id: civ,
-                hist_fig_id: -1,
-                sex: r.below(2) as i8,
-                age: 20.0 + r.below(30) as f32,
-                skills: vec![
-                    Skill { id: skill.into(), rating: 2 + r.below(6) as i32, xp: 0 },
-                    Skill { id: "DODGING".into(), rating: 1 + r.below(4) as i32, xp: 0 },
-                    Skill { id: "ARMOR".into(), rating: 1 + r.below(4) as i32, xp: 0 },
-                    Skill { id: "MELEE_COMBAT".into(), rating: 1 + r.below(4) as i32, xp: 0 },
-                ],
-                phys_attrs: vec![("STRENGTH".into(), attr(&mut r)), ("AGILITY".into(), attr(&mut r)), ("TOUGHNESS".into(), attr(&mut r))],
-                ment_attrs: vec![("WILLPOWER".into(), attr(&mut r))],
-                squad_id: -1,
-                squad_position: -1,
-                body_size,
-                walk_speed: walk,
-                invader_civ: civ,
-                ..Default::default()
-            };
-            let mail = r.chance(70, 100);
-            let helm = r.chance(60, 100);
-            let legs = r.chance(40, 100);
-            kit.push((next_id, wtok, metal, mail, helm, legs, tile));
-            self.world.units.push(unit);
-            next_id += 1;
-        }
-        self.init_units();
-        self.combat_sync_units();
-        let sid = self.combat.inv.sieges.len() as u16 + 1;
-        let mut members = Vec::new();
-        for (uid, wtok, metal, mail, helm, legs, tile) in kit {
-            self.give_item(uid, "WEAPON", wtok, metal, 0);
-            if mail {
-                self.give_item(uid, "ARMOR", "ITEM_ARMOR_MAIL_SHIRT", metal, 0);
+        let k = self.spawn_raid(crate::raids::RaidKind::Siege, race, n, 0, 0); // [military2]
+        if k > 0 {
+            if let Some(g) = self.combat.inv.sieges.last_mut() {
+                g.leader = NONE;
             }
-            if helm {
-                self.give_item(uid, "HELM", "ITEM_HELM_HELM", metal, 0);
-            }
-            if legs {
-                self.give_item(uid, "PANTS", "ITEM_PANTS_LEGGINGS", metal, 0);
-            }
-            let s = self.unit_slot[&uid];
-            let f = &mut self.combat.f[s];
-            f.siege = sid;
-            f.home = tile;
-            f.role = Role::Hostile;
-            members.push(s as u32);
         }
-        let _ = first;
-        self.ranged_arm_siege(&members); // [ranged] bowmen
-        self.combat.inv.sieges.push(Siege { members: members.clone(), start: now, fleeing: false, race: race.into() });
-        self.combat.stats.sieges += 1;
-        self.combat.stats.invaders_spawned += members.len() as u64;
-        self.rebuild_fort_list();
-        let p = self.world.pos_of(start as usize);
-        self.announce(now, "A vile force of darkness has arrived!".into(), Some(p), AnnouncementKind::Warning);
-        self.combat.log_line(format!("A vile force of darkness has arrived! ({} {}s)", members.len(), race.to_ascii_lowercase()));
-        members.len()
+        k
     }
 
     /// Walkable map-edge tiles in the walk component with the most citizens (outside first).
-    fn edge_tiles(&self) -> Vec<u32> {
+    pub(crate) fn edge_tiles(&self) -> Vec<u32> {
         let mut counts: Vec<(u32, u32)> = Vec::new();
         for ai in &self.ai {
             if ai.kind != Kind::Worker {
@@ -274,41 +200,68 @@ impl Sim {
         edges
     }
 
-    /// Daily: season-start siege check, retreat and end of sieges, monthly military refresh.
+    /// Daily: season-start invasion check, visits, retreat and end of raids, monthly military
+    /// refresh.
     pub(crate) fn invasion_daily(&mut self, now: u64) {
+        use crate::raids::RaidKind;
         self.military_monthly();
         let season = self.world.calendar.month() / 3;
         let inv = &mut self.combat.inv;
         if season != inv.last_season {
             let first = inv.last_season < 0;
             inv.last_season = season;
-            if !first && inv.enabled && inv.sieges.is_empty() && self.world.citizens().count() >= SIEGE_POPULATION {
-                let mut r = Rng::for_unit(self.seed, 1, now, 0x51E6);
-                // [r7] Population and created/exported wealth decide whether and how big.
-                if r.chance(1, 3) {
-                    if let Some(n) = self.siege_size() {
-                        self.spawn_siege("GOBLIN", n);
-                    }
-                }
+            if !first && inv.enabled {
+                // [military2] Sieges (25 %) or ambushes, plus thieves and snatchers.
+                self.raids_season(now);
             }
+        }
+        if self.combat.inv.enabled {
+            self.raids_pending(now); // [military2]
         }
         // Retreat and end.
         let mut k = 0;
         while k < self.combat.inv.sieges.len() {
-            let (alive, total, fleeing, start) = {
+            let (alive, total, fleeing, start, kind, leader) = {
                 let sg = &self.combat.inv.sieges[k];
                 let alive = sg.members.iter().filter(|&&s| self.ai[s as usize].kind != Kind::Dead).count();
-                (alive, sg.members.len(), sg.fleeing, sg.start)
+                (alive, sg.members.len(), sg.fleeing, sg.start, sg.kind, sg.leader)
             };
             if alive == 0 {
                 let sg = self.combat.inv.sieges.remove(k);
-                self.announce(now, format!("The {} invasion is over.", sg.race.to_ascii_lowercase()), None, AnnouncementKind::Info);
+                if matches!(sg.kind, RaidKind::Siege | RaidKind::Ambush) && sg.revealed {
+                    self.announce(now, format!("The {} invasion is over.", sg.race.to_ascii_lowercase()), None, AnnouncementKind::Info);
+                }
                 continue;
             }
-            if !fleeing && (alive * 2 <= total || now >= start + 2 * TICKS_PER_MONTH as u64) {
+            // [military2] Thieves and snatchers leave by themselves (at the latest after a month).
+            if matches!(kind, RaidKind::Thief | RaidKind::Snatcher) {
+                if !fleeing && now >= start + TICKS_PER_MONTH as u64 {
+                    self.combat.inv.sieges[k].fleeing = true;
+                    let members = self.combat.inv.sieges[k].members.clone();
+                    for s in members {
+                        let s = s as usize;
+                        if self.ai[s].kind != Kind::Dead {
+                            self.combat.f[s].role = Role::Leave;
+                            self.combat.f[s].target = NONE;
+                            self.engage_now(s, now);
+                        }
+                    }
+                }
+                k += 1;
+                continue;
+            }
+            // [military2] A siege also breaks when its leader dies (estimate, see raids.rs).
+            let leader_dead = kind == RaidKind::Siege && leader != NONE && self.ai[leader as usize].kind == Kind::Dead && !self.world.units[self.ai[leader as usize].uidx].flags.inactive;
+            if !fleeing && (alive * 2 <= total || now >= start + 2 * TICKS_PER_MONTH as u64 || leader_dead) {
                 self.combat.inv.sieges[k].fleeing = true;
+                if leader_dead {
+                    self.combat.stats.leaders_killed += 1;
+                    self.combat.log_line("The invaders' leader has been slain!".into());
+                }
                 let race = self.combat.inv.sieges[k].race.to_ascii_lowercase();
-                self.announce(now, format!("The {race}s are retreating!"), None, AnnouncementKind::Info);
+                if self.combat.inv.sieges[k].revealed {
+                    self.announce(now, format!("The {race}s are retreating!"), None, AnnouncementKind::Info);
+                }
                 self.combat.log_line(format!("The {race}s are retreating!"));
                 let members = self.combat.inv.sieges[k].members.clone();
                 for s in members {
@@ -347,7 +300,9 @@ impl Sim {
         }
     }
 
-    fn leave_map(&mut self, s: usize) {
+    pub(crate) fn leave_map(&mut self, s: usize) {
+        let now = self.ticks;
+        self.raid_left_map(s, now); // [military2] loot and kidnapped children leave too
         let uidx = self.ai[s].uidx;
         let inv = std::mem::take(&mut self.world.units[uidx].inventory);
         for id in inv {

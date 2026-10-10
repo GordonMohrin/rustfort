@@ -29,7 +29,10 @@
 //! - [r7] Under an alert, meals, drinks and beds outside the burrow are still used (DF prefers
 //!   the burrow's own); doctor, burial, depot and lever jobs are not taken under an alert.
 //!   Hauling picks the nearest item inside the burrow over all wanted stockpile categories.
-//! - Patrol routes are not simulated (treated as Train).
+//! - [r8] Patrol routes, barracks (training spots, sparring, beds, equipment storage), per-position
+//!   uniforms and squad ammo live in `barracks.rs`; ambushes, thieves and snatchers in `raids.rs`.
+//!   Under an alert, drinks, meals and beds inside the burrow come first; doctors and lever pullers
+//!   work inside it.
 
 use crate::combat::{Role, Sub};
 use crate::nav::MAX_NEIGHBORS;
@@ -48,6 +51,8 @@ pub(crate) enum Duty {
     Station(u32),
     /// Kill a unit (unit id).
     Kill(i32),
+    /// [military2] Walk the squad's patrol route.
+    Patrol,
 }
 
 #[derive(Default)]
@@ -61,6 +66,8 @@ pub(crate) struct Military {
     /// [r7] Slot whose job search is running under the alert restriction (set by
     /// `combat_decide` right before the work searches of that unit).
     pub cur: Option<u32>,
+    /// [military2] Barracks tiles and beds per squad.
+    pub barracks: Vec<crate::barracks::BarracksT>,
 }
 
 fn parse_pos(s: &str) -> Option<Pos> {
@@ -77,6 +84,7 @@ impl Sim {
             f.duty = Duty::None;
             f.squad = -1;
         }
+        self.barracks_refresh(); // [military2]
         let squads = self.world.squads.clone();
         for sq in &squads {
             let order = sq.orders.iter().find(|o| !o.trim().is_empty()).map(|o| o.trim().to_string()).unwrap_or_default();
@@ -85,6 +93,8 @@ impl Sim {
                 order.split_whitespace().nth(1).and_then(|t| t.parse().ok()).map(Duty::Kill).unwrap_or(Duty::Train)
             } else if order.starts_with("Station") {
                 parse_pos(order.trim_start_matches("Station")).and_then(|p| self.world.idx(p)).map(|t| Duty::Station(t as u32)).unwrap_or(Duty::Train)
+            } else if order.starts_with("Patrol") && !sq.patrol.is_empty() {
+                Duty::Patrol // [military2] patrol routes
             } else if order.starts_with("Train") || order.starts_with("Patrol") {
                 Duty::Train
             } else if sched.contains("constant") || sched.contains("ready") || sched == "active/training" {
@@ -239,6 +249,43 @@ impl Sim {
         best.map(|b| (b.3, b.1, b.2))
     }
 
+    /// [military2] Burial under the alert: a corpse and a coffin both inside the burrow (the
+    /// same claim as `society_decide`, with the burrow filter).
+    pub(crate) fn alert_burial(&mut self, s: usize, now: u64) -> bool {
+        if self.pop.bury.is_empty() || self.ai[s].labors & crate::labor::HAUL_BODY == 0 {
+            return false;
+        }
+        let c = self.nav.comp_near(self.ai[s].pos as usize);
+        if c == 0 {
+            return false;
+        }
+        for k in 0..self.pop.bury.len() {
+            let j = &self.pop.bury[k];
+            if j.claimed != NONE {
+                continue;
+            }
+            let (cid, tile) = (j.corpse, j.tile);
+            let Some(&ii) = self.item_idx.get(&cid) else { continue };
+            let ii = ii as usize;
+            let m = &self.imeta[ii];
+            if m.dead || m.hauling || m.reserved > 0 || m.blocked_until > now {
+                continue;
+            }
+            let Some(ct) = self.world.idx(self.world.items[ii].pos) else { continue };
+            if self.alert_blocks(s, ct) || self.alert_blocks(s, tile as usize) || self.nav.comp_near(ct) != c || self.nav.comp_near(tile as usize) != c {
+                continue;
+            }
+            self.set_hauling(cid, true);
+            self.haul_remove(cid);
+            self.pop.bury[k].claimed = s as u32;
+            self.ai[s].task = Task::GoPickup(cid, tile);
+            let g = self.item_goals(cid);
+            self.request_path(s, g, now);
+            return true;
+        }
+        false
+    }
+
     /// [r7] Idle civilians under the alert mill about inside the burrow instead of wandering.
     pub(crate) fn alert_mill(&mut self, s: usize, now: u64) -> bool {
         if !self.alert_restricted(s) || !self.in_alert(self.ai[s].pos as usize) {
@@ -264,7 +311,7 @@ impl Sim {
     }
 
     /// Walk towards `goal` (re-using the current path when it leads there).
-    fn walk_to(&mut self, s: usize, goal: u32, now: u64) {
+    pub(crate) fn walk_to(&mut self, s: usize, goal: u32, now: u64) {
         let ai = &self.ai[s];
         if ai.path_i < ai.path.len() && *ai.path.last().unwrap() == goal {
             self.step(s, now);
@@ -377,10 +424,15 @@ impl Sim {
                     self.ai[s].wake = now + 50;
                 }
             }
+            Duty::Patrol => self.patrol_think(s, now), // [military2]
             _ => {
+                if self.barracks_walk(s, now) {
+                    return; // [military2] train in the squad's barracks
+                }
                 if now >= self.combat.f[s].train_at {
                     self.combat.f[s].train_at = now + 100;
                     self.train_xp(s);
+                    self.barracks_spar(s, now); // [military2] sparring, demonstrations
                 }
                 self.ai[s].wake = now + 50;
             }
@@ -404,7 +456,9 @@ impl Sim {
     /// Nearest free item for a missing uniform piece of soldier `s`.
     fn find_uniform_item(&mut self, s: usize) -> Option<i32> {
         let sq = self.combat.f[s].squad;
-        let uniform = self.world.squads.iter().find(|q| q.id == sq).map(|q| q.uniform.clone()).unwrap_or_default();
+        // [military2] per-position uniforms
+        let spos = self.world.units[self.ai[s].uidx].squad_position.max(0) as usize;
+        let uniform = self.world.squads.iter().find(|q| q.id == sq).map(|q| self.uniform_for(q, spos)).unwrap_or_default();
         if uniform.is_empty() {
             return None;
         }
@@ -444,7 +498,8 @@ impl Sim {
                     continue;
                 }
                 let Some(t) = self.world.idx(it.pos) else { continue };
-                let d = crate::manhattan(up, self.nav.xyz(t));
+                // [military2] pieces stored in the squad's barracks first
+                let d = crate::manhattan(up, self.nav.xyz(t)) - if self.in_barracks(sq, t as u32) { 1_000 } else { 0 };
                 if d < best.0 && self.nav.comp_near(t) == c {
                     best = (d, it.id);
                 }
