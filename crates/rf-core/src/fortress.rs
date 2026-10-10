@@ -80,6 +80,11 @@ pub struct Crime {
     /// Punishment given, e.g. `Jail 3 months`, `Beating`, `Hammerstrikes 20`.
     pub punishment: String,
     pub witnesses: Vec<i32>,
+    /// [society2] Case state: `Unsolved`, `Accused` (culprit identified), `Convicted`,
+    /// `Serving` (jail time), `Punished`, `Closed` (culprit gone or dead). Empty = `Unsolved`.
+    pub status: String,
+    /// [society2] Remaining jail days (or hammerstrikes / beatings still owed) of the sentence.
+    pub sentence_days: i32,
 }
 
 /// A hauling route (minecarts / wheelbarrows) with stops.

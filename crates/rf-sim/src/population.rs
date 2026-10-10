@@ -1207,6 +1207,7 @@ impl Sim {
                 if let Some(s) = slot {
                     self.feel(s, "MandateIgnored", Class::Neg, 200, -1, 0, now);
                 }
+                self.justice_mandate_missed(&m.noble, false, now); // [society2] crime: ProductionOrderViolation
                 self.announce(now, format!("The {} is upset: the mandate \"{}\" was not fulfilled.", m.noble.to_ascii_lowercase().replace('_', " "), m.text), None, AnnouncementKind::Warning);
             }
         }
@@ -1236,6 +1237,7 @@ impl Sim {
             if let Some(s) = self.unit_slot.get(&holder).copied().filter(|&s| self.ai[s].kind == Kind::Worker) {
                 self.feel(s, "MandateIgnored", Class::Neg, 200, -1, 0, now);
             }
+            self.justice_mandate_missed(&m.noble, true, now); // [society2] crime: ExportViolation
             self.announce(now, format!("The {} is upset: the export ban \"{}\" was broken.", m.noble.to_ascii_lowercase().replace('_', " "), m.text), None, AnnouncementKind::Warning);
         }
         broken

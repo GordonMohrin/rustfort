@@ -93,6 +93,12 @@ pub mod health; // [moods]
 pub mod caverns; // [moods]
 pub mod caveins; // [r7] cave-ins after digging and deconstruction
 mod syndrome; // [audit-combat] forgotten beast venom, breath and webs
+pub mod locations; // [society2] temples, taverns, libraries, visitors, petitions
+pub mod justice; // [society2] crimes, investigation, punishment
+pub mod lifestyle; // [society2] clothing wear, meal quality, kitchen, miasma, rain
+pub use justice::JusticeReport; // [society2]
+pub use lifestyle::LifestyleReport; // [society2]
+pub use locations::{LocationReport, Petition, VisitorRole}; // [society2]
 pub use caverns::{BeastRecord, CavernLayer, CavernReport}; // [moods]
 pub use health::{HealthInfo, HealthReport}; // [moods]
 pub use moods::{MoodKind, MoodRecord}; // [moods]
@@ -581,6 +587,10 @@ pub struct Sim {
     moods: moods::Moods,
     health: health::Health,
     caverns: caverns::Caverns,
+    /// [society2] Locations and visitors, justice, lifestyle (see `locations`, `justice`, `lifestyle`).
+    locs: locations::Locs,
+    justice: justice::Justice,
+    life: lifestyle::Life,
 }
 
 #[inline]
@@ -688,6 +698,9 @@ impl Sim {
             moods: moods::Moods::default(), // [moods]
             health: health::Health::default(), // [moods]
             caverns: caverns::Caverns::default(), // [moods]
+            locs: locations::Locs::default(), // [society2]
+            justice: justice::Justice::default(), // [society2]
+            life: lifestyle::Life::default(), // [society2]
         };
         sim.init_plants();
         sim.init_units();
@@ -1115,6 +1128,7 @@ impl Sim {
         self.moods_hash(&mut mix); // [moods]
         self.health_hash(&mut mix); // [moods]
         self.caverns_hash(&mut mix); // [moods]
+        self.society2_hash(&mut mix); // [society2]
         h
     }
 
@@ -1236,6 +1250,9 @@ impl Sim {
         }
         self.health_tick(now); // [moods]
         self.caverns_tick(now); // [moods]
+        if now % locations::S2_PERIOD == locations::S2_PHASE {
+            self.society2_pass(now); // [society2]
+        }
         let t0 = Instant::now();
         self.phase[9] += (t0 - tq).as_secs_f64(); // [perf]
         for s in 0..self.ai.len() {
@@ -1458,6 +1475,8 @@ impl Sim {
                     self.combat_think(s, now);
                 } else if self.trade_owns(s) {
                     self.trade_think(s, now); // [society] merchants and pack animals
+                } else if self.visitor_owns(s) {
+                    self.visitor_think(s, now); // [society2] visitors
                 } else {
                     self.think_simple(s, now);
                 }
@@ -1598,6 +1617,9 @@ impl Sim {
         if self.moods_decide(s, now) {
             return; // [moods] strange mood, insanity
         }
+        if self.justice_confined(s, now) || self.lifestyle_decide(s, now) {
+            return; // [society2] prisoners stay in jail; replacing worn clothing
+        }
         let mut r = Rng::for_unit(self.seed, s, now, 1);
         let ai = &mut self.ai[s];
         let elapsed = (now.saturating_sub(ai.last_decide)).clamp(1, 120) as u32;
@@ -1666,6 +1688,9 @@ impl Sim {
             ai.seen_haul = eh;
             ai.seen_prod = ep;
             ai.next_search = now + RESEARCH_TICKS + (s as u64 % 64);
+        }
+        if self.society2_idle(s, now) {
+            return; // [society2] occupations: tavern keeper, performer, scholar
         }
         self.wander(s, now, &mut r);
     }

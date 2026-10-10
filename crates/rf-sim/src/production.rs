@@ -746,8 +746,8 @@ impl Sim {
     pub(crate) fn brewable_idx(&self, idx: usize) -> bool {
         let m = &self.imeta[idx];
         let it = &self.world.items[idx];
-        if it.flags.rotten {
-            return false;
+        if it.flags.rotten || self.kitchen_excluded(idx, false) {
+            return false; // [society2] kitchen settings
         }
         match m.pc {
             pc::PLANT => self.plant(m.plant).map(|p| p.brew_plant()).unwrap_or(false),
@@ -761,8 +761,8 @@ impl Sim {
 
     fn cookable_idx(&self, idx: usize) -> bool {
         let m = &self.imeta[idx];
-        if self.world.items[idx].flags.rotten {
-            return false;
+        if self.world.items[idx].flags.rotten || self.kitchen_excluded(idx, true) {
+            return false; // [society2] kitchen settings
         }
         match m.pc {
             pc::COOKABLE => true,
@@ -2095,7 +2095,11 @@ impl Sim {
                 match rec.input {
                     // Both brew reactions have a SEEDS product (raws: SEED_MAT of the plant).
                     Input::BrewPlant | Input::BrewFruit => self.finish_brew(&wj, rec.count as i32, true),
-                    Input::Meal(_) => self.finish_meal(&wj, rec.noun),
+                    Input::Meal(_) => {
+                        let first = self.next_item_id; // [society2]
+                        self.finish_meal(&wj, rec.noun);
+                        self.lifestyle_meal_cooked(s, first, now); // [society2] meal quality by cook skill
+                    }
                     Input::Ind(_) => self.ind_finish(s, &wj, recipe, now), // [industry]
                     Input::Log | Input::Boulder => {
                         let mat = self.item_idx.get(&wj.items[0]).map(|&i| self.world.items[i as usize].mat).unwrap_or(NO_MAT);

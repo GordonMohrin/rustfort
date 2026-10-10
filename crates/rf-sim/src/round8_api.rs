@@ -78,6 +78,7 @@ impl Sim {
         if setting.no_cook || setting.no_brew {
             self.world.kitchen.push(setting);
         }
+        self.kitchen_changed(); // [society2] production respects the exclusions
     }
 
     // ---------------------------------------------------------------- animals
@@ -119,6 +120,7 @@ impl Sim {
     // ---------------------------------------------------------------- locations
     /// Turn a civzone into a location (`Temple`, `Tavern`, `Library`, `Guildhall`, `Hospital`).
     pub fn create_location(&mut self, kind: &str, zone_id: i32, name: &str) -> i32 {
+        self.society2_ensure(); // [society2] derived locations first, so ids do not clash
         let id = self.world.locations.iter().map(|l| l.id).max().unwrap_or(0) + 1;
         self.world.locations.push(Location {
             id,
@@ -147,8 +149,6 @@ impl Sim {
 
     /// Convict a unit for a crime (the captain of the guard / sheriff punishes per DF).
     pub fn convict(&mut self, crime_id: i32, unit_id: i32) {
-        if let Some(c) = self.world.crimes.iter_mut().find(|c| c.id == crime_id) {
-            c.convicted = unit_id;
-        }
+        self.convict_impl(crime_id, unit_id); // [society2] sentence and punishment
     }
 }
