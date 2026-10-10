@@ -1828,6 +1828,10 @@ impl Sim {
     }
 }
 
+#[cfg(test)]
+#[path = "minecarts_tests.rs"]
+mod tests;
+
 impl Carts {
     fn trip_count(&self, _route: i32) -> u64 {
         // Trips per route are kept in the route counters below.
