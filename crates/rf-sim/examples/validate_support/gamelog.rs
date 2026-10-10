@@ -56,6 +56,7 @@ pub fn scan(path: &Path, from: usize, to: usize) -> GamelogEvents {
     for k in [
         "sieges", "ambushes", "migrant_waves", "dwarf_births", "animal_births", "caravans", "citizen_deaths",
         "moods", "artifacts", "masterpieces", "tantrums", "insane", "beasts",
+        "migrant_no_wave", "migrant_refusals", // [calib11-econ]
     ] {
         ev.counts.insert(k, 0);
     }
@@ -99,8 +100,13 @@ pub fn scan(path: &Path, from: usize, to: usize) -> GamelogEvents {
             bump("sieges");
         } else if line.starts_with("An ambush!") {
             bump("ambushes");
-        } else if line.contains("migrants have arrived") || line.contains("migrant has arrived") {
-            bump("migrant_waves");
+        } else if line.contains("migrants have arrived") || line.contains("migrant has arrived") || line.contains("to brave this terrifying place") {
+            bump("migrant_waves"); // [calib11-econ] incl. the danger variants
+        } else if line.contains("attracted no migrants") {
+            bump("migrant_no_wave"); // [calib11-econ]
+        } else if line.contains("too wary to make the journey") || line.contains("refused to journey") || line.contains("cursed death-trap") {
+            bump("migrant_no_wave");
+            bump("migrant_refusals");
         } else if let Some(p) = line.find(" has given birth to ") {
             if named_subject(line, p).is_some() {
                 bump("dwarf_births");

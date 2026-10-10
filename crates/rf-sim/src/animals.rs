@@ -118,6 +118,10 @@ pub const MILK_INTERVAL: u64 = 20_000;
 pub const SHEAR_REGROW: u64 = 300 * TICKS_PER_DAY as u64;
 /// Vanilla raws: `CHILD:1` for all domestic animals (years).
 const CHILD_YEARS: f32 = 1.0;
+/// [calib11-econ] Monthly conception chance (1 in this) of a caged female sharing her cage
+/// with a male of her race (estimate fitted to Gordon's caged troglodytes, see
+/// `an_cage_breed_pass`).
+pub const CAGE_CONCEIVE_IN: u32 = 16;
 /// Training (estimates).
 const TRAIN_TICKS: u32 = 500;
 const RETRAIN_AFTER: u64 = 2 * TICKS_PER_MONTH as u64;
@@ -335,6 +339,8 @@ pub struct AnimalReport {
     /// Matings of egg layers (the female lays fertile eggs for 6 months).
     pub fertilizations: u64,
     pub births: u64,
+    /// [calib11-econ] Live births ("has given birth to", one per litter; hatching not counted).
+    pub litters: u64,
     pub clutches: u64,
     pub eggs_laid: u64,
     pub eggs_hatched: u64,
@@ -1123,6 +1129,7 @@ impl Sim {
             self.an_spawn_young(&sp, pos, &mut r);
         }
         self.animals.rep.births += n as u64;
+        self.animals.rep.litters += 1; // [calib11-econ]
         let what = if n == 1 { "a young one".to_string() } else { format!("{n} young") };
         self.announce(now, format!("{name} has given birth to {what}."), Some(pos), AnnouncementKind::Info);
     }
@@ -1414,7 +1421,98 @@ impl Sim {
         self.animals.rep.war_attacks += 1;
     }
 
+    /// [calib11-econ] Creatures sharing one cage breed. Wiki "Breeding": "Caged males are still
+    /// capable of breeding, assuming the female can approach the cage. Pregnant non-egglaying
+    /// females can give birth in cages". Observation (Gordon's fort, gamelog r3 -> r6): the 35-61
+    /// troglodytes held together in 7 cage traps had 23 births ("Troglodyte has given birth to
+    /// a girl."), all of the fort's animal births, so a female sharing her cage with a male of
+    /// her race conceives too. Estimate fitted to that: 1 in 16 per month, 6 months gestation
+    /// (wiki), one young; `Unit::pregnancy` keeps the ticks left (saved with the unit).
+    fn an_cage_breed_pass(&mut self, now: u64) {
+        let mut groups: HashMap<(i32, i32, i32, String), (Vec<usize>, bool)> = HashMap::new();
+        let mut births = Vec::new();
+        for (i, u) in self.world.units.iter_mut().enumerate() {
+            if !u.flags.caged || u.flags.dead || u.flags.citizen || u.flags.inactive || u.flags.tame {
+                continue;
+            }
+            if u.pregnancy > 0 {
+                u.pregnancy -= TICKS_PER_MONTH;
+                if u.pregnancy <= 0 {
+                    u.pregnancy = 0;
+                    births.push(i);
+                }
+                continue;
+            }
+            if u.age < CHILD_YEARS {
+                continue;
+            }
+            let g = groups.entry((u.pos.x as i32, u.pos.y as i32, u.pos.z as i32, u.race.clone())).or_default();
+            match u.sex {
+                0 => g.0.push(i),
+                1 => g.1 = true,
+                _ => {}
+            }
+        }
+        let mut keys: Vec<_> = groups.into_iter().filter(|(_, g)| g.1 && !g.0.is_empty()).collect();
+        keys.sort_by(|a, b| a.0.cmp(&b.0));
+        for (_, (females, _)) in keys {
+            for i in females {
+                let id = self.world.units[i].id;
+                let mut r = Rng::for_unit(self.seed, id as usize, now, 0xCA6E);
+                if r.chance(1, CAGE_CONCEIVE_IN) {
+                    self.world.units[i].pregnancy = GESTATION as i32;
+                    self.animals.rep.pregnancies += 1;
+                }
+            }
+        }
+        if births.is_empty() {
+            return;
+        }
+        let mut next = self.world.units.iter().map(|u| u.id).max().unwrap_or(0) + 1;
+        for i in births {
+            let m = &self.world.units[i];
+            let mut r = Rng::for_unit(self.seed, m.id as usize, now, 0xCA6F);
+            let raw = self.world.creature_raws.iter().find(|c| c.token == m.race);
+            let sexed: Vec<(String, i8)> = raw
+                .map(|c| c.castes.iter().filter_map(|k| match k.token.as_str() { "FEMALE" => Some((k.token.clone(), 0)), "MALE" => Some((k.token.clone(), 1)), _ => None }).collect())
+                .unwrap_or_default();
+            let (caste, sex) = if sexed.is_empty() { (m.caste.clone(), r.below(2) as i8) } else { sexed[r.below(sexed.len() as u32) as usize].clone() };
+            let young = Unit {
+                id: next,
+                race: m.race.clone(),
+                caste,
+                name: m.name.clone(),
+                profession: m.profession.clone(),
+                pos: m.pos,
+                flags: UnitFlags { caged: true, animal: m.flags.animal, ..Default::default() },
+                civ_id: m.civ_id,
+                hist_fig_id: -1,
+                sex,
+                age: 0.01, // ages with the daily population pass
+                body_size: (m.body_size / 10).max(1),
+                walk_speed: m.walk_speed,
+                squad_id: -1,
+                squad_position: -1,
+                invader_civ: -1,
+                pet_owner: -1,
+                pasture: -1,
+                ..Default::default()
+            };
+            let (name, pos) = (m.name.clone(), m.pos);
+            self.world.units.push(young);
+            next += 1;
+            self.animals.rep.births += 1;
+            self.animals.rep.litters += 1;
+            let what = if sex == 0 { "a girl" } else { "a boy" };
+            self.announce(now, format!("{name} has given birth to {what}."), Some(pos), AnnouncementKind::Info);
+        }
+        self.init_units();
+    }
+
     fn an_daily_pass(&mut self, now: u64) {
+        if self.world.calendar.day() == 1 {
+            self.an_cage_breed_pass(now); // [calib11-econ] monthly
+        }
         self.an_regrow_grass(TICKS_PER_DAY as u64);
         let day = 1.0 / (rf_core::DAYS_PER_MONTH as f32 * 12.0);
         let n = self.ai.len();
