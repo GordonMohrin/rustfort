@@ -216,6 +216,7 @@ impl Sim {
         v.push(("vampires", fnv(|mix| self.vampires_hash(mix)))); // [contract13]
         v.push(("megabeasts", fnv(|mix| self.megabeasts_hash(mix)))); // [contract13]
         v.push(("diplomacy", fnv(|mix| self.diplomacy_hash(mix)))); // [contract13]
+        v.push(("nobles15", fnv(|mix| self.nobles15_hash(mix)))); // [nobles15]
         v
     }
 }

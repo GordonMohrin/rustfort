@@ -307,7 +307,7 @@ impl Sim {
     }
 
     /// Value as the broker appraises it (Appraisal only affects what is shown).
-    fn shown_value(&self, id: i32, true_v: i64) -> i64 {
+    pub(crate) fn shown_value(&self, id: i32, true_v: i64) -> i64 { // [nobles15] pub(crate)
         let skill = self.broker_unit().and_then(|b| self.world.unit(b)).map(|u| u.skill("APPRAISAL")).unwrap_or(0);
         let err = (25 - 2 * skill).max(0) as i64;
         if err == 0 {
@@ -400,7 +400,11 @@ impl Sim {
         }
         // Execute: fort goods go to the merchants, bought goods become the fort's.
         let sold: Vec<(String, String)> = offer.iter().filter_map(|id| self.world.item(*id).map(|i| (i.desc.clone(), i.subtype.clone()))).collect();
+        if self.nobles15_active() { // [nobles15] export bans by item type, hauler blamed
+            self.nobles15_items_traded(offer, now); // [nobles15]
+        } else { // [nobles15]
         self.check_export_bans(&sold, now);
+        } // [nobles15]
         for &id in offer {
             self.destroy_with_contents(id);
             if let Some(b) = self.world.buildings.iter_mut().find(|b| b.id == depot) {

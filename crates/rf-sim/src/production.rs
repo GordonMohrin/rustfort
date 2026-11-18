@@ -1662,6 +1662,9 @@ impl Sim {
                 }
                 continue;
             }
+            if self.nobles15_order_pending(id) {
+                continue; // [nobles15] waits for the manager's validation
+            }
             let Some(r) = Sim::recipe_of(&o.job, &o.reaction, &o.item_type, &o.item_subtype, &o.mat_category, &o.mat, None) else {
                 let name = o.job.clone();
                 self.note_unsupported(&name);
@@ -2326,6 +2329,7 @@ impl Sim {
 
     /// Append an item with its sim metadata (no pile/haul bookkeeping).
     pub(crate) fn push_item(&mut self, mut it: Item) -> usize {
+        self.nobles15_item_made(&it); // [nobles15] mandate fulfilment (before the value is set)
         self.war_item_made(&mut it); // [war9] created wealth
         let (pcl, plant) = self.classify(&it);
         let id = it.id;

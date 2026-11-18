@@ -75,6 +75,8 @@ pub mod undead; // [contract13] owner [undead13]: reanimation, undead, necromanc
 pub mod vampires; // [contract13] owner [vampire13]: vampires, werebeasts
 pub mod megabeasts; // [contract13] owner [mega13]: megabeasts, semi-megabeasts, titans
 pub mod diplomacy; // [contract13] owner [diplo13]: liaisons, diplomats, relations, war/peace
+pub mod nobles15; // [nobles15] room requirements, mandates, demands, bookkeeper, manager
+pub mod nobles15_api; // [nobles15]
 pub use round8_api::AnimalInfo;
 pub mod construct; // [construct]
 pub use construct::ConstructReport; // [construct]
@@ -705,6 +707,7 @@ pub struct Sim {
     vamp: vampires::Vamp, // [contract13] owner [vampire13]
     mega: megabeasts::Mega, // [contract13] owner [mega13]
     diplo: diplomacy::Diplo, // [contract13] owner [diplo13]
+    n15: nobles15::Nobles15, // [nobles15]
 }
 
 /// [perf9] Debug: A* searches with at least this many nodes are printed (`RF_PATH_LOG`, set
@@ -861,6 +864,7 @@ impl Sim {
             vamp: vampires::Vamp::default(), // [contract13]
             mega: megabeasts::Mega::default(), // [contract13]
             diplo: diplomacy::Diplo::default(), // [contract13]
+            n15: nobles15::Nobles15::default(), // [nobles15]
         };
         sim.restore_core(&saved); // [saves10] tick count first: the init passes below use it
         sim.init_plants();
@@ -1310,6 +1314,7 @@ impl Sim {
         self.vampires_hash(&mut mix); // [contract13] owner [vampire13]
         self.megabeasts_hash(&mut mix); // [contract13] owner [mega13]
         self.diplomacy_hash(&mut mix); // [contract13] owner [diplo13]
+        self.nobles15_hash(&mut mix); // [nobles15]
         h
     }
 
@@ -1451,6 +1456,9 @@ impl Sim {
         }
         if now % locations::S2_PERIOD == locations::S2_PHASE {
             self.society2_pass(now); // [society2]
+        }
+        if now % nobles15::N15_PERIOD == nobles15::N15_PHASE {
+            self.nobles15_pass(now); // [nobles15]
         }
         if now % rf_core::TICKS_PER_DAY as u64 == 611 {
             self.growth_day(now); // [skills9] saplings grow, trees seed
@@ -2099,6 +2107,7 @@ impl Sim {
                 }
                 self.drop_item(s, id, dest);
                 self.society_stored(id, dest); // [society] coffin / trade depot
+                self.nobles15_depot_hauled(id, s as u32); // [nobles15] who brought it (export bans)
                 self.ai[s].task = Task::Idle;
                 self.stats.items_hauled += 1;
                 self.decide(s, now);

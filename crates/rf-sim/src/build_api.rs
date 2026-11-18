@@ -44,7 +44,7 @@ pub struct OrderTemplate {
 }
 
 /// Civzone kinds the player can create.
-pub const ZONE_KINDS: &[&str] = &["MeetingHall", "Bedroom", "DiningHall", "WaterSource", "Dump", "Pen", "Tomb"];
+pub const ZONE_KINDS: &[&str] = &["MeetingHall", "Bedroom", "DiningHall", "WaterSource", "Dump", "Pen", "Tomb", "Office"]; // [nobles15] + Office
 
 const BUILDING_MAT: &str = "1 boulder, block or log";
 
@@ -305,6 +305,7 @@ impl Sim {
                 validated: true,
                 ..Default::default()
             });
+            self.nobles15_order_created(id); // [nobles15] manager validation in large forts
             self.mark_prod_dirty();
         }
         id
