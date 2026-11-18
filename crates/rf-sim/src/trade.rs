@@ -426,6 +426,7 @@ impl Sim {
             }
         }
         self.trade.rep.trades.push((now, ov, rv, out.reply.clone()));
+        self.diplomacy_traded(ov, rv); // [diplo13] attitude from trade, gifts pay tribute
         out
     }
 
@@ -893,6 +894,7 @@ impl Sim {
         });
         let p = self.world.pos_of(edge as usize);
         self.announce(now, format!("A caravan from {civ} has arrived."), Some(p), AnnouncementKind::Info);
+        self.diplomacy_caravan_arrived(e.id, now); // [diplo13] liaison / diplomat travels with it
         true
     }
 
@@ -979,6 +981,7 @@ impl Sim {
         let scale = if wagons > 0 { 1 + wagons } else { 1 };
         for &(kind, sub, sel, lo, hi) in goods_list(&race) {
             let n = (lo + r.below(hi - lo + 1)) * scale;
+            let n = n * self.diplomacy_request_mult(kind, sub); // [diplo13] liaison trade agreement
             for _ in 0..n {
                 let Some(mat) = self.mat_for(sel, &mut r) else { break };
                 let q = match r.below(100) {
