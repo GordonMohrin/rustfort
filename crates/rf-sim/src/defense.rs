@@ -782,6 +782,7 @@ impl Sim {
         let flags = raw.map(|c| c.flags.iter().chain(c.castes.iter().flat_map(|k| k.flags.iter())).cloned().collect::<Vec<_>>()).unwrap_or_default();
         let trapavoid = flags.iter().any(|f| f == "TRAPAVOID") || (raw.is_none() && race == "KOBOLD");
         let mut lvl = DESTROYERS.iter().find(|d| d.0 == race).map(|d| d.1).unwrap_or(0);
+        lvl = lvl.max(Sim::mega_destroyer_level(race)); // [mega13] generated titans
         for f in &flags {
             if let Some(rest) = f.strip_prefix("BUILDINGDESTROYER") {
                 lvl = lvl.max(rest.trim_start_matches([':', '_']).parse().unwrap_or(1));
@@ -1710,6 +1711,7 @@ impl Sim {
             self.remove_building(bid);
             self.combat.log_line(format!("{} has destroyed the {noun}!", cap(&name)));
             self.announce(now, format!("{} has destroyed a {noun}!", cap(&name)), Some(p), AnnouncementKind::Warning);
+            self.mega_wrecked(s); // [mega13]
         }
         self.combat.stats.buildings_wrecked += 1;
         self.def.wreck_n = usize::MAX;
@@ -1723,6 +1725,7 @@ impl Sim {
         self.remove_building(id);
         self.defense_scan();
         self.def.stats.buildings_destroyed += 1;
+        self.mega_wrecked(s); // [mega13]
         self.combat.log_line(format!("{} has destroyed the {noun}!", cap(&name)));
         self.announce(now, format!("{} has destroyed a {noun}!", cap(&name)), Some(p), AnnouncementKind::Warning);
     }

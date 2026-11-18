@@ -628,3 +628,22 @@ Seams only: no rule is simulated yet; each module owner adds its own section bel
 | Entity attitude `EntityInfo::attitude` | MISSING | Field only (wiki Diplomacy); set by `diplomacy`. |
 | Hauling route stop item filter `HaulStop::filter` | MISSING | Stored and editable through the API; minecarts do not apply it yet (wiki Hauling route: stop conditions and desired items). |
 | Moon phase (`Sim::moon_phase`) | MISSING | Stub returns 0; wiki Werebeast (full moon). |
+
+## Megabeasts, semi-megabeasts and titans (`[mega13]`)
+
+Module `crates/rf-sim/src/megabeasts.rs` (tests in `megabeasts/tests.rs`). wiki pages: Megabeast, Semi-megabeast, Titan, Dragon, Hydra, Roc, Bronze colossus, Building destroyer, Difficulty, Fire.
+
+| Item | Class | Notes |
+|---|---|---|
+| Only living megabeasts of the world come, each at most once | OK | wiki Megabeast. Historical figures of megabeast races in the export form the pool (dead ones and those that came are excluded). |
+| Pool when the world list is not exported | ESTIMATE | Races from the save's creature raws flagged `MEGABEAST` / `SEMIMEGABEAST` (vanilla table dragon, hydra, roc, bronze colossus, giant, ettin, cyclops, minotaur if no raws), plus generated titans. |
+| Arrival trigger: third enemy tier (population, created or exported wealth) | OK | wiki Megabeast / Difficulty: Normal 80 citizens or 100 000 created or 10 000 exported wealth, from the save's `ENEMY_*_TRIGGER`. Off with `FLAG_MEGABEASTS=true`, with invasions off or by `set_megabeasts_enabled(false)`. |
+| `MEGABEAST_INTERVAL` | ESTIMATE | Counted in seasons since the last attack (or the import); chance 1/2 per eligible season; one megabeast at a time. Kind odds: megabeast 35 %, semi-megabeast 40 %, titan 25 %. |
+| Arrival at a map edge connected to the fort, announcement "The <race> <name> has come! ..." | OK | wiki Megabeast. Megabeasts hunt the fort until slain (no retreat). |
+| Sieges and megabeasts: no double counting | OK / ESTIMATE | A megabeast is not a siege or raid: `World::fort_history.sieges/raids` are untouched and its marker civ (`MEGA_CIV`) is never taken as an invading civilization (`raids.rs`). No megabeast arrives while a siege is on the map (ESTIMATE). `threats()` lists megabeasts, titans, forgotten beasts and revealed sieges/ambushes separately. |
+| Titans: generated per world like forgotten beasts | ESTIMATE | wiki Titan: random body (quadruped or humanoid), size 2-8 M cm³, half with a shell of stone/gem/metal; a third breathe fire, the rest roll a forgotten-beast power (`syndrome::roll_power`). Names from own syllables (DF uses its language files). |
+| Building destroyer | OK | Vanilla megabeasts/semi-megabeasts are `BUILDINGDESTROYER:2` (`defense::DESTROYERS` / raws); titans level 2 via `mega_destroyer_level`. Wrecks count in `MegabeastReport::buildings_destroyed`. |
+| Dragonfire | ESTIMATE | wiki Dragon: breathes fire. No temperature/fire model yet: target 2-10 tiles away in line of fire, the target and creatures next to it catch fire for 200-400 ticks, one burn wound (sev 2 500, pain 200) every 50 ticks; death at `3 + size/100 000` burns (dwarves 3). One breath per 300-600 ticks. `FIREIMMUNE` creatures and breathers are not hurt. No burning items, grass or buildings (MISSING). |
+| Body sizes and attributes without raws | ESTIMATE | dragon 15 M, hydra 4 M, roc 8 M, bronze colossus 10 M (bronze shell), giant 2.5 M, ettin 3 M, cyclops 2.5 M, minotaur 0.5 M cm³; natural skills 6, strength/toughness 1 500-2 500. |
+| Slaying: announcement with slayer, fort history, thoughts | OK / ESTIMATE | "The <race> <name> has been slain by <slayer>!"; kept in `Sim::megabeast_history()`. Thoughts `SlewMegabeast` (slayer, strong positive) and `MegabeastSlain` (other citizens, mild) are ESTIMATE (DF: killed a megabeast thought, plus fame for the slayer, MISSING). |
+| Megabeasts leaving after some time, flying (roc, dragon), multiple hydra heads, colossus immune to pain | MISSING | They walk and fight to the death. |
