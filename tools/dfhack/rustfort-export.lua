@@ -814,6 +814,7 @@ local function q(f, u) local ok, r = pcall(f, u) return ok and r or false end
 
 -- ---- round 3: psychology, relationships, wounds
 local r3 = { needs = 0, emotions = 0, values = 0, relationships = 0, wounds = 0, invaders = 0 }
+r3.prefs = 0 -- [prefs15]
 local FORT_CIV = try(function() return df.global.plotinfo.civ_id end) or -1
 -- round 4: every historical figure referenced by units, relationships, deities, squads, nobles -> hist_figs.json
 local HF_REF = {}
@@ -845,6 +846,46 @@ local function values_json(p)
   local out = {}
   for _, v in ipairs(p.values) do
     out[#out + 1] = jobj({ 'id', ja(df.value_type[v.type] or tostring(v.type)), 'strength', ji(v.strength) })
+  end
+  return out
+end
+-- [prefs15] unit preferences (soul.preferences, DFHack unit_preference): read only; only the union
+-- member that belongs to the type is read (the others are garbage). See EXPORT_FORMAT round 15.
+local function prefs_json(soul) -- [prefs15]
+  local out = {}
+  for _, p in ipairs(soul.preferences) do
+    local t = df.unit_preference_type[p.type] or tostring(p.type)
+    local act = try(function() return p.active end)
+    if act == nil then act = try(function() return p.flags.visible end) end
+    local kv = { 'kind', ja(t), 'active', jb(act ~= false) }
+    if t == 'LikeMaterial' or t == 'LikeFood' then
+      local mt, mi = p.mattype, p.matindex
+      kv[#kv + 1] = 'mat'; kv[#kv + 1] = ji(palidx(mt, mi))
+      kv[#kv + 1] = 'mat_token'; kv[#kv + 1] = ja(mat_token(mt, mi))
+      kv[#kv + 1] = 'mat_state'; kv[#kv + 1] = ja(try(function() return df.matter_state[p.mat_state] end) or '')
+      if t == 'LikeFood' then
+        kv[#kv + 1] = 'item_type'; kv[#kv + 1] = ja(try(function() return df.item_type[p.item_type] end) or '')
+      end
+    elseif t == 'LikeItem' then
+      kv[#kv + 1] = 'item_type'; kv[#kv + 1] = ja(try(function() return df.item_type[p.item_type] end) or '')
+      local sub = try(function()
+        if p.item_subtype < 0 then return '' end
+        local d = dfhack.items.getSubtypeDef(p.item_type, p.item_subtype)
+        return d and d.id or ''
+      end) or ''
+      kv[#kv + 1] = 'item_subtype'; kv[#kv + 1] = ja(sub)
+    elseif t == 'LikeCreature' or t == 'HateCreature' then
+      kv[#kv + 1] = 'token'; kv[#kv + 1] = ja(try(function() return df.creature_raw.find(p.creature_id).creature_id end) or '')
+    elseif t == 'LikePlant' or t == 'LikeTree' then
+      kv[#kv + 1] = 'token'; kv[#kv + 1] = ja(try(function() return df.plant_raw.find(p.plant_id).id end) or '')
+    elseif t == 'LikeColor' then
+      kv[#kv + 1] = 'descriptor'; kv[#kv + 1] = ja(try(function() return df.descriptor_color.find(p.color_id).id end) or '')
+    elseif t == 'LikeShape' then
+      kv[#kv + 1] = 'descriptor'; kv[#kv + 1] = ja(try(function() return df.descriptor_shape.find(p.shape_id).id end) or '')
+    else
+      kv[#kv + 1] = 'descriptor'; kv[#kv + 1] = ja(tostring(try(function() return p.poetic_form_id end) or ''))
+    end
+    out[#out + 1] = jobj(kv)
   end
   return out
 end
@@ -1119,12 +1160,15 @@ local function unit_json(u)
     'forest', jb(q(U.isForest, u)), 'inactive', jb(r8.unit_inactive(u)) })
   -- round 3: psychology, relationships, wounds, blood, squad position, invader civ
   local needs, emotions, values, rels, wounds = {}, {}, {}, {}, {}
+  local prefs = {} -- [prefs15]
   if soul then
     local p = soul.personality
     local ok, r = pcall(needs_json, p); if ok then needs = r else warn('unit_needs', r) end
     ok, r = pcall(emotions_json, p); if ok then emotions = r else warn('unit_emotions', r) end
     ok, r = pcall(values_json, p); if ok then values = r else warn('unit_values', r) end
+    ok, r = pcall(prefs_json, soul); if ok then prefs = r else warn('unit_preferences', r) end -- [prefs15]
   end
+  r3.prefs = r3.prefs + #prefs -- [prefs15]
   do
     local ok, r = pcall(relationships_json, u); if ok then rels = r else warn('unit_relationships', r) end
     ok, r = pcall(wounds_json, u); if ok then wounds = r else warn('unit_wounds', r) end
@@ -1150,6 +1194,7 @@ local function unit_json(u)
     'longterm_stress', ji(try(function() return soul.personality.longterm_stress end) or 0),
     'population_id', ji(u.population_id), 'invasion_id', ji(try(function() return u.invasion_id end) or -1),
     'last_attacker', ji(try(function() return u.relationship_ids.LastAttacker end) or -1),
+    'preferences', jarr(prefs), -- [prefs15]
   }
   local kv = {
     'id', ji(u.id), 'race', ja(cr.creature_id), 'caste', ja(caste.caste_id), 'name', js(name), 'name_native', js(native),
@@ -2753,6 +2798,11 @@ local function creature_raw_json(ri, source)
     tis[ti] = { id = t.id, tok = mat_token(mt, mi), pal = palidx(mt, mi), flags = set_flags(t.flags, true),
                 shape = t.tissue_shape_str or '', thick = t.relative_thickness }
   end
+  -- [prefs15] creature flags + HAS_PREFSTRING (any caste with a [PREFSTRING]) for derived preferences
+  local crflags = set_flags(cr.flags, false) -- [prefs15]
+  if try(function() for _, c in ipairs(cr.caste) do if #c.caste_prefstring > 0 then return true end end return false end) then -- [prefs15]
+    crflags[#crflags + 1] = ja('HAS_PREFSTRING') -- [prefs15]
+  end -- [prefs15]
   local castes = {}
   for ci, c in ipairs(cr.caste) do
     local bi = c.body_info
@@ -2835,7 +2885,7 @@ local function creature_raw_json(ri, source)
                                  'max_age', jarr({ ji(c.misc.maxage_min), ji(c.misc.maxage_max) }) })
   end
   return jobj({ 'token', ja(cr.creature_id), 'name', js(cr.name[0]), 'name_plural', js(cr.name[1]), 'castes', jarr(castes),
-                'flags', jarr(set_flags(cr.flags, false)),
+                'flags', jarr(crflags), -- [prefs15] crflags = set_flags + HAS_PREFSTRING
                 -- extras
                 'index', ji(ri), 'source', jarr(source), 'tissues', ji(#cr.tissue) })
 end
@@ -3498,6 +3548,7 @@ local function finish()
   pcall(function() mpz = { df.global.world.map.region_x, df.global.world.map.region_y, df.global.world.map.region_z } end)
   local cnt = {}
   counts.unit_needs, counts.unit_emotions, counts.unit_values = r3.needs, r3.emotions, r3.values
+  counts.unit_preferences = r3.prefs -- [prefs15]
   counts.unit_relationships, counts.unit_wounds = r3.relationships, r3.wounds
   counts.entities, counts.nobles, counts.mandates, counts.hist_figs = soc.entities, soc.nobles, soc.mandates, soc.hist_figs
   counts.caravans, counts.diplomats, counts.building_links = soc.caravans, soc.diplomats, r4.links
@@ -3508,7 +3559,7 @@ local function finish()
   for _, k in ipairs({ 'units', 'citizens', 'items', 'buildings', 'plants', 'materials', 'tiletypes', 'tiles', 'z_exported',
                        'work_orders', 'plant_raws', 'building_jobs', 'farm_plots', 'burrows', 'squads',
                        'burrow_tiles', 'creature_raws', 'weapon_raws', 'armor_raws', 'unit_needs', 'unit_emotions',
-                       'unit_values', 'unit_relationships', 'unit_wounds', 'entities', 'nobles', 'mandates', 'hist_figs',
+                       'unit_values', 'unit_preferences', 'unit_relationships', 'unit_wounds', 'entities', 'nobles', 'mandates', 'hist_figs',
                        'caravans', 'diplomats', 'building_links', 'levers', 'locked_doors', 'traps', 'trade_depots',
                        'engravings', 'work_details', 'kitchen', 'locations', 'occupations', 'crimes', 'punishments',
                        'haul_routes', 'stockpile_filters', 'pets', 'pastured', 'slaughter', 'pregnant',

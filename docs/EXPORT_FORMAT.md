@@ -903,3 +903,35 @@ Trussroads r7: 29 735 leaves (12 232 meats, 1 056 creatures in each of the 10 cr
 ### manifest.json: round-9 keys
 
 New `counts`: `stockpile_options` (leaves), `invasions`, `offsite_units` (inactive units off the map), `caged_units`, `chained_units`. New phase `pile_options` in `max_slice_by_phase`.
+
+## Additions for round 15 (still format v1) `[prefs15]`
+
+### units.jsonl: `preferences`
+
+`preferences`: array, one object per entry of `unit.status.current_soul.preferences` (DFHack
+`unit_preference`, wiki "Preferences"); empty for units without a soul. Read only; only the
+union member that belongs to the type is read.
+
+| key | type | notes |
+|---|---|---|
+| `kind` | string | `df.unit_preference_type` name: `LikeMaterial`, `LikeCreature`, `LikeFood`, `HateCreature`, `LikeItem`, `LikePlant`, `LikeTree`, `LikeColor`, `LikeShape`, `LikePoeticForm`, `LikeMusicalForm`, `LikeDanceForm` |
+| `active` | bool | DF `active` (older DFHack: `flags.visible`); false = ignored by DF |
+| `mat` | int | `LikeMaterial` / `LikeFood`: material palette index |
+| `mat_token` | string | `LikeMaterial` / `LikeFood`: material token (`INORGANIC:GRANITE`) |
+| `mat_state` | string | `LikeMaterial` / `LikeFood`: `df.matter_state` name, "" if unknown |
+| `item_type` | string | `LikeItem` / `LikeFood`: `df.item_type` name (`WEAPON`, `CHAIR`, `DRINK`) |
+| `item_subtype` | string | `LikeItem`: subtype token (`ITEM_WEAPON_AXE_BATTLE`), "" = any |
+| `token` | string | `LikeCreature` / `HateCreature`: creature token; `LikePlant` / `LikeTree`: plant token |
+| `descriptor` | string | `LikeColor` / `LikeShape`: descriptor token; forms: the form id as text |
+
+Rustfort reads these into `rf_core::Unit::preferences`. Exports without the key (older
+rounds) load with an empty list; the sim then derives estimated preferences (`derived: true`).
+
+### creature_raws.json: `HAS_PREFSTRING` flag
+
+The creature `flags` list gets the pseudo-flag `HAS_PREFSTRING` when any caste has a
+`[PREFSTRING]` (used to pick wild creatures for derived preferences).
+
+### manifest.json: round-15 keys
+
+New `counts`: `unit_preferences` (entries over all units).
