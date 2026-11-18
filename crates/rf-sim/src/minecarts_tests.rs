@@ -187,10 +187,12 @@ fn ramps_need_speed_to_climb() {
     roll(&mut sim, k, 5_000);
     assert_eq!(cart_pos(&sim, k).z, Z, "a pushed cart does not climb");
     // 50 000 (a highest roller) climbs one ramp.
+    let mut sim = mk(ramp_world(), 4); // [perf13] fresh hall: the stopped cart would be hit
     let k = free_cart(&mut sim, Pos::new(25, ROW, Z), DE, 50_000);
     roll(&mut sim, k, 5_000);
     assert_eq!(cart_pos(&sim, k).z, Z + 1, "fast cart climbs");
     // Going down the ramp accelerates (-4 890 per tick).
+    let mut sim = mk(ramp_world(), 4); // [perf13]
     let k = free_cart(&mut sim, Pos::new(29, ROW, Z + 1), DW, PUSH_SPEED);
     let mut fastest = 0;
     for n in 0..2_000 {
@@ -346,4 +348,82 @@ fn routes_continue_bit_identically_after_save_and_load() {
         assert_eq!(a.state_hash(), b.state_hash(), "N {n} M {m}");
         assert_eq!(a.carts_report().trips, b.carts_report().trips);
     }
+}
+
+// ---------------------------------------------------------------- [perf13]
+
+/// [perf13] Run both carts' physics tick by tick.
+fn roll2(sim: &mut Sim, a: usize, b: usize, max: u64) {
+    for n in 1..=max {
+        let now = sim.ticks + n;
+        for k in [a, b] {
+            if sim.carts.carts[k].state == CartState::Moving {
+                sim.cart_physics(k, now);
+            }
+        }
+    }
+}
+
+#[test]
+fn stop_filters_decide_what_a_cart_loads() {
+    let tok = |sim: &Sim, id: i32| {
+        let it = &sim.world.items[sim.item_idx[&id] as usize];
+        sim.world.materials[it.mat as usize].token.clone()
+    };
+    // Filter syntax checks on one boulder.
+    let (sim, _, _, stones) = route_sim(11, Pos::new(19, ROW, Z));
+    let ix = sim.item_idx[&stones[0]] as usize;
+    let t = tok(&sim, stones[0]);
+    let ok = |f: &[String]| sim.stop_filter_accepts(f, ix);
+    assert!(ok(&[]), "empty = everything");
+    assert!(ok(&["stone/mats/*".into()]));
+    assert!(ok(&[format!("stone/mats/{t}")]));
+    assert!(!ok(&["stone/mats/*".into(), format!("stone/mats/!{t}")]), "excluded leaf");
+    assert!(!ok(&["wood/mats/*".into()]), "other category");
+    assert!(!ok(&["stone/none/-".into()]));
+    // A wood-only stop loads none of the stones; the stone stop loads all three.
+    for (f, want) in [("wood/mats/*", 0), ("stone/mats/*", 3)] {
+        let (mut sim, r, _, _) = route_sim(11, Pos::new(19, ROW, Z));
+        sim.set_stop_filter(r, 0, &[f]);
+        assert_eq!(sim.stop_filter(r, 0), vec![f.to_string()]);
+        sim.run_ticks(3_000);
+        assert_eq!(sim.carts_report().loaded, want, "{f}");
+    }
+}
+
+#[test]
+fn carts_collide_with_carts_and_knock_creatures_down() {
+    let mut sim = mk(world(), 12);
+    // Head-on: equal masses swap their speeds, so the fast cart bounces back west.
+    let a = free_cart(&mut sim, Pos::new(20, ROW, Z), DE, 30_000);
+    let b = free_cart(&mut sim, Pos::new(24, ROW, Z), DW, 10_000);
+    roll2(&mut sim, a, b, 300);
+    let st = sim.carts_report();
+    assert!(st.cart_collisions >= 1, "{st:?}");
+    assert!(cart_pos(&sim, a).x < cart_pos(&sim, b).x, "the carts did not pass through each other");
+    // A fast cart runs into a dwarf standing on the track.
+    let mut sim = mk(world(), 13);
+    let t = sim.world.idx(Pos::new(25, ROW, Z)).unwrap() as u32;
+    sim.ai[0].pos = t;
+    let c = free_cart(&mut sim, Pos::new(20, ROW, Z), DE, 60_000);
+    let now = sim.ticks;
+    roll(&mut sim, c, 200);
+    let st = sim.carts_report();
+    assert_eq!(st.unit_collisions, 1, "{st:?}");
+    assert!(sim.combat.f[0].uncon_until > now, "knocked out");
+}
+
+#[test]
+fn guided_carts_follow_the_track() {
+    let (mut sim, r, _, _) = route_sim(14, Pos::new(19, ROW, Z));
+    sim.set_stop_conditions(r, 0, &["Guide"]);
+    sim.set_stop_conditions(r, 1, &["Guide"]);
+    for _ in 0..400 {
+        sim.run_ticks(25);
+        if sim.route_status(r).trips >= 2 {
+            break;
+        }
+    }
+    let st = sim.carts_report();
+    assert!(st.guided >= 2 && st.guided_on_track >= 1, "{st:?}");
 }

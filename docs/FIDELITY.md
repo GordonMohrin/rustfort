@@ -628,3 +628,13 @@ Seams only: no rule is simulated yet; each module owner adds its own section bel
 | Entity attitude `EntityInfo::attitude` | MISSING | Field only (wiki Diplomacy); set by `diplomacy`. |
 | Hauling route stop item filter `HaulStop::filter` | MISSING | Stored and editable through the API; minecarts do not apply it yet (wiki Hauling route: stop conditions and desired items). |
 | Moon phase (`Sim::moon_phase`) | MISSING | Stub returns 0; wiki Werebeast (full moon). |
+
+## Minecarts round 13 (`[perf13]`)
+
+| Rule | Class | Notes |
+|---|---|---|
+| Per-stop item filter (`HaulStop::filter`, `set_stop_filter`) | OK / ESTIMATE | wiki Hauling route ("desired items" of a stop). Uses the stockpile filter syntax: category must match, `*` takes a group, `!X` excludes; type-like groups match kind/subtype, `quality_*` the quality, others the material token or DF's built-in lists (WOOD, COAL, glass, ash). Item colors are ignored (ESTIMATE). A stop without a filter keeps the round-12 rule (load what a later stop's piles take). |
+| Guided carts follow the track | OK / ESTIMATE | wiki Minecart (guiding): the guide walks the track tiles to the next stop (corners turn, junctions go straight). Falls back to the walking path when no track leads there or a track tile is not walkable (ESTIMATE). |
+| Cart hits cart | ESTIMATE | wiki Minecart (collisions happen; no formula published). 1-D elastic collision by load weight when a cart enters a tile with another cart on the ground and is faster along the line of travel; the hitter stays on its tile; a hit idle/stopped cart starts rolling. |
+| Cart hits creature | ESTIMATE | wiki Minecart (fast carts knock creatures down and hurt them). From 25 000 speed: creatures on the entered tile are unconscious for momentum/50 ticks (10..1 000); the cart loses momentum as if hitting 60Γ. Injuries are MISSING. |
+| Checkpoint effect, cart-on-cart derailing | MISSING | |

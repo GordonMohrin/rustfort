@@ -43,12 +43,23 @@
 //!   1.6x, an empty iron cart 1.8x, a full cart of stone 4x.
 //! - Item volumes besides the wiki's table (boulder 100 000, log 50 000, bar/block 6 000,
 //!   meal 1 000, cloth 200): gems 1 200, other items 5 000 cm³.
-//! - Stops load anything from their linked piles (DF's per-stop item filter is not
-//!   modelled); without a fill condition a stop departs when nothing more can be loaded or
-//!   unloaded. Guided carts follow the walking path, not the track.
+//! - [perf13] **Stop item filters** (`HaulStop::filter`, stockpile filter syntax): a stop with
+//!   a filter loads only items it takes (category must match; `type`-like groups match the
+//!   item kind/subtype, `quality_*` groups the quality, other groups the material token or a
+//!   built-in material list such as WOOD/COAL; `!X` excludes, `*` takes the group; item colors
+//!   are ignored). Stops without a filter load what a later stop's linked piles take.
+//!   Without a fill condition a stop departs when nothing more can be loaded or unloaded.
+//! - [perf13] **Guided carts follow the track**: the guide walks the track tiles from the cart
+//!   to the next stop (corners turn, junctions go straight) when that track leads there and
+//!   every tile is walkable; otherwise the walking path (ESTIMATE fallback).
+//! - [perf13] **Collisions** (wiki Minecart: carts hit carts and creatures; formulas are not
+//!   published): a cart entering a tile with another cart on the ground makes a 1-D elastic
+//!   collision by load weight (the hitter stays on its tile); a cart of 25 000 speed or more
+//!   knocks the creatures on the tile it enters unconscious for momentum/50 ticks (10..1 000)
+//!   and gives each 60Γ worth of momentum (ESTIMATE). No injuries yet.
 //! - A cart that stops away from a stop (derailed, fell, ran out of speed) is carried by a
-//!   dwarf to the stop it was heading for. Cart collisions and the checkpoint effect are not
-//!   modelled; a ridden cart that falls just stops.
+//!   dwarf to the stop it was heading for. The checkpoint effect is not modelled; a ridden
+//!   cart that falls just stops.
 
 use crate::path::Goals;
 use crate::{labor, Sim, Task, NONE};
@@ -69,6 +80,12 @@ pub const FRICTION_TRACK: i32 = 10;
 pub const FRICTION_FLOOR: i32 = 200;
 pub const FRICTION_RAMP_UP: i32 = 4_910;
 pub const FRICTION_RAMP_DOWN: i32 = -4_890;
+/// [perf13] Collisions with creatures (ESTIMATE): carts from this speed knock creatures down;
+/// a creature counts as this many Γ; unconscious ticks = momentum / divisor (at most max).
+pub const UNIT_HIT_SPEED: i32 = 25_000;
+pub const UNIT_MASS: i64 = 60;
+const HIT_TICKS_DIV: i64 = 50;
+const HIT_TICKS_MAX: u64 = 1_000;
 /// Speed cap (ESTIMATE; keeps a cart below 2.7 tiles per tick).
 pub const MAX_SPEED: i32 = 270_000;
 /// Capacities in cm³ (wiki: minecart 500 000, wheelbarrow one fifth).
@@ -190,6 +207,48 @@ pub fn item_volume(kind: &str, subtype: &str, stack: i32) -> i32 {
         _ if is_minecart(kind, subtype) => CART_VOLUME,
         _ if is_wheelbarrow(kind, subtype) => BARROW_CAPACITY / 2,
         _ => 5_000 * n,
+    }
+}
+
+/// [perf13] DF's item quality names (`df.item_quality`), index = `Item::quality`.
+const QUALITY_TOKENS: [&str; 7] = ["Ordinary", "WellCrafted", "FinelyCrafted", "Superior", "Exceptional", "Masterful", "Artifact"];
+
+/// [perf13] Stockpile category name of an item category (filter syntax).
+pub fn cat_name(c: crate::items::Cat) -> &'static str {
+    use crate::items::Cat::*;
+    match c {
+        Animals => "animals",
+        Food => "food",
+        Furniture => "furniture",
+        Corpses => "corpses",
+        Refuse => "refuse",
+        Stone => "stone",
+        Ammo => "ammo",
+        Coins => "coins",
+        BarsBlocks => "bars_blocks",
+        Gems => "gems",
+        FinishedGoods => "finished_goods",
+        Leather => "leather",
+        Cloth => "cloth",
+        Wood => "wood",
+        Weapons => "weapons",
+        Armor => "armor",
+        Sheet => "sheet",
+    }
+}
+
+/// [perf13] Token of a material in DF's built-in "other materials" lists (A-F), or "".
+fn builtin_mat_token(m: &rf_core::MaterialInfo) -> &'static str {
+    match m.token.as_str() {
+        "GLASS_GREEN" => "GREEN_GLASS",
+        "GLASS_CLEAR" => "CLEAR_GLASS",
+        "GLASS_CRYSTAL" => "CRYSTAL_GLASS",
+        "COAL" => "COAL",
+        "POTASH" => "POTASH",
+        "ASH" => "ASH",
+        "PEARLASH" => "PEARLASH",
+        _ if m.is_wood => "WOOD",
+        _ => "",
     }
 }
 
@@ -362,6 +421,11 @@ pub struct CartStats {
     pub barrow_hauls: u64,
     /// Tiles rolled by carts.
     pub tiles: u64,
+    /// [perf13] Guided trips that followed the track.
+    pub guided_on_track: u64,
+    /// [perf13] Carts that hit another cart / a creature.
+    pub cart_collisions: u64,
+    pub unit_collisions: u64,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -513,6 +577,64 @@ impl Sim {
             }
         }
         w
+    }
+
+    /// [perf13] Does a stop's item filter (stockpile filter syntax, see module docs) take the
+    /// item at index `idx`? An empty filter takes everything.
+    pub(crate) fn stop_filter_accepts(&self, filter: &[String], idx: usize) -> bool {
+        if filter.is_empty() {
+            return true;
+        }
+        let it = &self.world.items[idx];
+        let cname = cat_name(self.imeta[idx].cat);
+        let mat = self.world.materials.get(it.mat as usize);
+        let mtok = mat.map(|m| m.token.as_str()).unwrap_or("");
+        let builtin = mat.map(|m| builtin_mat_token(m)).unwrap_or("");
+        let quality = QUALITY_TOKENS.get(it.quality as usize).copied().unwrap_or("");
+        // Per class (type, material, quality): (constrained, matched).
+        let mut cls = [(false, false); 3];
+        let mut any = false;
+        for f in filter {
+            let mut parts = f.splitn(3, '/');
+            let c = parts.next().unwrap_or("");
+            if c != cname {
+                continue;
+            }
+            any = true;
+            let (Some(g), Some(t)) = (parts.next(), parts.next()) else { continue };
+            if g == "options" {
+                continue;
+            }
+            if g == "none" {
+                return false;
+            }
+            let k = match g {
+                "type" | "weapon_type" | "trapcomp_type" | "body" | "head" | "feet" | "hands" | "legs" | "shield" => 0,
+                "quality_core" | "quality_total" => 2,
+                "color" => continue, // ESTIMATE: item colors are not modelled
+                _ => 1,
+            };
+            let (leaf, excl) = match t.strip_prefix('!') {
+                Some(x) => (x, true),
+                None => (t, false),
+            };
+            let hit = |tok: &str| !tok.is_empty() && tok == leaf;
+            let matched = match k {
+                0 => hit(&it.kind) || hit(&it.subtype),
+                1 => hit(mtok) || hit(builtin),
+                _ => hit(quality),
+            };
+            cls[k].0 = true;
+            if excl {
+                // An excluded leaf of a `*` group overrides the group.
+                if matched {
+                    return false;
+                }
+            } else if leaf == "*" || matched {
+                cls[k].1 = true;
+            }
+        }
+        any && cls.iter().all(|&(constrained, matched)| !constrained || matched)
     }
 
     fn cart_volume(&self, cart: i32) -> i32 {
@@ -1027,8 +1149,9 @@ impl Sim {
         v
     }
 
-    /// Load jobs for cart `k`: (more items that fit are waiting, any items are waiting). Only
-    /// items that a later stop's linked piles take are loaded (stand-in for DF's stop filter).
+    /// Load jobs for cart `k`: (more items that fit are waiting, any items are waiting). Items
+    /// pass the stop's item filter ([perf13]); without one, only items that a later stop's linked
+    /// piles take are loaded.
     fn plan_load(&mut self, k: usize, stop: &rf_core::HaulStop, cands: &[(u32, i32)]) -> (bool, bool) {
         let c = self.carts.carts[k];
         let piles: Vec<u32> = stop.take_from.iter().filter_map(|&b| self.pile_index_of(b)).collect();
@@ -1044,7 +1167,8 @@ impl Sim {
                 }
             }
         }
-        if accept == 0 {
+        if accept == 0 || !stop.filter.is_empty() {
+            // [perf13] A stop with its own item filter loads what the filter takes.
             accept = u32::MAX;
         }
         let mut vol = self.cart_volume(c.item);
@@ -1062,7 +1186,7 @@ impl Sim {
                 continue;
             }
             let Some(&idx) = self.item_idx.get(&id) else { continue };
-            if self.imeta[idx as usize].reserved > 0 || accept & self.imeta[idx as usize].cat.bit() == 0 {
+            if self.imeta[idx as usize].reserved > 0 || accept & self.imeta[idx as usize].cat.bit() == 0 || !self.stop_filter_accepts(&stop.filter, idx as usize) {
                 continue;
             }
             waiting = true;
@@ -1298,8 +1422,12 @@ impl Sim {
             }
             match self.cart_next(c.tile, c.dir) {
                 Ok(t) => {
+                    if self.cart_collide(k, t, len) { // [perf13] another cart on the tile
+                        break;
+                    }
                     self.carts.carts[k].prog -= len;
                     self.cart_enter(k, t, now);
+                    self.cart_hit_units(k, t, now); // [perf13]
                 }
                 Err(fall) => {
                     let c = &mut self.carts.carts[k];
@@ -1322,6 +1450,102 @@ impl Sim {
         }
         if self.carts.carts[k].v == 0 {
             self.cart_stopped(k, now);
+        }
+    }
+
+    /// [perf13] Cart `k` is about to enter tile `t`, where another cart stands or rolls: an
+    /// elastic collision along the line of travel (ESTIMATE, see module docs). Returns true if
+    /// it hit (cart `k` stays on its tile).
+    fn cart_collide(&mut self, k: usize, t: u32, len: i32) -> bool {
+        let a = self.carts.carts[k];
+        let mut hit = None;
+        for (j, b) in self.carts.carts.iter().enumerate() {
+            if j == k || b.tile != t || b.state == CartState::Carried {
+                continue;
+            }
+            if b.state == CartState::Idle && !self.item_idx.get(&b.item).map(|&i| self.world.items[i as usize].flags.on_ground).unwrap_or(false) {
+                continue;
+            }
+            hit = Some(j);
+            break;
+        }
+        let Some(j) = hit else { return false };
+        let b = self.carts.carts[j];
+        let ub: i64 = if b.state != CartState::Moving {
+            0
+        } else if b.dir == a.dir {
+            b.v as i64
+        } else if b.dir == opposite(a.dir) {
+            -(b.v as i64)
+        } else {
+            0
+        };
+        let ua = a.v as i64;
+        if ub >= ua {
+            return false; // the cart ahead is as fast: no impact
+        }
+        let ma = self.load_weight(a.item).max(1) as i64;
+        let mb = self.load_weight(b.item).max(1) as i64;
+        let va = ((ma - mb) * ua + 2 * mb * ub) / (ma + mb);
+        let vb = ((mb - ma) * ub + 2 * ma * ua) / (ma + mb);
+        let clamp = |v: i64| (v.unsigned_abs().min(MAX_SPEED as u64)) as i32;
+        {
+            let c = &mut self.carts.carts[k];
+            c.v = clamp(va);
+            if va < 0 {
+                c.dir = opposite(a.dir);
+                c.prog = 0;
+            } else {
+                c.prog = len - 1;
+            }
+        }
+        {
+            let was_moving = b.state == CartState::Moving;
+            let c = &mut self.carts.carts[j];
+            c.v = clamp(vb);
+            c.dir = if vb < 0 { opposite(a.dir) } else { a.dir };
+            if !was_moving && c.v > 0 {
+                if c.state == CartState::AtStop {
+                    c.dest = c.stop;
+                }
+                c.state = CartState::Moving;
+                c.prog = 0;
+                c.derailed = false;
+                self.carts.moving += 1;
+            }
+        }
+        self.carts.stats.cart_collisions += 1;
+        true
+    }
+
+    /// [perf13] A cart of at least `UNIT_HIT_SPEED` entering tile `t` runs into the creatures
+    /// there: they are knocked down (unconscious for a time that grows with the cart's
+    /// momentum) and the cart loses the momentum it gives them (ESTIMATE).
+    fn cart_hit_units(&mut self, k: usize, t: u32, now: u64) {
+        let c = self.carts.carts[k];
+        if c.v < UNIT_HIT_SPEED {
+            return;
+        }
+        for s in 0..self.ai.len() {
+            if self.ai[s].pos != t || s as u32 == c.rider || self.ai[s].kind == crate::Kind::Dead {
+                continue;
+            }
+            let c = self.carts.carts[k];
+            if c.v < UNIT_HIT_SPEED {
+                break;
+            }
+            let m = self.load_weight(c.item).max(1) as i64;
+            let p = m * c.v as i64 / 1_000; // momentum in Γ x tiles/1000 ticks
+            let ticks = ((p / HIT_TICKS_DIV) as u64).clamp(10, HIT_TICKS_MAX);
+            self.combat_sync_units();
+            let f = &mut self.combat.f[s];
+            f.uncon_until = f.uncon_until.max(now + ticks);
+            self.ai[s].wake = self.ai[s].wake.max(now + ticks + 1);
+            let nv = (c.v as i64 * m / (m + UNIT_MASS)) as i32;
+            self.carts.carts[k].v = nv;
+            self.carts.stats.unit_collisions += 1;
+            let name = self.uname(s);
+            self.combat.log_line(format!("{} is struck by a minecart!", crate::combat::cap_pub(&name)));
         }
     }
 
@@ -1395,23 +1619,9 @@ impl Sim {
             if bits & d == 0 {
                 continue;
             }
-            let (mut t, mut dir) = (c.tile, d);
-            for _ in 0..4_000 {
-                let Ok(nt) = self.cart_next(t, dir) else { break };
-                t = nt;
-                if Some(t) == goal {
+            if let Some(g) = goal {
+                if self.track_trace(c.tile, d, g, None) {
                     return d;
-                }
-                let b = self.track_bits(t as usize);
-                if b == 0 {
-                    break;
-                }
-                if b & dir == 0 {
-                    let o = b & !opposite(dir);
-                    if o.count_ones() != 1 {
-                        break;
-                    }
-                    dir = o;
                 }
             }
         }
@@ -1430,6 +1640,75 @@ impl Sim {
         } else {
             DN
         }
+    }
+
+    /// [carts12/perf13] Follow the track from `from` leaving in direction `d` (corners turn,
+    /// junctions go straight, at most 4 000 tiles) and report whether it reaches `goal`; the
+    /// tiles passed (without `from`, ending with `goal`) go to `out`.
+    fn track_trace(&self, from: u32, d: u8, goal: u32, mut out: Option<&mut Vec<u32>>) -> bool {
+        let (mut t, mut dir) = (from, d);
+        for _ in 0..4_000 {
+            let Ok(nt) = self.cart_next(t, dir) else { break };
+            t = nt;
+            if let Some(o) = out.as_deref_mut() {
+                o.push(t);
+            }
+            if t == goal {
+                return true;
+            }
+            let b = self.track_bits(t as usize);
+            if b == 0 {
+                break;
+            }
+            if b & dir == 0 {
+                let o = b & !opposite(dir);
+                if o.count_ones() != 1 {
+                    break;
+                }
+                dir = o;
+            }
+        }
+        false
+    }
+
+    /// [perf13] Walking path of a dwarf guiding a cart from `cart_tile` to stop tile `dest`
+    /// along the track (wiki: guided carts follow the track), or None when no track leads
+    /// there, the dwarf does not stand on or next to the cart, or a tile is not walkable.
+    fn guide_track_path(&self, s: usize, cart_tile: u32, dest: u32) -> Option<Vec<u32>> {
+        let bits = self.track_bits(cart_tile as usize);
+        if bits == 0 || dest == NONE {
+            return None;
+        }
+        let here = self.ai[s].pos;
+        let mut v = Vec::new();
+        if here != cart_tile {
+            let (a, b) = (self.nav.xyz(here as usize), self.nav.xyz(cart_tile as usize));
+            if a.2 != b.2 || a.0.abs_diff(b.0) > 1 || a.1.abs_diff(b.1) > 1 || !self.nav.walkable(cart_tile as usize) {
+                return None;
+            }
+            v.push(cart_tile);
+        }
+        let start = v.len();
+        for d in [DN, DS, DE, DW] {
+            if bits & d == 0 {
+                continue;
+            }
+            v.truncate(start);
+            if self.track_trace(cart_tile, d, dest, Some(&mut v)) {
+                return v[start..].iter().all(|&t| self.nav.walkable(t as usize)).then_some(v);
+            }
+        }
+        None
+    }
+
+    /// [perf13] Give slot `s` a ready path (no search).
+    fn set_walk_path(&mut self, s: usize, path: Vec<u32>, now: u64) {
+        let ai = &mut self.ai[s];
+        ai.path = path;
+        ai.path_i = 0;
+        ai.req = ai.req.wrapping_add(1);
+        ai.waiting = false;
+        ai.wake = now + 1;
     }
 
     fn dismount(&mut self, s: usize, now: u64) {
@@ -1638,7 +1917,14 @@ impl Sim {
                     self.add_xp(s, "HANDLE_VEHICLES", crate::skills::XP_USE);
                 }
                 self.carts.jobs[k].phase = 1;
-                self.request_path(s, self.walk_goals(j.dest), now);
+                let cart_tile = self.carts.carts[c].tile;
+                match if j.kind == JobK::Guide { self.guide_track_path(s, cart_tile, j.dest) } else { None } {
+                    Some(p) => {
+                        self.carts.stats.guided_on_track += 1;
+                        self.set_walk_path(s, p, now);
+                    }
+                    None => self.request_path(s, self.walk_goals(j.dest), now),
+                }
             }
             (JobK::Guide | JobK::Fetch, _) => {
                 let Some(c) = ci else {
