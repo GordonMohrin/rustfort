@@ -628,3 +628,20 @@ Seams only: no rule is simulated yet; each module owner adds its own section bel
 | Entity attitude `EntityInfo::attitude` | MISSING | Field only (wiki Diplomacy); set by `diplomacy`. |
 | Hauling route stop item filter `HaulStop::filter` | MISSING | Stored and editable through the API; minecarts do not apply it yet (wiki Hauling route: stop conditions and desired items). |
 | Moon phase (`Sim::moon_phase`) | MISSING | Stub returns 0; wiki Werebeast (full moon). |
+
+## Undead and necromancy (`[undead13]`)
+
+Module `crates/rf-sim/src/undead.rs` (tests `undead_tests.rs`). Off unless the region reanimates (`World::climate.reanimating`, not yet filled by the importer), the player/test toggle `Sim::set_reanimation_enabled` is on, a necromancer siege is enabled or spawned, or evil weather with a husk/thrall effect is active. The reference fort is in none of these, so its bench hash is unchanged and `undead_hash` mixes nothing.
+
+| Item | Class | Notes |
+|---|---|---|
+| Corpses rise in reanimating regions | OK / ESTIMATE | wiki Surroundings (evil, "reanimating"), Undead. Loose corpses rise as hostile undead of their race; corpses in a building (coffin), container, inventory or construction stay down. Chance 1 in 8 per 100-tick pass per corpse is an ESTIMATE (DF raises corpses within days). Corpses of units not seen dying take their race from the `CREATURE:RACE:...` material. |
+| Severed body parts rise | ESTIMATE | wiki Undead: severed limbs and heads animate on their own. Rustfort raises a part as a small undead of the race (1/10 body size); DF gives it the part's own body. |
+| Destroyed undead can rise again | OK | wiki Reanimation: the remains of a destroyed undead reanimate again in an evil area. |
+| Undead traits `NOT_LIVING`, `NOPAIN`, `NOSTUN`, `NOFEAR`, `NO_EAT/DRINK/SLEEP`, `PARALYZEIMMUNE`, `OPPOSED_TO_LIFE` | OK / ESTIMATE | wiki Undead, Creature token. Undead, husks and thralls never pass out (`knock_out`); undead and husks do not bleed and ignore brain/heart wounds; nerve paralysis is ignored. As `Kind::Other` hostiles they have no needs and do not flee. Hostile to all living (opposed to life) through the hostile role. |
+| How an undead is destroyed | ESTIMATE | DF: an undead dies when its head/upper body is destroyed or severed. Rustfort: head severed or knocked off, or total wound severity on upper/lower body >= 40 000 (4 fully damaged layers). |
+| Necromancers raise the dead | ESTIMATE | wiki Necromancer (`RAISE_DEAD`-style interaction). A living necromancer on the map raises the nearest risable corpse within 12 tiles (same z +/-1), chance 1 in 2 per pass; slain necromancers raise no more. |
+| Necromancer sieges | OK / ESTIMATE | wiki Necromancer, Siege: a necromancer leads an army of undead; uses the regular siege machinery (`raids::spawn_raid_ex`: edge, camp, charge, leader). Announcement "The dead walk. Hide while you still can!" (DF wording). Natural sieges only if the world has a necromancer tower entity (kind or name names a necromancer/tower; the export has no site types, so detection is an ESTIMATE) or `Sim::set_necromancer_sieges(true)`; chance 1 in 4 per season once the fort meets the siege tier, size half the regular siege (10..=60) are ESTIMATES. Every 10th undead is flagged intelligent (ESTIMATE). Undead do not retreat when the siege breaks; they stay as a horde (wiki: undead never flee). |
+| Husks and thralls from evil weather | OK / ESTIMATE | wiki Evil weather, Husk, Thrall: units outside under a cloud/rain with effect `HUSK` or `THRALL` (`Sim::evil_weather`, owned by weather) turn hostile; they leave the fort, squads and burrows. Exposure chance 1 in 2 per 100-tick pass is an ESTIMATE (DF: on contact, after a syndrome delay). Husks are `NOT_LIVING` (no bleeding); thralls only `NOSTUN/NOPAIN`. |
+| Intelligent undead speech, mummies, ghosts, undead from necromancer experiments | MISSING | |
+| Threats list (`Sim::threats`) | OK | `NecromancerSiege` per active siege, `UndeadHorde` for all other undead/husk/thrall hostiles. |
