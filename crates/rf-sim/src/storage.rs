@@ -389,7 +389,7 @@ impl Sim {
         self.store.last_pass = now;
         self.rebuild_containers(false);
         self.bring_containers(now);
-        if now % (rf_core::TICKS_PER_DAY as u64) < STORE_PERIOD {
+        if now % (rf_core::TICKS_PER_DAY as u64) < STORE_PERIOD && !self.decay_on() { // [decay15] decay15 owns rot when on
             self.rot_pass();
         }
     }

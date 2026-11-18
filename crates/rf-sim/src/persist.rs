@@ -213,6 +213,7 @@ impl Sim {
         v.push(("carts", fnv(|mix| self.carts_hash(&mut |x| mix(x))))); // [carts12]
         v.push(("weather", fnv(|mix| self.weather_hash(mix)))); // [contract13]
         v.push(("undead", fnv(|mix| self.undead_hash(mix)))); // [contract13]
+        v.push(("decay", fnv(|mix| self.decay_hash(mix)))); // [decay15]
         v.push(("vampires", fnv(|mix| self.vampires_hash(mix)))); // [contract13]
         v.push(("megabeasts", fnv(|mix| self.megabeasts_hash(mix)))); // [contract13]
         v.push(("diplomacy", fnv(|mix| self.diplomacy_hash(mix)))); // [contract13]

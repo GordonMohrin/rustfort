@@ -149,6 +149,7 @@ pub fn draw_labor(g: &mut Game) {
         super::round8::LaborTab::WorkDetails => super::workdetails::draw(g, c),
         super::round8::LaborTab::Kitchen => super::workdetails::draw_kitchen(g, c),
         super::round8::LaborTab::Advanced => draw_grid(g, c),
+        super::round8::LaborTab::StandingOrders => super::decay15::draw_standing_orders(g, c), // [decay15]
     }
 }
 

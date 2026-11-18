@@ -265,6 +265,7 @@ impl Sim {
             if *d >= WEAR_DAYS {
                 *d = 0;
                 self.life.rep.wear_steps += 1;
+                if self.decay_on() { let w0 = self.world.items[i].wear; self.decay_apply_wear_level(i, w0, w0.saturating_add(1)); self.world.items[i].wear = w0; } // [decay15] value drops with wear (w:Wear)
                 let it = &mut self.world.items[i];
                 it.wear += 1;
                 if it.wear > 3 {
@@ -435,6 +436,13 @@ impl Sim {
     // ------------------------------------------------------------------ miasma
 
     fn miasma_day(&mut self) {
+        if self.decay_on() { // [decay15] sources and spread come from decay15
+            let (src, set) = self.decay_miasma_set(); // [decay15]
+            self.life.rep.miasma_sources_max = self.life.rep.miasma_sources_max.max(src); // [decay15]
+            self.life.rep.miasma_tiles_max = self.life.rep.miasma_tiles_max.max(set.len()); // [decay15]
+            self.life.miasma = set; // [decay15]
+            return; // [decay15]
+        } // [decay15]
         let first = self.life.first_new_item;
         let mut sources: Vec<u32> = Vec::new();
         let mut ages = std::mem::take(&mut self.life.corpse_age);

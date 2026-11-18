@@ -104,6 +104,10 @@ is no generator state to save. Result: **run N, save, load, run M == run N+M (fu
   reloads in a row, the real fort N 100 / M 100 and N 2000 / M 1000, and the fallbacks); the
   chaos harness alternates exact reloads (flagged if the state hash changes) and bare-world
   reloads; `examples/saveload.rs` for long runs (`--sizes` prints the snapshot by part).
+- **`decay` part** ([decay15]): rot timers per item (days, stage, class), live vermin, refuse-pile
+  wear points, the miasma cloud (tile -> days left) and today's sources, the refuse standing
+  orders and the report. Depot/door tiles, rot tiles and the vermin species pool are caches rebuilt by
+  `decay_after_load` and the next daily pass.
 
 ### Continuation (gold standard)
 

@@ -628,3 +628,38 @@ Seams only: no rule is simulated yet; each module owner adds its own section bel
 | Entity attitude `EntityInfo::attitude` | MISSING | Field only (wiki Diplomacy); set by `diplomacy`. |
 | Hauling route stop item filter `HaulStop::filter` | MISSING | Stored and editable through the API; minecarts do not apply it yet (wiki Hauling route: stop conditions and desired items). |
 | Moon phase (`Sim::moon_phase`) | MISSING | Stub returns 0; wiki Werebeast (full moon). |
+
+## Decay, rot, vermin and wear (round 14, `[decay15]`)
+
+Module `crates/rf-sim/src/decay15.rs` (spec: `docs/mechanics/decay15.md`). On by default;
+`Sim::set_decay_enabled(false)` restores the round-13 rules and state hash.
+
+| rule | Rustfort [decay15] | DF (source) | class |
+|---|---|---|---|
+| What rots | food kinds (meat, fish, meals, cheese, plants); corpses, body parts, hides and remains only of materials that ROT (by token segment: muscle, skin, organs... rot; bone, tooth, chitin, horn, hair, shell, leather, silk do not) | w:Miasma, raws `[ROTS]` (material templates) | OK |
+| Never rot | seeds, drinks, flour, fat/tallow globs, milk, eggs; teeth/chitin "corpses" | w:Miasma ("it seems that they do not"), w:Nest box; export (cave crawler teeth fresh for years) | OK |
+| Food protection | stockpile tile, trade depot tile, minecart, carried, in a job, reserved or in a building; a container alone does not protect; raw fish never | w:Miasma | OK (wheelbarrow = carried while pushed: ESTIMATE) |
+| Food rot timer | 12-15 days of exposure (12 + per-item 0-3), counter keeps its value while protected; rots away 28 days later | not on the wiki; export: meals rotten 12 days after cooking | ESTIMATE |
+| Rotten food | "rotten X", plants "withered X"; leaves the food lists; becomes refuse | w:Refuse, w:Hauling | OK |
+| Corpse stages | rotten after 14 days, skeleton 56 days later ("X skeleton", "partial skeleton" for mutilated); skeletons stay (undead can raise them); imported corpses get a spread age (unknown) | w:Corpse; export ages | ESTIMATE (timers) |
+| Body parts | flesh parts: rotten at 14, after 28 more bones stay behind (1, 2 for limbs, 3 for a body half) or a skull for a head; hides rot (cannot be tanned) and vanish; shelled raw fish leave a shell | w:Bone, w:Shell, w:Tanner, w:Skin | OK (counts and timers ESTIMATE) |
+| Remains | rot at 14 days and vanish 14 later for species with hair; other species keep | w:Remains; export (only bat remains rotted) | ESTIMATE |
+| Reserved items | a rotten item reserved by a job or an undead claim is not destroyed until freed | spec M2.4 | OK |
+| Miasma sources | rotten GENERATES_MIASMA items (flesh, organs, meals, cheese, raw fish; not skin, plants, remains) lying loose on Subterranean tiles, not under 7/7 water | w:Miasma, raws | OK |
+| Miasma spread | 2 tiles orthogonally and up/down (stairs), never diagonally, not through closed doors/hatches (open while a creature stands in it), not onto outside tiles; lingers 2 days after the source is gone | w:Miasma | OK (range, linger, "outside" ESTIMATE) |
+| Refuse | animal corpses and body parts, bones, skulls, shells, hides, rotten food, withered plants and unworn XX clothing/armor -> refuse category; corpses of sapients (named, "X's corpse", CAN_LEARN/CAN_SPEAK) stay corpses | w:Refuse, w:Stockpile, w:Corpse | OK (tame animal corpses count as refuse unless named: ESTIMATE) |
+| Refuse standing orders | gather refuse (on), gather outdoor refuse (off), ignore outdoor vermin remains, dump per type (corpses, skulls, bones, shells, skins, hair, other; only with a garbage dump zone) | w:Standing orders | OK |
+| Hauling priority | nearest first, no category priority | w:Hauling | OK |
+| Refuse pile filters (bones/skulls/... per creature, fresh/rotten hide) | not applied | w:Stockpile | MISSING |
+| Vermin species | creature raws with VERMIN_GROUNDER/EATER/ROTTER (not fish-only); cavern list = BIOME_SUBTERRANEAN_*; at most 7 per list in token order; PENETRATEPOWER from a raws table | w:Vermin, w:Creature token, raws | OK (list choice ESTIMATE) |
+| Vermin spawning | per day: food piles 1/40 (eaters), refuse piles 1/40, rotting items 1/20 (rotters), each discovered cavern 1/10 (roamers); at most 24 alive; leave after 14 days | w:Vermin ("near food and refuse stockpiles") | ESTIMATE |
+| Vermin eating | an eater eats one unit of the nearest food within 4 tiles once a day; containers resist: wood/leather/cloth 1, stone/ceramic/glass 2, metal 3, eaten when PENETRATEPOWER > resistance | w:Stockpile, w:Using bins and barrels, w:Creature token | ESTIMATE (comparison not on the wiki) |
+| Vermin hunters | cats (HUNTS_VERMIN) and tame falcons (DIVE_HUNTS_VERMIN) kill a vermin within 2 tiles (1/2 per 100 ticks), leave "X remains"; owned cats bring them to the owner; dogs do not hunt vermin; no more remains from nothing | raws, w:Cat, w:Vermin | OK (rates ESTIMATE) |
+| Cat patrols to food piles | not simulated: cats hunt where they wander | w:Cat | MISSING |
+| Vermin thoughts, starving dwarves eat vermin, animal traps | not simulated | w:Vermin, w:Food | MISSING |
+| Wear levels | 806 400 points per level, destroyed after XX; value 100/75/50/25 % (also for clothing worn out by `lifestyle`) | w:Wear | OK |
+| Refuse-pile wear | clothing and armor one level per 56 days, bones and shells per 336 days; artifacts never | w:Wear, w:Bone ("quite quickly", "much slower") | ESTIMATE |
+| Combat wear (armor, weapons) | not simulated | w:Wear | MISSING |
+| Heat, cold, fire wear; 100-year organic wear | not simulated | w:Wear | MISSING |
+| Masterwork meal lost to rot or vermin (cook's thought) | not simulated | w:Kitchen | MISSING |
+| Exporter: rot_timer, wear_timer, material ROTS flags, refuse standing orders, vermin list | not exported yet (calibration still from item-id ages) | spec section 10 | MISSING |

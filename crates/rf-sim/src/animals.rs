@@ -1580,7 +1580,7 @@ impl Sim {
             }
             let mut r = Rng::for_unit(self.seed, s, now, 0xDA);
             // Cats kill vermin (estimate 1/14 per day).
-            if self.animals.species[sp].vermin && self.an_is_adult(s) && r.chance(1, 14) {
+            if !self.decay_on() && self.animals.species[sp].vermin && self.an_is_adult(s) && r.chance(1, 14) { // [decay15] decay15 hunts real vermin when on
                 self.animals.rep.vermin_killed += 1;
                 let t = self.ai[s].pos as usize;
                 let m = self.animal_mat("RAT", "REMAINS", "rat remains");

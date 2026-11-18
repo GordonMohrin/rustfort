@@ -115,10 +115,11 @@ pub fn labor_frame(g: &mut Game) -> Option<Rect> {
         LaborTab::WorkDetails => 0,
         LaborTab::Kitchen => 1,
         LaborTab::Advanced => 2,
+        LaborTab::StandingOrders => 3, // [decay15]
     };
-    let (hit, _) = tabs(g, c.x + 9.0 * 8.0 * s, c.y - 3.0 * s, &["Work details", "Kitchen", "Advanced: all labors"], cur);
+    let (hit, _) = tabs(g, c.x + 9.0 * 8.0 * s, c.y - 3.0 * s, &["Work details", "Kitchen", "Advanced: all labors", "Standing orders"], cur); // [decay15] tab added
     if let Some(i) = hit {
-        g.r8.labor_tab = [LaborTab::WorkDetails, LaborTab::Kitchen, LaborTab::Advanced][i];
+        g.r8.labor_tab = [LaborTab::WorkDetails, LaborTab::Kitchen, LaborTab::Advanced, LaborTab::StandingOrders][i]; // [decay15] tab added
         g.labor.typing = false;
         g.r8.wd_new = None;
     }

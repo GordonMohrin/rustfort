@@ -20,6 +20,8 @@ pub enum LaborTab {
     Kitchen,
     /// The per-labor grid of rounds 1-7 (DF's old labor screen / Dwarf Therapist style).
     Advanced,
+    /// [decay15] Standing orders (refuse).
+    StandingOrders, // [decay15]
 }
 
 #[derive(Default)]

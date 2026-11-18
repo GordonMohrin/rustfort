@@ -448,6 +448,7 @@ fn cat_adopts_a_dwarf_and_hunts_vermin() {
     let mut w = world();
     w.units.push(animal(500, "CAT", "FEMALE", Pos::new(cx - 2, cy - 2, hz), 0));
     let mut sim = Sim::new(w, 31);
+    sim.set_decay_enabled(false); // [decay15] the old 1/14 cat roll; real vermin hunting is tested in decay15/tests.rs
     sim.run_ticks((6 * rf_core::TICKS_PER_MONTH) as u32);
     let cat = sim.world.unit(500).unwrap();
     assert!(cat.pet_owner > 0, "the cat chose an owner");
