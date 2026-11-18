@@ -72,6 +72,8 @@ pub const SECTIONS: &[(&str, &[HelpRow])] = &[
             r("Reports", &["D_ANNOUNCE"]),
             r("Tasks", &["D_JOBLIST"]),    // [app10]
             r("Hauling", &["D_HAULING"]), // [app10]
+            r("Diplomacy", &["RF_DIPLOMACY"]), // [ui13]
+            r("Threats and weather", &["RF_THREATS"]), // [ui13]
         ],
     ),
     (

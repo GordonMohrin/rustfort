@@ -39,6 +39,8 @@ pub enum Action {
     Squads,
     Reports,
     World,
+    Diplomacy, // [ui13]
+    Threats,   // [ui13]
 }
 
 pub struct ToolButton {
@@ -86,6 +88,8 @@ pub const RIGHT: &[ToolButton] = &[
     tb(Action::Squads, "Squads", "BUTTON_SQUADS", Ico::Glyph(24, [230, 100, 90]), "D_SQUADS", true),
     tb(Action::Reports, "Reports", "", Ico::Glyph(19, [240, 200, 90]), "D_ANNOUNCE", true),
     tb(Action::World, "World: civilizations, caravans", "BUTTON_WORLD", Ico::Glyph(9, [120, 180, 240]), "D_WORLD", true), // [app8]
+    tb(Action::Diplomacy, "Diplomacy: civilizations, demands, meetings", "", Ico::Glyph(15, [240, 210, 120]), "RF_DIPLOMACY", true), // [ui13]
+    tb(Action::Threats, "Threats: megabeasts, undead, werebeasts, weather", "", Ico::Glyph(2, [230, 90, 80]), "RF_THREATS", true), // [ui13]
 ];
 
 pub struct DigEntry {
@@ -144,6 +148,8 @@ fn is_active(g: &Game, a: Action) -> bool {
         Action::World => g.screen == Screen::World,
         Action::Tasks => g.screen == Screen::Tasks,     // [app10]
         Action::Hauling => g.screen == Screen::Hauling, // [app10]
+        Action::Diplomacy => g.screen == Screen::Diplomacy, // [ui13]
+        Action::Threats => g.screen == Screen::Threats, // [ui13]
     }
 }
 
@@ -187,6 +193,8 @@ fn press(g: &mut Game, a: Action) {
             g.r10.tasks_dirty = true;
         }
         Action::Hauling => g.toggle_screen(Screen::Hauling),
+        Action::Diplomacy => super::round13::open_diplomacy(g, None), // [ui13]
+        Action::Threats => super::round13::open_threats(g), // [ui13]
     }
 }
 

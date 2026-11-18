@@ -263,6 +263,7 @@ fn unit_sheet(g: &mut Game, id: i32, r: Rect) {
                 g.font.draw(&t, x, y, s, col::TEXT_BAD);
                 y += lh;
             }
+            y = super::round13::unit_markers(g, &u, x, y, bw); // [ui13] undead, vampire, werebeast markers
             y += 6.0 * s;
             let squad = if u.squad_id >= 0 {
                 let name = super::military::squad_name(&g.sim.world, u.squad_id);

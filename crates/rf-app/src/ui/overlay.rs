@@ -17,7 +17,7 @@ pub fn draw_ui(g: &mut Game) {
     super::topbar::draw_zbar(g, tb_y - 8.0 * s);
     let top = super::topbar::TOPBAR_H * s + 6.0 * s;
     let right = screen_width() - super::topbar::ZBAR_W * s - 14.0 * s;
-    if !super::round8::hides_sheet(g) && !super::round10::hides_sheet(g) {
+    if !super::round8::hides_sheet(g) && !super::round10::hides_sheet(g) && !super::round13::hides_sheet(g) { // [ui13]
         super::panels::draw_sheet(g, top, toolbar_top.min(tb_y) - 6.0 * s, right); // [app8] not under the round-8 screens
     }
     super::minimap::draw(g, top, right); // [app8]
@@ -36,6 +36,8 @@ pub fn draw_ui(g: &mut Game) {
     super::round9::draw_petitions(g); // [app9]
     super::round9::draw_badges(g, top); // [app9] petitions alert
     super::round10::draw_screens(g); // [app10] tasks, hauling, map context menu
+    super::round13::draw_screens(g); // [ui13] diplomacy, threats
+    super::round13::draw_badges(g, top); // [ui13] demands / threats badges
     draw_status(g, toolbar_top.min(tb_y));
     if g.menu_open {
         draw_menu(g);
@@ -43,6 +45,7 @@ pub fn draw_ui(g: &mut Game) {
     super::alerts::draw_alert(g);
     super::round4::draw_popup(g); // [round 4]
     super::round9::draw_popups(g); // [app9] announcement boxes
+    super::round13::draw_popup(g); // [ui13] demand box
     super::help::draw_hints(g); // [round 6]
     super::help::draw_help(g); // [round 6]
     // Button tooltips win over the map tooltip (multi-line with '\n').

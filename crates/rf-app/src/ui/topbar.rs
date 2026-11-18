@@ -115,7 +115,7 @@ One step while paused: {one}", if g.paused { "Unpause" } else { "Pause" }), vec2
     let cal = g.sim.world.calendar;
     let date = date_string(&cal);
     x += g.font.draw(&date, x, ty, s, col::TEXT) + 14.0 * s;
-    let season = season_string(&cal);
+    let season = g.sim.season_label(); // [ui13] round-13 API (same words as season_string)
     let scol = match cal.month() / 3 {
         0 => Color::from_rgba(130, 220, 110, 255),
         1 => Color::from_rgba(250, 220, 90, 255),
@@ -123,6 +123,7 @@ One step while paused: {one}", if g.paused { "Unpause" } else { "Pause" }), vec2
         _ => Color::from_rgba(170, 210, 255, 255),
     };
     x += g.font.draw(&season, x, ty, s, scol) + 18.0 * s;
+    x = super::round13::draw_topbar_weather(g, x, ty, h); // [ui13] weather and temperature
 
     // Right side first: population and z-level / elevation.
     let w = &g.sim.world;

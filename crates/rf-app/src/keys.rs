@@ -256,6 +256,8 @@ impl Bindings {
         // [round 6] F1 or '?' opens the controls overview.
         add("RF_HELP", Trigger::Key { mods: 0, key: KeyCode::F1 });
         add("RF_HELP", Trigger::Char('?'));
+        add("RF_DIPLOMACY", Trigger::Key { mods: 0, key: KeyCode::F2 }); // [ui13]
+        add("RF_THREATS", Trigger::Key { mods: 0, key: KeyCode::F3 }); // [ui13]
     }
 
     pub fn triggers(&self, name: &str) -> &[Trigger] {

@@ -168,6 +168,8 @@ the same overview with your actual keys.
 | Minimap | `▓` button in the top bar (left of `?`) | |
 | Save | Esc menu "Save game" | F5 (quicksave) |
 | Load | Esc menu "Load game" (list of saves, newest first) | |
+| Diplomacy: civilizations, demands, meetings | toolbar (right group) | F2 |
+| Threats, megabeasts, weather, world event toggles | toolbar (right group) | F3 |
 | Controls overview | `?` button (top bar, right) | F1 or `?` |
 | Back to the title screen | Esc menu "Save and return to title" | |
 
@@ -531,6 +533,38 @@ position to jump there.
   Build > Constructions > Track) shows `TRACK_CARVED_*` / `TRACK_CONSTRUCTED_STONE|WOOD_*` with
   its directions, so corners, crossings and ends are visible.
 
+### Round 13: diplomacy, threats, weather, curses (tag `[ui13]`, `ui/round13.rs`)
+
+The screens read only the round-13 sim API (rf-sim `round13_api.rs`); while a module is still a
+stub they show an empty state.
+
+- **Top bar**: after the season (`Sim::season_label`) the weather (`Sim::weather_summary`:
+  clear, cloudy, rain, snow, fog, evil rain, evil cloud, or "No weather" when off) and the
+  surface temperature in degrees Celsius (`Sim::urist_to_celsius`; cyan at or below freezing),
+  plus "snow" / "ice". The tooltip adds degrees Urist, evil weather and the moon phase.
+- **Weather on the map**: rain streaks, snowflakes, fog, evil (red) rain and purple evil clouds
+  over the outside tiles of the shown level (`Sim::weather_at`, the evil cloud's center and
+  radius from `Sim::evil_weather`), and a white veil where snow lies (`Sim::snow_at`). Streaks
+  and flakes are drawn from 10 px per tile up; they move with real time, not with the sim.
+- **Diplomacy** (F2, toolbar right): tabs **Civilizations** (relation, attitude bar -100..100,
+  war year, trades; the own civilization lists the **outpost liaison requests** for next year's
+  caravan as toggle chips, `Sim::set_liaison_requests`; open demands and meetings of the
+  selected one), **Demands** (open first, with **Accept** / **Refuse**, `Sim::answer_demand`;
+  amount, due date, what the answer means) and **Meetings** (envoy, host, state). The header
+  shows the land title (`Sim::land_title`) and the diplomacy counters.
+- **Threats** (F3, toolbar right): active threats (`Sim::threats`: megabeasts, titans,
+  forgotten beasts, sieges, undead, necromancer sieges, werebeasts, vampires) with **Go**
+  (centers and selects the first creature), the megabeasts that came and their fate
+  (`Sim::megabeasts`), sky and moon, the **world event toggles** (weather, reanimation,
+  megabeasts, vampires, werebeasts, diplomats) and the module counters.
+- **Unit sheet** (Overview): markers from `Sim::unit_curse` (necromancer, undead, intelligent
+  undead, husk, thrall, unmasked vampire with the true name, suspected vampire with **Accuse of
+  vampirism**, `Sim::accuse_vampire`; werebeast in were-form; megabeast).
+- **Alerts**: a new open demand opens a box (pauses; **Accept** / **Refuse** /
+  **Diplomacy...** / **Later**; Enter, Esc or right-click close it); a blinking **Demands (n)**
+  and **Threats (n)** badge under the top bar opens the screen; new threats and evil weather
+  write a status line. Monsters and sieges keep the hostile arrival alert.
+
 ### Feel round: right-click, seen hostiles, portraits (tag `[feel-ui]`)
 
 - **Right-click closes the topmost window**, one per click, anywhere in the window, like DF
@@ -672,6 +706,12 @@ rustfort play --screenshot target/shots/a.png --frames 20 --view 48,48,22,1 \
   building and center on it), `r12-aim` (the selected siege engine aims 8 tiles north),
   `r12-dir:<n>` (direction n for the active Build tool, after `place:<label>`). Example:
   `--view 98,88,126,2 --ui "r12-machines,r12-select:Ballista,r12-aim"`.
+- Round 13: `diplomacy[:tab]` (0 civilizations, 1 demands, 2 meetings), `threats`,
+  `r13-weather:<rain|snow|fog|cloudy|evilrain|evilcloud|clear>` (`Sim::force_weather` for 10
+  days), and the test hooks `r13-demo` (made-up threats, demands, meetings and megabeasts around
+  real non-citizens, two of them marked necromancer / undead), `r13-popup` (the demand box) and
+  `r13-unit` (select the demo necromancer). Example:
+  `--ui "r13-demo,diplomacy:1"`.
 - Round 10: `tasks[:tab]`, `hauling`, `bpath:<Workshops/Farming|Workshops/Furnaces|Furniture|...>`
   (build menu at a hotkey-chain level), `ctx` (context menu of the camera's tile), `engraved`
   (select an engraved tile of quality superior or better), `items-tile` (the tile with the most
@@ -717,6 +757,8 @@ rule 3).
 - `ui/help.rs` (round 6): controls overview and first-time hints.
 - Feel round: `ui/rclick.rs` (right-click priority), `ui/alerts.rs` (`visible_hostiles`),
   `ui/panels.rs` (`draw_portrait`), rf-gfx `Gfx::portrait` / `creature::evaluate_portrait`.
+- Round 13: `ui/round13.rs` (Diplomacy and Threats screens, top-bar weather, weather overlay,
+  unit curse markers, demand box and badges, `--ui` demo states).
 - Round 12: `ui/round12.rs` (Hauling editor, build directions and ghost arrow, machine / siege
   engine / track stop / roller sheet sections, power overlay, route stops and carts on the map,
   aim tool, `--ui` demo states), rf-sim `build_api.rs` `[app12]` (machine and siege engine
