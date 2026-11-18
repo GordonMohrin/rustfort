@@ -220,6 +220,13 @@ pub(crate) struct LayerT {
     pub arteries: bool,
     pub rigid: bool,
     pub hair: bool,
+    /// [health15] DF HEALING_RATE (100 soft tissue, 1000 bone; `health15::NO_HEAL` = never,
+    /// 0 = unknown: derived from the tissue name).
+    #[serde(default)] // [health15]
+    pub heal: u16, // [health15]
+    /// [health15] SETTABLE tissue (bone, shell): fractures are set and immobilized.
+    #[serde(default)] // [health15]
+    pub settable: bool, // [health15]
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)] // [saves11]
@@ -308,6 +315,9 @@ pub(crate) struct WoundS {
     pub bleed: i32,
     pub pain: i32,
     pub age: i32,
+    /// [health15] Medical extension bits (`health15::mx`: fracture class, immobilization, nerves).
+    #[serde(default)] // [health15]
+    pub mx: u16, // [health15]
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)] // [saves11]
@@ -927,6 +937,8 @@ fn layer_from(tissue: &str, mech: Mech) -> LayerT {
         arteries,
         rigid: mech.isay < 1000.0,
         hair: ["HAIR", "FEATHER", "EYEBROW", "EYELASH", "WHISKER", "MOUSTACHE", "SIDEBURNS", "BEARD"].iter().any(|h| up.contains(h)),
+        heal: crate::health15::heal_of_tissue(&up), // [health15]
+        settable: crate::health15::settable_tissue(&up), // [health15]
     }
 }
 
@@ -981,6 +993,7 @@ impl Sim {
         let mut parts = Vec::new();
         let mut layers = Vec::new();
         let mut thick = Vec::new();
+        let raw_heal = c.body_parts.iter().any(|p| p.layers.iter().any(|t| t.healing_rate > 0)); // [health15] export has HEALING_RATE
         for p in &c.body_parts {
             let l0 = layers.len() as u16;
             let mut ls: Vec<&TissueLayerRaw> = p.layers.iter().collect();
@@ -1004,6 +1017,7 @@ impl Sim {
                     default_mech(&format!("{} {}", t.material, t.tissue))
                 };
                 layers.push(layer_from(&t.tissue, m));
+                crate::health15::layer_from_raw(layers.last_mut().unwrap(), t, raw_heal); // [health15]
                 thick.push(if t.thickness > 0 { t.thickness } else { tissue_info(&t.tissue).2 });
             }
             parts.push(PartT {
@@ -1304,7 +1318,7 @@ impl Sim {
                     flags |= bit;
                 }
             }
-            out.push(WoundS { part: pi as u16, layer, flags, sev: w.severity.clamp(0, 10_000), bleed: w.bleeding.max(0), pain: w.pain.max(0), age: w.age });
+            out.push(WoundS { part: pi as u16, layer, flags, sev: w.severity.clamp(0, 10_000), bleed: w.bleeding.max(0), pain: w.pain.max(0), age: w.age, mx: 0 /* [health15] */ });
         }
         let f = &mut self.combat.f[s];
         for w in &out {
@@ -1568,7 +1582,7 @@ impl Sim {
             None => {
                 let b = &self.combat.bodies[self.combat.f[a].body as usize];
                 let ps = &self.combat.f[a].part_state;
-                let usable: Vec<&AtkT> = b.attacks.iter().filter(|x| x.part < 0 || ps.get(x.part as usize).copied().unwrap_or(0) & 3 == 0).collect();
+                let usable: Vec<&AtkT> = b.attacks.iter().filter(|x| x.part < 0 || ps.get(x.part as usize).copied().unwrap_or(0) & 7 == 0).collect(); // [health15] 4 = function lost (motor nerve)
                 if usable.is_empty() {
                     return false;
                 }
@@ -2001,7 +2015,7 @@ impl Sim {
             let mut ok = true;
             while k >= 0 {
                 let kp = &b.parts[k as usize];
-                if f.part_state[k as usize] & 3 != 0 {
+                if f.part_state[k as usize] & 7 != 0 { // [health15] 4 = function lost (motor nerve)
                     ok = false;
                     break;
                 }
@@ -2049,7 +2063,7 @@ impl Sim {
                 w.pain = w.pain.max(pain);
                 w.age = 0;
             }
-            None => f.wounds.push(WoundS { part, layer, flags: fl, sev: sev.min(10_000), bleed, pain, age: 0 }),
+            None => f.wounds.push(WoundS { part, layer, flags: fl, sev: sev.min(10_000), bleed, pain, age: 0, mx: 0 /* [health15] */ }),
         }
         f.bleed += bleed;
         self.list_wounded(d);
@@ -2076,7 +2090,7 @@ impl Sim {
         };
         let bleed = (vol / 40.0).max(3.0) as i32;
         let f = &mut self.combat.f[d];
-        f.wounds.push(WoundS { part, layer: u16::MAX, flags: wf::SEVERED | wf::BLEEDING, sev: 10_000, bleed, pain: 50, age: 0 });
+        f.wounds.push(WoundS { part, layer: u16::MAX, flags: wf::SEVERED | wf::BLEEDING, sev: 10_000, bleed, pain: 50, age: 0, mx: 0 /* [health15] */ });
         f.bleed += bleed;
         self.list_wounded(d);
         self.list_bleeder(d);
@@ -2401,6 +2415,8 @@ impl Sim {
             }
             let rest = self.resting(s);
             let in_hosp = rest && self.in_hospital(s);
+            let bi = self.combat.f[s].body as usize; // [health15]
+            let layers: &[LayerT] = self.combat.bodies.get(bi).map(|b| &b.layers[..]).unwrap_or(&[]); // [health15]
             let f = &mut self.combat.f[s];
             let mut bleed = 0;
             for w in &mut f.wounds {
@@ -2428,6 +2444,7 @@ impl Sim {
                 } else {
                     15
                 };
+                let rate = crate::health15::scale_heal(rate, w, layers, rest, in_hosp); // [health15] per-tissue HEALING_RATE
                 w.sev -= rate;
                 w.pain = (w.pain * w.sev.max(0) / 10_000).max(if w.sev > 0 { 1 } else { 0 });
             }
@@ -2487,7 +2504,7 @@ impl Sim {
             return false;
         }
         let total: i32 = f.wounds.iter().filter(|w| w.flags & wf::SEVERED == 0).map(|w| w.sev).sum();
-        f.wounds.iter().any(|w| w.flags & wf::BROKEN != 0) || total > 15_000 || f.blood * 10 < f.blood_max * 7 || self.health_wants_bed(s) // [moods]
+        f.wounds.iter().any(|w| w.flags & wf::BROKEN != 0 && !crate::health15::immobilized(w)) || total > 15_000 || f.blood * 10 < f.blood_max * 7 || self.health_wants_bed(s) || self.h15_in_traction(s) // [moods] [health15] immobilized fractures may leave bed; traction keeps
     }
 
     /// [audit-combat] An able hostile within 3 tiles (same z +-1): too close to lie down.
@@ -3326,7 +3343,7 @@ mod tests {
         // A broken bone (as after a fight): DF sends the dwarf to bed.
         sim.ensure_body(d);
         let part = 0u16;
-        sim.combat.f[d].wounds.push(WoundS { part, layer: u16::MAX, flags: wf::BROKEN, sev: 5_000, bleed: 0, pain: 10, age: 0 });
+        sim.combat.f[d].wounds.push(WoundS { part, layer: u16::MAX, flags: wf::BROKEN, sev: 5_000, bleed: 0, pain: 10, age: 0, mx: 0 /* [health15] */ });
         sim.list_wounded(d);
         sim.run_ticks(200);
         assert_eq!(sim.combat.f[d].role, Role::Patient, "wounded soldier rests");

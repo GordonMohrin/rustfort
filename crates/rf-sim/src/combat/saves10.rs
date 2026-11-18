@@ -293,7 +293,7 @@ impl Sim {
             f.home = fs.home;
             f.duty = duty_dec(fs.duty);
             f.squad = fs.squad;
-            f.wounds = fs.wounds.iter().map(|w| WoundS { part: w.0, layer: w.1, flags: w.2, sev: w.3, bleed: w.4, pain: w.5, age: w.6 }).collect();
+            f.wounds = fs.wounds.iter().map(|w| WoundS { part: w.0, layer: w.1, flags: w.2, sev: w.3, bleed: w.4, pain: w.5, age: w.6, mx: 0 /* [health15] */ }).collect();
             if fs.part_state.len() == f.part_state.len() {
                 f.part_state = fs.part_state;
             }

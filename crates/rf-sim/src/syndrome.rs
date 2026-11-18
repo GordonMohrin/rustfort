@@ -223,7 +223,7 @@ impl Sim {
                 };
                 let pname = body.parts[part as usize].name.clone();
                 let f = &mut self.combat.f[d];
-                f.wounds.push(WoundS { part, layer, flags, sev, bleed, pain, age: 0 });
+                f.wounds.push(WoundS { part, layer, flags, sev, bleed, pain, age: 0, mx: 0 /* [health15] */ });
                 f.bleed += bleed;
                 self.list_wounded(d);
                 if bleed > 0 {

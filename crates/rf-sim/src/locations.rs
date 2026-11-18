@@ -398,6 +398,7 @@ impl Sim {
                 zones: vec![b.id],
                 occupations: Vec::new(),
                 allow_visitors: true,
+                supplies: Vec::new(), // [health15]
             });
             next += 1;
         }

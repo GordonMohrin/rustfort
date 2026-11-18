@@ -403,7 +403,7 @@ impl Sim {
         let roll = r.below(total);
         let part = body.targets.iter().find(|t| roll < t.1).map(|t| t.0).unwrap_or(body.targets[0].0);
         let layer = body.parts[part as usize].l0;
-        self.combat.f[s].wounds.push(crate::combat::WoundS { part, layer, flags: crate::combat::wf::BRUISED, sev: 300, bleed: 0, pain: 5, age: 0 });
+        self.combat.f[s].wounds.push(crate::combat::WoundS { part, layer, flags: crate::combat::wf::BRUISED, sev: 300, bleed: 0, pain: 5, age: 0, mx: 0 /* [health15] */ });
         self.list_wounded(s);
         self.combat.stats.sparring_injuries += 1;
         let n = self.uname(s);

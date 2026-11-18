@@ -71,6 +71,8 @@ pub use round12_api::{RouteStatus, SIEGE_ENGINES};
 pub mod round13_api; // [contract13] round-13 public API (weather, undead, vampires, megabeasts, diplomacy, threats)
 pub use round13_api::{Demand, DemandKind, DiplomacyEntity, DiplomacyReport, EvilWeather, Meeting, MeetingKind, MegabeastInfo, MegabeastReport, Threat, ThreatKind, UndeadReport, UnitCurse, VampireReport, WeatherInfo, WeatherKind, WeatherReport}; // [contract13]
 pub mod weather; // [contract13] owner [weather13]: weather, climate, freezing, snow, evil weather
+pub mod health15; // [health15] hospitals, fractures, casts, traction, nerves, crutches, outcomes
+pub mod health15_api; // [health15] public API
 pub mod undead; // [contract13] owner [undead13]: reanimation, undead, necromancers, husks/thralls
 pub mod vampires; // [contract13] owner [vampire13]: vampires, werebeasts
 pub mod megabeasts; // [contract13] owner [mega13]: megabeasts, semi-megabeasts, titans
@@ -701,6 +703,7 @@ pub struct Sim {
     carts: minecarts::Carts,
     /// [contract13] Round-13 module state (see `weather`, `undead`, `vampires`, `megabeasts`, `diplomacy`).
     weather: weather::Weather, // [contract13] owner [weather13]
+    h15: health15::Health15, // [health15]
     undead: undead::Undead, // [contract13] owner [undead13]
     vamp: vampires::Vamp, // [contract13] owner [vampire13]
     mega: megabeasts::Mega, // [contract13] owner [mega13]
@@ -857,6 +860,7 @@ impl Sim {
             growth: growth::Growth::default(), // [skills9]
             carts: minecarts::Carts::default(), // [carts12]
             weather: weather::Weather::default(), // [contract13]
+            h15: health15::Health15::default(), // [health15]
             undead: undead::Undead::default(), // [contract13]
             vamp: vampires::Vamp::default(), // [contract13]
             mega: megabeasts::Mega::default(), // [contract13]
@@ -1306,6 +1310,7 @@ impl Sim {
         self.society2_hash(&mut mix); // [society2]
         self.carts_hash(&mut mix); // [carts12]
         self.weather_hash(&mut mix); // [contract13] owner [weather13]
+        self.h15_hash(&mut mix); // [health15]
         self.undead_hash(&mut mix); // [contract13] owner [undead13]
         self.vampires_hash(&mut mix); // [contract13] owner [vampire13]
         self.megabeasts_hash(&mut mix); // [contract13] owner [mega13]
@@ -1431,6 +1436,7 @@ impl Sim {
         if now % 100 == 73 {
             self.moods_pass(now); // [moods]
         }
+        self.h15_tick(now); // [health15] before health_tick (classifies new wounds)
         self.health_tick(now); // [moods]
         self.caverns_tick(now); // [moods]
         self.animals_tick(now); // [animals]
@@ -1926,6 +1932,9 @@ impl Sim {
         let restricted = self.alert_restricted(s); // [r7] civilian alert: burrow jobs only
         if pf!(2, self.health_decide(s, now)) { // [military2] doctors work inside the alert burrow too
             return; // [moods] doctors and caretakers
+        }
+        if !self.h15.stock.is_empty() && !restricted && self.h15_decide(s, now) {
+            return; // [health15] stock the hospital chests
         }
         if pf!(3, self.defense_try_job(s, now)) { // [military2] levers inside the alert burrow too
             return; // [defense] Pull the Lever
@@ -3015,7 +3024,7 @@ impl Sim {
         let it = &self.world.items[idx];
         match self.world.idx(it.pos).and_then(|t| self.pile_at.get(&(t as u32))) {
             Some(&(p, _)) => self.piles[p as usize].cats & self.imeta[idx].cat.bit() != 0,
-            None => false,
+            None => self.h15_stored(idx), // [health15] hospital chest supplies stay
         }
     }
 

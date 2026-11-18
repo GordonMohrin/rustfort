@@ -342,6 +342,7 @@ pub const RECIPES: &[Recipe] = &[
     r!("ConstructCatapultParts", "", "CATAPULTPARTS", "", "wood", "Construct catapult parts", "Siege", labor::SIEGECRAFT, "SIEGECRAFT", Input::Log, 500, 1, "catapult parts"),
     r!("ConstructBoltThrowerParts", "", "BOLT_THROWER_PARTS", "", "wood", "Construct bolt thrower parts", "Siege", labor::SIEGECRAFT, "SIEGECRAFT", Input::Log, 500, 1, "bolt thrower parts"),
     r!("AssembleSiegeAmmo", "", "SIEGEAMMO", "ITEM_SIEGEAMMO_BALLISTA", "wood", "Make wooden ballista arrow", "Siege", labor::SIEGECRAFT, "SIEGECRAFT", Input::Log, 400, 5, "ballista arrow"),
+    rx!("MAKE_PLASTER_POWDER", "Make plaster powder", "Kiln", labor::SMELT, "SMELT", "plaster powder"), // [health15] raws reaction_other.txt
 ];
 
 /// Job kinds counted in the report (`jobs_done`): recipes first, then these.
@@ -1793,7 +1794,7 @@ impl Sim {
         let sp = self.nav.xyz(site as usize);
         let mut best: Vec<(i32, i32)> = Vec::new();
         for idx in 0..self.world.items.len() {
-            if self.imeta[idx].pc == pc::NONE || !pred(self, idx) || !self.item_free(idx, now) {
+            if self.imeta[idx].pc == pc::NONE || !pred(self, idx) || !self.item_free(idx, now) || self.h15_stored(idx) { // [health15] hospital chest supplies
                 continue;
             }
             let it = &self.world.items[idx];

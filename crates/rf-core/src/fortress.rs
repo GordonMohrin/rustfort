@@ -63,7 +63,21 @@ pub struct Location {
     pub occupations: Vec<Occupation>,
     /// Visitors allowed (DF: residents / citizens only / visitors).
     pub allow_visitors: bool,
+    /// [health15] Hospital supplies (exporter `supplies`: desired and stocked amounts in DF's
+    /// units, e.g. thread 15 000 per item).
+    #[serde(default)] // [health15]
+    pub supplies: Vec<LocationSupply>, // [health15]
 }
+
+/// [health15] One hospital supply line of a location (DF `location.contents`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)] // [health15]
+#[serde(default)] // [health15]
+pub struct LocationSupply { // [health15]
+    /// `thread`, `cloth`, `splints`, `crutches`, `powder`, `buckets`, `soap`, ... // [health15]
+    pub item: String, // [health15]
+    pub desired: i32, // [health15]
+    pub count: i32, // [health15]
+} // [health15]
 
 /// A crime / justice case (DF `crime`).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

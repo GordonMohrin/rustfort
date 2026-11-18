@@ -435,7 +435,9 @@ impl Sim {
 
     /// [saves11] Rebuild what the snapshot does not store (`#[serde(skip)]` caches). Nothing
     /// today: the landmark tables rebuild their own index maps while decoding.
-    pub(crate) fn after_exact_load(&mut self) {}
+    pub(crate) fn after_exact_load(&mut self) {
+        self.h15_after_load(); // [health15]
+    }
 
     /// [saves11] Encoded size of each part of the snapshot (bytes, before compression).
     pub fn exact_sizes(&self) -> Vec<(&'static str, usize)> {
@@ -490,6 +492,7 @@ impl Sim {
             ("skills", cat(vec![enc(&self.skills), enc(&self.growth)])),
             ("carts", enc(&self.carts)), // [carts12]
             ("weather", enc(&self.weather)), // [contract13]
+            ("health15", enc(&self.h15)), // [health15]
             ("undead", enc(&self.undead)), // [contract13]
             ("vamp", enc(&self.vamp)), // [contract13]
             ("mega", enc(&self.mega)), // [contract13]
