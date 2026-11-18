@@ -511,6 +511,7 @@ pub fn date_string(c: &rf_core::Calendar) -> String {
 }
 
 /// DF-style season: `Early Spring`.
+#[allow(dead_code)] // [ui13] the top bar uses Sim::season_label now
 pub fn season_string(c: &rf_core::Calendar) -> String {
     let part = ["Early", "Mid", "Late"][(c.month().rem_euclid(3)) as usize];
     format!("{part} {}", c.season_name())

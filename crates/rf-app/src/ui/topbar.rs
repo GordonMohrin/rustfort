@@ -3,7 +3,7 @@
 
 use super::{col, panel, text_button, BtnState};
 use crate::font::GH;
-use crate::game::{date_string, season_string, Game, Speed, Stocks, ZClass};
+use crate::game::{date_string, Game, Speed, Stocks, ZClass}; // [ui13] season from Sim::season_label
 use macroquad::prelude::*;
 use rf_core::World;
 
