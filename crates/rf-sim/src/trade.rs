@@ -606,6 +606,7 @@ impl Sim {
                 kind: "Civilization".into(),
                 relation: "Own".into(),
                 trades: true,
+                ..Default::default() // [contract13]
             });
         }
         let own = self.world.meta.civ_id;
@@ -648,6 +649,7 @@ impl Sim {
             kind: "Civilization".into(),
             relation: "Peace".into(),
             trades: true,
+            ..Default::default() // [contract13]
         });
         self.spawn_caravan(e)
     }
@@ -1229,8 +1231,8 @@ mod tests {
         sim.world.calendar.year_tick = 0;
         sim.trade_season(200);
         assert!(sim.trade.due.is_none(), "no elven civ known");
-        sim.world.entities.push(EntityInfo { id: 77, name: "the Forest of Leaves".into(), race: "ELF".into(), kind: "Civilization".into(), relation: "Peace".into(), trades: true });
-        sim.world.entities.push(EntityInfo { id: 78, name: "the Hated Ones".into(), race: "HUMAN".into(), kind: "Civilization".into(), relation: "War".into(), trades: true });
+        sim.world.entities.push(EntityInfo { id: 77, name: "the Forest of Leaves".into(), race: "ELF".into(), kind: "Civilization".into(), relation: "Peace".into(), trades: true, ..Default::default() }); // [contract13]
+        sim.world.entities.push(EntityInfo { id: 78, name: "the Hated Ones".into(), race: "HUMAN".into(), kind: "Civilization".into(), relation: "War".into(), trades: true, ..Default::default() }); // [contract13]
         sim.trade_season(300);
         assert_eq!(sim.trade.due.as_ref().map(|d| d.1.name.clone()), Some("the Forest of Leaves".into()));
         sim.trade.due = None;

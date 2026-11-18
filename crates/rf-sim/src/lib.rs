@@ -68,6 +68,13 @@ pub mod round5_api;
 pub mod round8_api;
 pub mod round12_api;
 pub use round12_api::{RouteStatus, SIEGE_ENGINES};
+pub mod round13_api; // [contract13] round-13 public API (weather, undead, vampires, megabeasts, diplomacy, threats)
+pub use round13_api::{Demand, DemandKind, DiplomacyEntity, DiplomacyReport, EvilWeather, Meeting, MeetingKind, MegabeastInfo, MegabeastReport, Threat, ThreatKind, UndeadReport, UnitCurse, VampireReport, WeatherInfo, WeatherKind, WeatherReport}; // [contract13]
+pub mod weather; // [contract13] owner [weather13]: weather, climate, freezing, snow, evil weather
+pub mod undead; // [contract13] owner [undead13]: reanimation, undead, necromancers, husks/thralls
+pub mod vampires; // [contract13] owner [vampire13]: vampires, werebeasts
+pub mod megabeasts; // [contract13] owner [mega13]: megabeasts, semi-megabeasts, titans
+pub mod diplomacy; // [contract13] owner [diplo13]: liaisons, diplomats, relations, war/peace
 pub use round8_api::AnimalInfo;
 pub mod construct; // [construct]
 pub use construct::ConstructReport; // [construct]
@@ -692,6 +699,12 @@ pub struct Sim {
     growth: growth::Growth,
     /// [carts12] Minecarts, hauling routes, wheelbarrows (see `minecarts`).
     carts: minecarts::Carts,
+    /// [contract13] Round-13 module state (see `weather`, `undead`, `vampires`, `megabeasts`, `diplomacy`).
+    weather: weather::Weather, // [contract13] owner [weather13]
+    undead: undead::Undead, // [contract13] owner [undead13]
+    vamp: vampires::Vamp, // [contract13] owner [vampire13]
+    mega: megabeasts::Mega, // [contract13] owner [mega13]
+    diplo: diplomacy::Diplo, // [contract13] owner [diplo13]
 }
 
 /// [perf9] Debug: A* searches with at least this many nodes are printed (`RF_PATH_LOG`, set
@@ -843,6 +856,11 @@ impl Sim {
             skills: skills::SkillsReport::default(), // [skills9]
             growth: growth::Growth::default(), // [skills9]
             carts: minecarts::Carts::default(), // [carts12]
+            weather: weather::Weather::default(), // [contract13]
+            undead: undead::Undead::default(), // [contract13]
+            vamp: vampires::Vamp::default(), // [contract13]
+            mega: megabeasts::Mega::default(), // [contract13]
+            diplo: diplomacy::Diplo::default(), // [contract13]
         };
         sim.restore_core(&saved); // [saves10] tick count first: the init passes below use it
         sim.init_plants();
@@ -1287,6 +1305,11 @@ impl Sim {
         self.animals_hash(&mut mix); // [animals]
         self.society2_hash(&mut mix); // [society2]
         self.carts_hash(&mut mix); // [carts12]
+        self.weather_hash(&mut mix); // [contract13] owner [weather13]
+        self.undead_hash(&mut mix); // [contract13] owner [undead13]
+        self.vampires_hash(&mut mix); // [contract13] owner [vampire13]
+        self.megabeasts_hash(&mut mix); // [contract13] owner [mega13]
+        self.diplomacy_hash(&mut mix); // [contract13] owner [diplo13]
         h
     }
 
@@ -1411,6 +1434,21 @@ impl Sim {
         self.health_tick(now); // [moods]
         self.caverns_tick(now); // [moods]
         self.animals_tick(now); // [animals]
+        if now % weather::WEATHER_PERIOD == weather::WEATHER_PHASE {
+            self.weather_pass(now); // [contract13] owner [weather13]; before society2 (lifestyle rain)
+        }
+        if now % undead::UNDEAD_PERIOD == undead::UNDEAD_PHASE {
+            self.undead_pass(now); // [contract13] owner [undead13]
+        }
+        if now % vampires::VAMP_PERIOD == vampires::VAMP_PHASE {
+            self.vampires_pass(now); // [contract13] owner [vampire13]
+        }
+        if now % rf_core::TICKS_PER_DAY as u64 == megabeasts::MEGA_DAY_PHASE {
+            self.megabeasts_day(now); // [contract13] owner [mega13]
+        }
+        if now % rf_core::TICKS_PER_DAY as u64 == diplomacy::DIPLO_DAY_PHASE {
+            self.diplomacy_day(now); // [contract13] owner [diplo13]
+        }
         if now % locations::S2_PERIOD == locations::S2_PHASE {
             self.society2_pass(now); // [society2]
         }

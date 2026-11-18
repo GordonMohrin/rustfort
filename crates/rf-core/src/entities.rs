@@ -147,6 +147,20 @@ pub struct Unit {
     pub pregnancy: i32,
     /// [r8] Work detail names the unit is assigned to (v50).
     pub work_details: Vec<String>,
+    /// [contract13] Undead (DF `NOT_LIVING`): a reanimated corpse or body part, an intelligent
+    /// undead (necromancer's servant, husk/thrall excluded) or a necromancer's creation. No pain,
+    /// fear, fatigue, needs or bleeding. Owner: rf-sim `undead` [undead13].
+    pub undead: bool, // [contract13]
+    /// [contract13] Curse token: "" none, `VAMPIRE`, `WEREBEAST`, `NECROMANCER`, `HUSK`, `THRALL`
+    /// (wiki Vampire, Werebeast, Necromancer, Evil weather). Owners: rf-sim `vampires`
+    /// [vampire13] (VAMPIRE, WEREBEAST), `undead` [undead13] (NECROMANCER, HUSK, THRALL).
+    pub curse: String, // [contract13]
+    /// [contract13] Were-creature form race token of a cursed werebeast (e.g. `WEREWOLF`), "" if
+    /// none. Owner: rf-sim `vampires` [vampire13].
+    pub curse_race: String, // [contract13]
+    /// [contract13] Real name of a unit living under a false identity (vampire migrants; `name`
+    /// holds the assumed one), "" if none. Owner: rf-sim `vampires` [vampire13].
+    pub true_name: String, // [contract13]
 }
 
 impl Unit {

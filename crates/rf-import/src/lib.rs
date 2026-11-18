@@ -1912,6 +1912,7 @@ mod tests {
             kind: kind.into(),
             relation: relation.into(),
             trades,
+            ..Default::default() // [contract13]
         };
         w.entities = vec![
             e(29, "DWARF", "Civilization", "Own", true),

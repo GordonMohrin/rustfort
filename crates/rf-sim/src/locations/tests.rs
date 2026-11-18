@@ -22,7 +22,7 @@ pub(crate) fn world_with_zone(name: &str) -> World {
         owner: -1,
         ..Default::default()
     });
-    w.entities.push(EntityInfo { id: 1, name: "The Synthetic Union".into(), race: "DWARF".into(), kind: "Civilization".into(), relation: "Own".into(), trades: true });
+    w.entities.push(EntityInfo { id: 1, name: "The Synthetic Union".into(), race: "DWARF".into(), kind: "Civilization".into(), relation: "Own".into(), trades: true, ..Default::default() }); // [contract13]
     w
 }
 

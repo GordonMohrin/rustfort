@@ -1262,8 +1262,8 @@ pub fn ui_arg(g: &mut Game, k: &str, v: &str) -> bool {
                     id: 0,
                     name: "Stone to the masons".into(),
                     stops: vec![
-                        rf_core::HaulStop { name: "Quarry".into(), pos: a.1, take_from: vec![a.0], give_to: vec![], conditions: vec!["Leave when full".into()] },
-                        rf_core::HaulStop { name: "Workshop pile".into(), pos: b.1, take_from: vec![], give_to: vec![b.0], conditions: vec!["Wait 1 day".into(), "Leave when empty".into()] },
+                        rf_core::HaulStop { name: "Quarry".into(), pos: a.1, take_from: vec![a.0], give_to: vec![], conditions: vec!["Leave when full".into()], ..Default::default() }, // [contract13]
+                        rf_core::HaulStop { name: "Workshop pile".into(), pos: b.1, take_from: vec![], give_to: vec![b.0], conditions: vec!["Wait 1 day".into(), "Leave when empty".into()], ..Default::default() }, // [contract13]
                     ],
                     vehicles: vec![],
                 });

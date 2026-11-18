@@ -111,6 +111,10 @@ pub struct HaulStop {
     pub give_to: Vec<i32>,
     /// Departure conditions as DF-like text, e.g. `Leave when full`, `Wait 1 day`.
     pub conditions: Vec<String>,
+    /// [contract13] Item filter of the stop (what carts load here), in the stockpile filter
+    /// syntax `category/group/token` (see `StockpileSettings::filters`); empty = everything the
+    /// linked piles offer. Owner: rf-sim `minecarts` [perf13].
+    pub filter: Vec<String>, // [contract13]
 }
 
 /// [r8-import] Semantics of [`crate::StockpileSettings::filters`] (docs/EXPORT_FORMAT.md, "Stockpile

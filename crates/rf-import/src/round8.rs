@@ -490,6 +490,7 @@ mod tests {
                 take_from: vec![702, 5555],
                 give_to: vec![],
                 conditions: vec!["Push North when >= 100% full".into()],
+                ..Default::default() // [contract13]
             }],
             vehicles: vec![vehicle, 7777777],
         }];

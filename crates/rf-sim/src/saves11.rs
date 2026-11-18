@@ -489,6 +489,11 @@ impl Sim {
             ("life", enc(&self.life)),
             ("skills", cat(vec![enc(&self.skills), enc(&self.growth)])),
             ("carts", enc(&self.carts)), // [carts12]
+            ("weather", enc(&self.weather)), // [contract13]
+            ("undead", enc(&self.undead)), // [contract13]
+            ("vamp", enc(&self.vamp)), // [contract13]
+            ("mega", enc(&self.mega)), // [contract13]
+            ("diplo", enc(&self.diplo)), // [contract13]
             ("total", self.exact_snapshot()),
         ]
     }

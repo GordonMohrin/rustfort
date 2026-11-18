@@ -211,6 +211,11 @@ impl Sim {
         v.push(("animals", fnv(|mix| self.animals_hash(mix))));
         v.push(("society2", fnv(|mix| self.society2_hash(mix))));
         v.push(("carts", fnv(|mix| self.carts_hash(&mut |x| mix(x))))); // [carts12]
+        v.push(("weather", fnv(|mix| self.weather_hash(mix)))); // [contract13]
+        v.push(("undead", fnv(|mix| self.undead_hash(mix)))); // [contract13]
+        v.push(("vampires", fnv(|mix| self.vampires_hash(mix)))); // [contract13]
+        v.push(("megabeasts", fnv(|mix| self.megabeasts_hash(mix)))); // [contract13]
+        v.push(("diplomacy", fnv(|mix| self.diplomacy_hash(mix)))); // [contract13]
         v
     }
 }

@@ -152,6 +152,10 @@ pub struct World {
     /// beasts per cavern layer) that DF keeps in its own save.
     #[serde(default)]
     pub fort_history: FortHistory,
+    /// [contract13] Climate of the embark region (biome, temperature, evil/good, reanimation).
+    /// Read by rf-sim `weather` [weather13] and `undead` [undead13]; current weather is sim state.
+    #[serde(default)]
+    pub climate: Climate, // [contract13]
     /// [saves10] Runtime state of the simulation modules (petitions, raids, moods, ...), keyed by
     /// module name, each value the module's own self-describing encoding (JSON). Filled only
     /// in the copy of the world that is written to a save (`Sim::world_for_save`) and consumed
@@ -368,6 +372,31 @@ pub struct FortHistory {
     /// its departing caravan, recomputed at each year start).
     #[serde(default)]
     pub danger_reported: f32,
+}
+
+/// [contract13] Region climate of the embark (wiki Weather, Temperature, Biome, Surroundings).
+/// Defaults (all zero / empty) mean "unknown": the weather module then assumes a temperate,
+/// neutral biome. Owner: rf-sim `weather` [weather13].
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Climate {
+    /// DF biome token of the embark centre, e.g. `GRASSLAND_TEMPERATE`, `TUNDRA`, "" = unknown.
+    pub biome: String,
+    /// Mean surface temperature in DF degrees Urist (wiki Temperature: U = F + 9968, so
+    /// 10 000 = water freezes, 10 212 = 100 C); 0 = unknown.
+    pub temperature: i32,
+    /// Seasonal swing around `temperature` in degrees Urist (summer + / winter -); 0 = unknown.
+    pub temperature_swing: i32,
+    /// Rainfall 0..=100 (DF region `rainfall`), -1 or 0 = unknown.
+    pub rainfall: i32,
+    /// Savagery and alignment of the surroundings (wiki Surroundings).
+    pub savagery: i32,
+    pub evil: bool,
+    pub good: bool,
+    /// Dead things rise again (DF evil `REANIMATE` interaction of the region).
+    pub reanimating: bool,
+    /// Evil weather of the region: names of its clouds/rain (DF material + syndrome name).
+    pub evil_weather: Vec<String>,
 }
 
 impl World {

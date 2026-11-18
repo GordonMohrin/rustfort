@@ -19,6 +19,10 @@ pub struct EntityInfo {
     pub relation: String,
     /// Sends caravans (trade partner).
     pub trades: bool,
+    /// [contract13] Attitude towards the fort, -100 (hostile) ..= 100 (friendly), 0 = neutral or
+    /// unknown. Shifted by trade value, killings and refused demands; `relation` flips to `War`
+    /// / `Peace` on declarations. Owner: rf-sim `diplomacy` [diplo13].
+    pub attitude: i32, // [contract13]
 }
 
 /// A noble/administrator position of the fort or its civilization.

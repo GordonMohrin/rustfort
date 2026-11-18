@@ -614,3 +614,17 @@ The screens follow the DF Steam (v50/53) layouts; the rules behind them live in 
 - `--break-leg 4`: all 4 citizens with a broken lower leg were carried to beds (4 rescues).
 - 2 years with `--standdown` and invasions on: 87 -> 91-93 citizens. 1 siege (camped), 2 ambushes, 2 thieves (2 items stolen unseen), 3 snatchers (no child lost); soldiers spar in the Kaserne.
 - **Speed**, back to back with the round-7 build at low machine load: 53-61k ticks/s against 54k, the same within noise. The combat phase costs 0.17-0.19 us/tick. State hashes are equal with 1 and 6 threads, also with invasions on.
+
+## Round 13 contract (`[contract13]`)
+
+Seams only: no rule is simulated yet; each module owner adds its own section below.
+
+| Item | Class | Notes |
+|---|---|---|
+| Season label "Early/Mid/Late <season>" (`Sim::season_label`) | OK | wiki Calendar: each season has three months (early, mid, late). |
+| Degrees Urist to Celsius (`Sim::urist_to_celsius`) | OK | wiki Temperature: U = F + 9968 (10 000 U = water freezes). |
+| Region climate `World::climate` (biome, temperature, swing, rainfall, savagery, evil/good, reanimating, evil weather) | MISSING | Not in the export yet: all fields default to unknown; `weather` assumes 10 050 U (ESTIMATE) until filled. wiki Weather, Surroundings. |
+| Unit curse markers `Unit::undead`, `curse`, `curse_race`, `true_name` | MISSING | Fields only (wiki Undead, Vampire, Werebeast, Necromancer); set by `undead` / `vampires`. |
+| Entity attitude `EntityInfo::attitude` | MISSING | Field only (wiki Diplomacy); set by `diplomacy`. |
+| Hauling route stop item filter `HaulStop::filter` | MISSING | Stored and editable through the API; minecarts do not apply it yet (wiki Hauling route: stop conditions and desired items). |
+| Moon phase (`Sim::moon_phase`) | MISSING | Stub returns 0; wiki Werebeast (full moon). |
