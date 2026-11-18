@@ -2185,7 +2185,8 @@ impl Sim {
             .position(|m| m.token.ends_with(":SKIN") || m.token.starts_with("CREATURE:"))
             .map(|m| m as u16)
             .unwrap_or(NO_MAT);
-        self.create_item("CORPSE", mat, tile as usize, format!("{name}'s corpse"));
+        let corpse = self.create_item("CORPSE", mat, tile as usize, format!("{name}'s corpse")); // [undead13] id kept
+        self.undead_remains(s, corpse, false); // [undead13] corpses can rise; undead destroyed
         self.social_death(s, now); // [social]
     }
 
