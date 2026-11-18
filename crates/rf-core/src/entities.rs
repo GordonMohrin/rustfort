@@ -41,7 +41,23 @@ pub struct MaterialInfo {
     pub max_edge: i32,
     /// Base material value (DF `material_value`).
     pub value: i32,
+    /// [fire15] Heat properties from the export (`heat`); all 0 = unknown (old export).
+    pub heat: MaterialHeat, // [fire15]
 }
+
+/// [fire15] DF material heat properties (wiki Material definition token; degrees Urist,
+/// 60001 = NONE, 0 = not exported).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)] // [fire15]
+#[serde(default)] // [fire15]
+pub struct MaterialHeat { // [fire15]
+    pub spec_heat: i32, // [fire15]
+    pub heatdam_point: i32, // [fire15]
+    pub colddam_point: i32, // [fire15]
+    pub ignite_point: i32, // [fire15]
+    pub melting_point: i32, // [fire15]
+    pub boiling_point: i32, // [fire15]
+    pub mat_fixed_temp: i32, // [fire15]
+} // [fire15]
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
