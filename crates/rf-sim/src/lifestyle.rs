@@ -508,14 +508,10 @@ impl Sim {
     // ------------------------------------------------------------------ weather
 
     fn weather_day(&mut self, now: u64) {
-        if !self.world.settings.weather || self.world.calendar.month() / 3 == 3 {
-            return;
-        }
-        let mut r = Rng::for_unit(self.seed, 1, now, 0x4A1);
-        if r.chance(1, 5) {
-            let start = now + r.below(DAY as u32) as u64;
+        // [weather13] The rain/snow roll lives in `weather` (same RNG stream); rain (not snow) reaches the thoughts.
+        if let Some((start, until)) = self.weather_precip_day(now) { // [weather13]
             self.life.rain_start = start;
-            self.life.rain_until = start + (2 + r.below(7) as u64) * DAY / 24;
+            self.life.rain_until = until; // [weather13]
             self.life.rep.rain_days += 1;
         }
     }

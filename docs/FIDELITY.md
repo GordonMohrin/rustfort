@@ -628,3 +628,23 @@ Seams only: no rule is simulated yet; each module owner adds its own section bel
 | Entity attitude `EntityInfo::attitude` | MISSING | Field only (wiki Diplomacy); set by `diplomacy`. |
 | Hauling route stop item filter `HaulStop::filter` | MISSING | Stored and editable through the API; minecarts do not apply it yet (wiki Hauling route: stop conditions and desired items). |
 | Moon phase (`Sim::moon_phase`) | MISSING | Stub returns 0; wiki Werebeast (full moon). |
+
+## Round 13 weather and climate (`[weather13]`)
+
+Module `crates/rf-sim/src/weather.rs`; API in `round13_api.rs` (`weather_summary`, `weather_at`, `temperature_at`, `snow_at`, `evil_weather`, `set_weather_enabled`, `force_weather`, `force_evil_weather`, `weather_report`).
+
+| Item | Class | Notes |
+|---|---|---|
+| Surface temperature = region mean + seasonal swing (coldest mid winter, warmest mid summer) | OK / ESTIMATE | wiki Temperature, Weather. The curve shape (per-month share of the swing) is an ESTIMATE. |
+| Unknown climate (export has none yet) | ESTIMATE | Mean 10 020 U (52 F), swing 30 U: outdoor water freezes in early winter and thaws in early spring. Known mean without swing: 30 U. |
+| Underground keeps the mean, magma 12 000 U | OK / ESTIMATE | wiki Temperature, Magma. No heat sources, no per-tile temperature diffusion (MISSING). |
+| Daily rain roll (1 day in 5 outside winter, 2-8 hours) | OK (Rustfort round 8) | Moved from `lifestyle::weather_day` into `weather_precip_day`, same RNG stream and draws, so the "Rain" thoughts are unchanged. Known `climate.rainfall` scales the chance to rainfall/250 (ESTIMATE). |
+| Snow instead of rain when the surface is below 10 000 U; winter snow roll | OK / ESTIMATE | wiki Weather, Snow. Winter snow: 1 day in 5 (own stream, ESTIMATE). Snow gives no Rain thought. |
+| Snow cover lies until the temperature rises above freezing | OK / ESTIMATE | wiki Snow. Kept in weather state (no Tile field); no depth, no tracks. |
+| Clouds and fog | ESTIMATE | Overcast 3 hours before precipitation and on 1 day in 4; morning fog on 1 day in 12 (1 in 4 in wet biomes / rainfall >= 66) for 2-6 hours. Fog has no gameplay effect yet (vision MISSING). |
+| Outdoor water freezes below 10 000 U; ice thaws above it | OK / ESTIMATE | wiki Ice. Only the topmost water tile of an outdoor column freezes (ESTIMATE); 4/7+ becomes an ice wall, shallower an ice floor (ESTIMATE). River sources do not freeze. Thaw restores depth and salt/stagnant flags; ice that was dug or built over stays gone. |
+| Creatures in water that freezes die | OK | wiki Ice ("encased in ice"). Only in deep (wall) ice in Rustfort; counted in `frozen_deaths`. |
+| Rain refills outdoor murky pools | OK / ESTIMATE | wiki Murky pool. +1/7 per pool tile with chance 1/4 every 100 rain ticks (ESTIMATE). |
+| Evil weather: rain over the whole surface or a drifting cloud | OK / ESTIMATE | wiki Evil weather. 1 day in 8 in evil regions with `climate.evil_weather`, 2-6 hours; cloud radius 4-8, drifts 1 tile per 100 ticks (ESTIMATE). Effect class BLOOD/HUSK/THRALL/SYNDROME from the name; the effects themselves belong to `[undead13]`. |
+| Indoors / underground | OK | `weather_at` is Clear under a roof; snow only on outdoor dry floors. |
+| Sim change on the reference fort | expected | With the default climate the fort's outdoor water now freezes in winter and thaws in spring, which changes the bench state hash. |

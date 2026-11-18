@@ -304,6 +304,8 @@ pub struct WeatherReport {
     pub freezes: u64,
     pub thaws: u64,
     pub frozen_deaths: u64,
+    /// 1/7 water added to murky pools by rain.
+    pub pool_refills: u64, // [weather13]
 }
 
 impl Sim {
@@ -347,6 +349,11 @@ impl Sim {
     pub fn weather_report(&self) -> WeatherReport {
         self.weather_report_impl()
     }
+
+    /// Debug/tests ([undead13]): start this evil rain/cloud for `ticks` ticks. // [weather13]
+    pub fn force_evil_weather(&mut self, e: EvilWeather, ticks: u64) { // [weather13]
+        self.force_evil_weather_impl(e, ticks) // [weather13]
+    } // [weather13]
 
     /// "Early Spring", "Mid Summer", "Late Winter" ... (DF top bar). [contract13] final.
     pub fn season_label(&self) -> String {
