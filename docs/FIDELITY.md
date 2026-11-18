@@ -628,3 +628,29 @@ Seams only: no rule is simulated yet; each module owner adds its own section bel
 | Entity attitude `EntityInfo::attitude` | MISSING | Field only (wiki Diplomacy); set by `diplomacy`. |
 | Hauling route stop item filter `HaulStop::filter` | MISSING | Stored and editable through the API; minecarts do not apply it yet (wiki Hauling route: stop conditions and desired items). |
 | Moon phase (`Sim::moon_phase`) | MISSING | Stub returns 0; wiki Werebeast (full moon). |
+
+## Vampires and werebeasts (`[vampire13]`)
+
+Module `crates/rf-sim/src/vampires.rs` (tests in `vampires_tests.rs`); one hook line in `combat.rs` (`pursue`, after an attack). Wiki pages: Vampire, Werebeast, Night creature, Justice, Calendar.
+
+| Rule | Class | Notes |
+|---|---|---|
+| Vampires arrive hidden in migrant waves; never children, babies, starting dwarves or caravans | OK | wiki Vampire. Only adult dwarf migrants of a wave can be picked. Visitors/diplomats as vampires: MISSING. |
+| Chance per migrant wave | ESTIMATE | 1 in 12 (wiki: no number; "many forts see one within the first few years", DF lets the difficulty settings change it). Player toggle `set_vampires_enabled`. |
+| False identity: assumed name in `Unit::name`, real name in `Unit::true_name`; the true name returns when unmasked | OK | wiki Vampire (a revealed vampire's corpse bears its original name). The cover identity's memorial/coffin split: MISSING. |
+| No eating, drinking or sleeping; no aging; sterile | OK | wiki Vampire. Need timers are held at zero every 100 ticks, apparent age frozen, pregnancy cleared. Alcohol withdrawal (a DF bug) and the "can't remember the last time" blood thought: MISSING. |
+| More and higher skills | ESTIMATE | wiki Vampire ("4-5+ social skills", many Novice+ skills). Existing skills +2..5, 4-6 social skills at 2..7. |
+| Feeds on sleeping citizens, usually killing them; survivors remember nothing | OK / ESTIMATE | wiki Vampire. Interval 28-55 days, kill chance 2/3, a survivor loses 30 % of its blood (all ESTIMATE). Feeding on unconscious creatures and animals: MISSING. |
+| Victim choice and approach | ESTIMATE | The least observed sleeper in the vampire's walk area, then the nearest. The walk is not simulated: the vampire appears beside the sleeper. |
+| Witnesses unmask the vampire | OK / ESTIMATE | wiki Vampire ("a witness to an attack uncovers them permanently"). Each awake citizen within 6 tiles on the same level sees it with chance 1/2 (ESTIMATE). Unmasked: true name, announcement, the crime stands accused. |
+| A death without a witness is an unsolved Murder; interrogation may name the vampire (suspect) | OK | wiki Justice ("a corpse with no suspects"), through the existing `justice` investigation. A witnessed feeding that does not kill is an AttemptedMurder (ESTIMATE). |
+| Accusing a unit (`accuse_vampire`) | ESTIMATE | True and unmasks only for a real vampire; open crimes of the vampire become accusations. DF's convict/interrogate screens and false accusations by vampires: MISSING. |
+| Convicted vampires get a normal sentence | OK | wiki Vampire; uses the `justice` sentences unchanged. A jailed vampire does not feed. |
+| Moon phase 0..=27, full moon = 14 | ESTIMATE | One 28-day cycle per DF month (12 x 28 days), so the full moon is on the 15th of every month. wiki Werebeast/Calendar give no exact phase table. |
+| Werebeast curse: turns into its were-form at the full moon, back the next day | OK / ESTIMATE | wiki Werebeast. Duration one day (ESTIMATE). In were-form the unit drops its gear and is run by combat as a hostile; afterwards it returns to work and fighters drop it as a target. |
+| Were-form race and body | ESTIMATE | DF generates were-creatures per world; Rustfort uses `WERE<animal>` from 10 animal bases. Were-forms keep their body; attackers get a big humanoid body (80 000 cm3), strength 2250, toughness/endurance 2000, walk speed 700. |
+| Werebeasts from the wilds attack at a full moon and leave afterwards | ESTIMATE | Chance 1 in 36 per full moon (about one every 3 years). Player toggle `set_werebeasts_enabled`. |
+| Hidden werebeast visitors | ESTIMATE | A new visitor carries the curse with chance 1 in 60 and turns at the next full moon. |
+| A bite passes the curse on; the victim turns at the next full moon | OK / ESTIMATE | wiki Werebeast. Every wounding melee attack of a were-form on a non-animal counts as a bite (ESTIMATE); the curse holds if the victim survives to the next 100-tick pass. |
+| Threats panel and unit markers | OK | `threats()`: unmasked free vampires, transformed werebeasts. `unit_curse()`: vampire, suspected, unmasked, werebeast, transformed. |
+| Reference fort (r5, 2-year bench) | ESTIMATE | Default on. All rolls use their own seeded streams, so other systems' RNG is untouched; the hash changes only if a vampire or werebeast actually appears. |
