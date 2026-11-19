@@ -387,6 +387,11 @@ impl Sim {
         self.undead_report_impl()
     }
 
+    /// [undead13] Natural necromancer sieges (default: only if the world has a necromancer tower).
+    pub fn set_necromancer_sieges(&mut self, on: bool) { // [undead13]
+        self.set_necromancer_sieges_impl(on) // [undead13]
+    } // [undead13]
+
     // -------------------------------------------------------------- vampires [vampire13]
 
     pub fn set_vampires_enabled(&mut self, on: bool) {

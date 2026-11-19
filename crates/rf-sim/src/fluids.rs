@@ -1324,7 +1324,7 @@ impl Sim {
                 } else {
                     e.air += 1;
                 }
-                if e.air >= DROWN_TICKS {
+                if e.air >= DROWN_TICKS && !self.undead_bloodless(s) { // [undead13] NOBREATHE
                     self.fluids.sub.swap_remove(k);
                     self.fluids.stats.drowned += 1;
                     self.combat_kill(s, now, "has drowned");

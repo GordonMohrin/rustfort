@@ -1961,6 +1961,9 @@ impl Sim {
                 died = Some("head");
             }
         }
+        if self.undead_bloodless(d) {
+            died = self.undead_blow(d, died); // [undead13] NOT_LIVING: only head/torso destruction
+        }
         // [perf12] The line is formatted when the log is read (`StrikeLine::format`).
         let p_log = crate::perf::prof::Guard::new(crate::perf::prof::STRIKE_LOG); // [perf11]
         let line = StrikeLine { an, verb3: atk.verb3, dn, loc, with, results, tail, text: std::sync::OnceLock::new() };
@@ -1973,6 +1976,7 @@ impl Sim {
         if let Some(why) = died {
             let text = match why {
                 "brain" | "head" => "has been struck down",
+                "destroyed" => "has been destroyed", // [undead13]
                 _ => "has been struck down",
             };
             self.combat_kill(d, now, text);
@@ -2030,7 +2034,7 @@ impl Sim {
         self.combat.stats.wounds += 1;
         let mut bleed = 0;
         let mut fl = flags;
-        if flags & (wf::CUT | wf::TORN) != 0 && lt.vascular > 0 {
+        if flags & (wf::CUT | wf::TORN) != 0 && lt.vascular > 0 && !self.undead_bloodless(d) { // [undead13] undead do not bleed
             // Estimate: blood per 10 ticks = vascular * volume/2000 * damage fraction.
             bleed = (lt.vascular as f32 * pvol / 2000.0 * sev as f32 / 10_000.0).max(1.0) as i32;
             if lt.arteries {
@@ -2075,6 +2079,7 @@ impl Sim {
             (p.vol, p.name.clone())
         };
         let bleed = (vol / 40.0).max(3.0) as i32;
+        let bleed = if self.undead_bloodless(d) { 0 } else { bleed }; // [undead13]
         let f = &mut self.combat.f[d];
         f.wounds.push(WoundS { part, layer: u16::MAX, flags: wf::SEVERED | wf::BLEEDING, sev: 10_000, bleed, pain: 50, age: 0 });
         f.bleed += bleed;
@@ -2086,6 +2091,7 @@ impl Sim {
         let who = self.uname(d);
         let mat = self.corpse_mat(d);
         let id = self.create_item("CORPSEPIECE", mat, tile, format!("{who}'s {name}"));
+        self.undead_remains(d, id, true); // [undead13] severed parts can rise
         let _ = (id, now);
     }
 
@@ -2210,6 +2216,9 @@ impl Sim {
     fn knock_out(&mut self, s: usize, until: u64, why: &str) {
         if self.ai[s].kind == Kind::Dead {
             return;
+        }
+        if self.undead_nostun(s) {
+            return; // [undead13] NOSTUN / NOPAIN: undead, husks and thralls never pass out
         }
         let was = self.combat.f[s].uncon_until;
         self.combat.f[s].uncon_until = was.max(until);
