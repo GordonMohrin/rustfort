@@ -800,3 +800,41 @@ Spec: `docs/mechanics/machines14.md`. Wiki pages (v50): Lever, Pressure plate, M
 | Machines and devices built from the UI (`new_cons` recipes) and the missing build options (lever, plate, bridge, floodgate, hatch, grates, bars, support, chain) | OK | Recipes from the wiki infoboxes (`machinery::mech_cons`). ESTIMATE: screw pumps need no enormous corkscrew, bridges at most 4 items, track stops 1 material + 1 mechanism. Built cages and placement rules (floodgate on unflooded floor, bridge perimeter, orthogonal support): MISSING. |
 | Exporter: gear disengaged, roller speed/direction, pump direction, machine power, flowing-water tiles | MISSING | Spec section 11; DFHack field names to be checked first. |
 | UI: link target picker (filters, badges, hover outline, mechanism count), link jobs, plate settings and live state, pending/jammed device states, power network overlay (colour per net, port links, +P/-U, disengaged gears, pump arrows, "no flow" wheels), route view polish (stop friction, rollers, track plates, cart-blocking devices, cart speed arrows), lever and plate sprites | OK | `ui/machines14.rs`; `--ui m14-link,m14-plate,m14-power,m14-routes`. |
+## DF audio (`[audio14]`)
+
+Music, ambience and sound effects read at runtime from the player's DF install (`data/sound`,
+`data/vanilla/vanilla_music/objects/{music,sound}_standard.txt`, active mods, `init.txt`); no
+DF file is copied. Spec: `docs/mechanics/audio14.md`. Sources: w:Audio, w:Soundtrack,
+w:Settings#Audio, the raws, DF's init files and release notes. Audio is presentation only: the
+sim's cue buffer is off by default, never saved or hashed and uses no RNG (bench hash unchanged).
+
+| Item | Class | Notes |
+|---|---|---|
+| MUSIC raws: FILE, CARD, EVENT, CONTEXT, FREQUENCY; SOUND raws: FILE, ANNOUNCEMENT, SAVAGE_AREA | OK | w:Audio; parsed at runtime (vanilla + the world's active mods; later objects with the same id replace earlier ones: ESTIMATE). Text outside brackets is a comment. |
+| Mod `SOUND_FILE` / `MUSIC_FILE` identifiers | OK | w:Audio "Identifiers" (50.09); they win over the folder naming rules. |
+| File id -> file on disk | ESTIMATE | DF hard-codes it; Rustfort derives it from folder and file names (`tracks/<dir>`, `_Full`, `_<n>` cards, `tracks/adv/<n>_<Title>`, `sounds/<name>`), never from the executable. All vanilla ids resolve on 53.17. |
+| Contexts ANY, MAIN, SPRING..WINTER | OK | w:Audio. Title screen plays ANY only (ESTIMATE simplification of "seasons also hold in menus"). |
+| FIRST_YEAR / SECOND_YEAR_PLUS | OK rule, ESTIMATE data | Fort age from `Meta::founded` (new exporter field `founded_year/tick`, unverified DFHack field names, -1 when absent). Unknown founding: older than a year; synthetic forts count from sim tick 0. |
+| CAVERNS_OPENED | ESTIMATE | Any non-magma cavern layer with revealed tiles. |
+| Events SIEGE, MEGABEAST_ATTACK, FORGOTTEN_BEAST_ATTACK | OK | From the announcements (`round9::classify`); necromancer sieges by wording (ESTIMATE). |
+| Events JUST_EMBARKED, FIRST_CAVERN_OPENED, FIRST_GHOST, FORT_LEVEL, LOST_FORT | ESTIMATE | Transitions of `Sim::audio_facts` seen by the app; the first snapshot after a load is the baseline, so loading never fires them. LOST_FORT = living citizens drop to 0 (Rustfort has no abandon). |
+| DEATH_SPIRAL | ESTIMATE | 5 citizen deaths within 2 months, then a season's cooldown. |
+| TAVERN_MUSIC_PRESENT | ESTIMATE | A music performance in a tavern or temple (the only places the sim performs) with >= 5 idle listeners, at most once a season. |
+| TAVERN_DANCE_PRESENT | MISSING | The sim does not tell dance from music. |
+| Event songs override the current song, priority order, 1.5 s fade | ESTIMATE | w:Audio says event songs override; the order LOST_FORT > SIEGE > FB = MEGABEAST > DEATH_SPIRAL > FIRST_CAVERN > FIRST_GHOST > FORT_LEVEL > TAVERN > JUST_EMBARKED is a guess. |
+| FREQUENCY weights 10 / 5 / 2 | OK | w:Audio ("half as often", "1/5 as often"). No immediate repeat (ESTIMATE). |
+| Song gap uniform in avg x [0.75, 1.25] | OK at 240 s, ESTIMATE elsewhere | init comment: 240 gives 180-300 s. |
+| Cards: all in order the first time, later 1-3 random from a shuffled deck, then the song | ESTIMATE | 50.0x release notes + w:Audio. Neutral `cards/Card_N` as interludes with p = 1/4 (ESTIMATE). |
+| Title music `TITLE_MUSIC` (default DWARF_FORTRESS), classic `song_title`/`song_game` fallback | OK | init + folder. |
+| Volumes 0..255 linear, `starting-volume.txt` (song 0.85), `SOUND:NO` mutes | OK values, ESTIMATE curve | init files and the adventure table; until the player changes a volume or the Mute box in Rustfort, DF's own values are used (a DF install with master 0 starts silent; `SOUND:NO` starts muted and the Mute box can unmute). |
+| SOUND stingers from announcements, 2 s de-duplication, 8 per frame | OK where the sim announces; ESTIMATE limits | Class -> DF token table in `audio/sfx.rs`. Lone thieves/snatchers have no sound (raws bind only the supported variants). |
+| FEATURE_DISCOVERY (cavern break), STRUCK_DEEP_METAL (adamantine) | ESTIMATE | Not announced by the sim; detected by the app (new cavern layer; first dug adamantine tile per session). |
+| `sounds/alert.ogg` for hostile alerts without their own sound | ESTIMATE | No raw object binds it. |
+| DEMON_ATTACK, WEDDING, supported-thief AMBUSH | MISSING | No sim source. |
+| SAVAGE_AREA howls and giant steps every 45-150 s | ESTIMATE, dormant | Needs `World::climate.savagery` (not exported yet, [contract13]). |
+| Ambience beds (`ambience/`): biome, neutral winds, evil/good/terrifying, blizzard, thunderstorm, cavern, magma, river, siege, combat, tavern, depot, workshop | ESTIMATE | w:Audio prose, release notes and 53.17 FMOD parameter names; every threshold is a guess. Silent layers pause and resume where they left off (50.0x notes: OK). Ducked to 0.6 under music (ESTIMATE). |
+| Mining sounds (53.17: positional, muffled, per tile type) | MISSING as files | They exist only in FMOD banks; Rustfort plays `audio/actions/dig.ogg` positionally (z gain 1/0.45/0.2, 10-tile hearing distance from `spatialization.txt`, low-pass one z away, at most 3 mining voices at once): ESTIMATE. |
+| UI button sounds (53.17) | MISSING | FMOD only; not substituted yet. |
+| Walla (crowd), adventure-folder fallback ambience and one-shots | MISSING | Optional in the spec; not done. |
+| Extra combat hits (`audio/combat/melee`) | Rustfort extension | Off by default (Settings > Audio). |
+| Device policy | Rustfort | Only `play` without `--screenshot`/`--script`/`--shots-at`, `--mute`, `RUSTFORT_MUTE=1`, Mute or master 0 opens a device; bench, savebench and tests never do. |

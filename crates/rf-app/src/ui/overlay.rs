@@ -249,6 +249,10 @@ fn draw_menu(g: &mut Game) {
         super::round4::draw_settings(g); // [round 4]
     } else if g.menu.page == MenuPage::Announcements {
         super::round9::draw_ann_settings(g); // [app9]
+    } else if g.menu.page == MenuPage::Audio { // [audio14]
+        let (back, changed) = super::audio14::draw_audio_page(&mut g.ui, &g.font, &mut g.settings); // [audio14]
+        if changed || back { g.persist_settings(); } // [audio14]
+        if back { g.menu.page = MenuPage::Settings; } // [audio14]
     } else {
         let (w, h) = (380.0 * s, 346.0 * s);
         let r = Rect::new((sw - w) / 2.0, (sh - h) / 2.0, w, h);

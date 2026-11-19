@@ -1688,6 +1688,7 @@ impl Sim {
         if part == u16::MAX {
             return false;
         }
+        if self.audio_cues.on { let pos = self.world.units[self.ai[d].uidx].pos; self.audio_cues.push(crate::audio14_api::AudioCue::Strike { pos, kind: if armed { crate::audio14_api::StrikeSound::Metal } else { crate::audio14_api::StrikeSound::Flesh } }); } // [audio14]
         // --- momentum (wiki formula 3)
         let ab = &self.combat.bodies[self.combat.f[a].body as usize];
         let isize_ = {

@@ -11,6 +11,11 @@ publish.workspace = true
 name = "rustfort"
 path = "src/main.rs"
 
+# [audio14] Sound output (rodio + pure-Rust Vorbis); `--no-default-features` builds without it.
+[features]
+default = ["audio"]
+audio = ["dep:rodio"]
+
 [dependencies]
 rf-core.workspace = true
 rf-raws.workspace = true
@@ -25,6 +30,7 @@ zstd = { version = "0.13", features = ["zstdmt"] }
 rmp-serde = "1" # [saves10] self-describing save format (MessagePack, named fields)
 crc32fast = "1" # [saves10] save integrity check
 rf-save-v09 = { path = "../rf-save-v09" } # [saves10] reads v0.9 (format 1, bincode) saves
+rodio = { version = "0.20", default-features = false, features = ["vorbis"], optional = true } # [audio14]
 
 [target.'cfg(windows)'.dependencies]
 # Move test windows to another virtual desktop (IVirtualDesktopManager).

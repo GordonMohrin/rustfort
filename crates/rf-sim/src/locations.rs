@@ -704,14 +704,17 @@ impl Sim {
                 self.s2_satisfy(p, "BeCreative");
                 self.s2_satisfy(p, "StayOccupied");
             }
+            let mut heard: u16 = 0; // [audio14]
             for &a in inside {
                 if a == p || !self.s2_citizen(a) || !self.s2_idle(a) || performers.contains(&a) {
                     continue;
                 }
+                heard = heard.saturating_add(1); // [audio14]
                 self.locs.rep.audience += 1;
                 self.feel(a, "WatchPerform", Class::Pos, 100, -1, 0, now);
                 self.s2_satisfy(a, if eloquent { "HearEloquence" } else { "MakeMerry" });
             }
+            if self.audio_cues.on { let (loc, tavern) = (self.locs.rt[ri].id, self.locs.rt[ri].kind == LocKind::Tavern); self.audio_cues.push(crate::audio14_api::AudioCue::Perform { loc, tavern, music: !eloquent, audience: heard }); } // [audio14]
         }
     }
 

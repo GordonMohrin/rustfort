@@ -68,6 +68,7 @@ pub mod round5_api;
 pub mod round8_api;
 pub mod round12_api;
 pub use round12_api::{RouteStatus, SIEGE_ENGINES};
+pub mod audio14_api; // [audio14] audio facts and cue buffer for the app (never saved or hashed)
 pub mod round13_api; // [contract13] round-13 public API (weather, undead, vampires, megabeasts, diplomacy, threats)
 pub use round13_api::{Demand, DemandKind, DiplomacyEntity, DiplomacyReport, EvilWeather, Meeting, MeetingKind, MegabeastInfo, MegabeastReport, Threat, ThreatKind, UndeadReport, UnitCurse, VampireReport, WeatherInfo, WeatherKind, WeatherReport}; // [contract13]
 pub mod weather; // [contract13] owner [weather13]: weather, climate, freezing, snow, evil weather
@@ -712,6 +713,8 @@ pub struct Sim {
     mega: megabeasts::Mega, // [contract13] owner [mega13]
     diplo: diplomacy::Diplo, // [contract13] owner [diplo13]
     link: linkage::Linkage, // [machines14]
+    #[serde(skip)] // [audio14]
+    pub(crate) audio_cues: audio14_api::CueBuf, // [audio14] off by default, not saved, not hashed
 }
 
 /// [perf9] Debug: A* searches with at least this many nodes are printed (`RF_PATH_LOG`, set
@@ -869,6 +872,7 @@ impl Sim {
             mega: megabeasts::Mega::default(), // [contract13]
             diplo: diplomacy::Diplo::default(), // [contract13]
             link: linkage::Linkage::default(), // [machines14]
+            audio_cues: audio14_api::CueBuf::default(), // [audio14]
         };
         sim.restore_core(&saved); // [saves10] tick count first: the init passes below use it
         sim.init_plants();
@@ -2797,6 +2801,7 @@ impl Sim {
             }
         }
         self.world.tiles[i].desig = 0;
+        if self.audio_cues.on { self.audio_cues.push(audio14_api::AudioCue::Dig { pos: self.world.pos_of(i), mat: t.mat, class: audio14_api::DigSound::of(material) }); } // [audio14]
         self.reveal(i);
         for &c in &changed {
             if c != usize::MAX {
