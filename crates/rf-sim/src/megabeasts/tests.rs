@@ -69,11 +69,12 @@ fn natural_arrival_needs_tier_interval_and_the_flag() {
     let mut sim = fort(3);
     sim.combat.inv.enabled = true;
     let tries = |sim: &mut Sim| -> bool {
+        let n0 = sim.mega.beasts.len();
         for k in 0..40u64 {
             let s = sim.world.calendar.month() / 3;
             sim.mega.last_season = Some((s + 1) % 4);
             sim.megabeasts_day(1_000 + k * 1_200);
-            if !sim.mega.beasts.is_empty() {
+            if sim.mega.beasts.len() > n0 {
                 return true;
             }
         }
@@ -248,4 +249,31 @@ fn hash_is_quiet_without_megabeasts() {
     let mut n = 0;
     sim.megabeasts_hash(&mut |_| n += 1);
     assert_eq!(n, 0);
+}
+
+#[test]
+fn megabeast_fight_continues_bit_identically_after_save_and_load() {
+    for (n, m) in [(300u32, 1_500u32), (900, 1_200)] {
+        let mut w = World::synthetic(64, 64, 20);
+        w.units.retain(|u| u.id <= 3);
+        let mut a = sim_with(w, 21);
+        let id = a.spawn_megabeast("DRAGON").expect("dragon");
+        let s = a.unit_slot[&id];
+        let q = a.world.idx(Pos::new(20, 20, SZ)).unwrap() as u32;
+        let now = a.ticks;
+        a.move_to(s, q, now);
+        a.run_ticks(n);
+        let w = a.world_for_save();
+        let raw = rmp_serde::to_vec_named(&w).unwrap();
+        let mut w: World = rmp_serde::from_slice(&raw).unwrap();
+        w.tiletypes.reindex();
+        let mut b = Sim::new(w, 21);
+        assert_eq!(b.restore_mode(), "exact");
+        assert_eq!(a.state_hash(), b.state_hash());
+        assert_eq!(a.megabeasts().len(), b.megabeasts().len());
+        a.run_ticks(m);
+        b.run_ticks(m);
+        assert_eq!(a.state_hash(), b.state_hash(), "N {n} M {m}");
+        assert_eq!(a.megabeast_report().fire_breaths, b.megabeast_report().fire_breaths);
+    }
 }
