@@ -154,7 +154,16 @@ impl Sim {
     pub(crate) fn pump_run_on(&mut self, nets: &[crate::power::PowerNet], now: u64) {
         for k in 0..self.power.machines.len() {
             let m = &self.power.machines[k];
-            if m.kind != crate::power::MachineKind::ScrewPump || !nets.get(m.net as usize).map(|n| n.powered).unwrap_or(false) {
+            if m.kind != crate::power::MachineKind::ScrewPump {
+                continue;
+            }
+            if !nets.get(m.net as usize).map(|n| n.powered).unwrap_or(false) {
+                // Power lost now (also off the 100-tick cadence, e.g. a gear disengaged):
+                // at most 49 more ticks from here.
+                if let Ok(i) = self.power.run_until.binary_search_by_key(&m.bid, |e| e.0) {
+                    let e = &mut self.power.run_until[i].1;
+                    *e = (*e).min(now + PUMP_RUN_ON);
+                }
                 continue;
             }
             let (bid, until) = (m.bid, now + 100 + PUMP_RUN_ON);

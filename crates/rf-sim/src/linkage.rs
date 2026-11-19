@@ -311,6 +311,9 @@ impl Sim {
                 }
             }
         }
+        if now % 100 == 63 && !self.link.jobs.is_empty() {
+            self.link_prune_jobs(now);
+        }
         if !self.link.jammed.is_empty() && now % JAM_RECHECK == 0 {
             let jam = self.link.jammed.clone();
             for bid in jam {
@@ -320,6 +323,43 @@ impl Sim {
                     self.link.jammed.retain(|&x| x != bid);
                 }
             }
+        }
+    }
+
+    /// Drop waiting jobs whose trigger or target is gone; free jobs whose mechanic was pulled
+    /// away without the cancel hook (task changed, died elsewhere).
+    fn link_prune_jobs(&mut self, now: u64) {
+        let mut k = 0;
+        while k < self.link.jobs.len() {
+            let j = self.link.jobs[k];
+            if j.claimed != NONE {
+                let s = j.claimed as usize;
+                let lost = s >= self.ai.len() || self.ai[s].kind == Kind::Dead || self.ai[s].task != Task::Link(j.trigger, j.target);
+                if lost {
+                    for (n, &m) in j.mech.iter().enumerate() {
+                        if m >= 0 && !(n == 0 && j.phase >= 2) {
+                            self.unreserve(m);
+                        }
+                    }
+                    let jj = &mut self.link.jobs[k];
+                    jj.claimed = NONE;
+                    jj.until = 0;
+                    if jj.phase < 2 {
+                        jj.mech = [-1, -1];
+                        jj.phase = 0;
+                    } else {
+                        jj.mech[1] = -1;
+                    }
+                    jj.retry_at = now;
+                }
+                k += 1;
+                continue;
+            }
+            if self.world.building(j.trigger).is_none() || self.world.building(j.target).is_none() {
+                self.link.jobs.remove(k);
+                continue;
+            }
+            k += 1;
         }
     }
 
@@ -370,6 +410,12 @@ impl Sim {
         } else {
             got_on
         };
+        if want && k == DevKind::Floodgate {
+            // Asked to stay open: a pending jam must not close it once the tile clears.
+            if let Ok(p) = self.link.jammed.binary_search(&bid) {
+                self.link.jammed.remove(p);
+            }
+        }
         let jammed_door = k == DevKind::Door && self.link.jammed.binary_search(&bid).is_ok();
         if want == open && !jammed_door {
             return;

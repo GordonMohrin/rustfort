@@ -523,3 +523,40 @@ fn linkage_is_saved_mid_delay_and_deterministic() {
     };
     assert_eq!(run(1), run(1_000_000));
 }
+
+// ---------------------------------------------------------------- [machines14] verifier
+
+#[test]
+fn reopened_jammed_floodgate_stays_open_when_cleared() {
+    let (mut w, gap) = walled_hall();
+    w.buildings.push(building(1200, "Floodgate", "", gap.x, gap.y, gap.x, gap.y, gap.z));
+    w.buildings.push(building(1201, "Trap", "Lever", 20, 20, 20, 20, gap.z));
+    let mut sim = quiet(w);
+    sim.link_building_now(1201, 1200).unwrap();
+    sim.pull_lever_now(1201); // on: open
+    sim.run_ticks(102);
+    let t = sim.world.idx(gap).unwrap();
+    let junk = sim.create_item("BOULDER", 0, t, "granite boulder".into());
+    sim.pull_lever_now(1201); // off: jams
+    sim.run_ticks(102);
+    assert!(sim.device_state(1200).unwrap().jammed);
+    sim.pull_lever_now(1201); // on again: it should stay open
+    sim.run_ticks(5);
+    sim.destroy_item(junk);
+    sim.run_ticks(150);
+    assert!(sim.is_walkable(gap), "the lever is on: the cleared floodgate stays open");
+    assert!(!sim.device_state(1200).unwrap().jammed);
+}
+
+#[test]
+fn link_job_with_a_vanished_end_is_dropped() {
+    let (mut w, gap) = walled_hall();
+    w.buildings.push(building(800, "Door", "", gap.x, gap.y, gap.x, gap.y, gap.z));
+    w.buildings.push(building(801, "Trap", "Lever", 28, 26, 28, 26, gap.z));
+    let mut sim = quiet(w);
+    sim.link_building(801, 800).unwrap();
+    assert_eq!(sim.link_jobs().len(), 1);
+    sim.remove_building(801);
+    sim.run_ticks(201);
+    assert!(sim.link_jobs().is_empty(), "the trigger is gone: the job is dropped");
+}

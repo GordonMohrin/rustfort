@@ -184,3 +184,27 @@ fn ui_built_machines_get_constructed() {
     assert!(sim.machine_net(gear).is_some(), "the built gear is a machine");
     assert!(sim.mechanisms().iter().any(|m| m.0 == lever), "the built lever is a mechanism");
 }
+
+// [machines14] verifier
+#[test]
+fn pump_run_on_is_49_from_an_off_cadence_power_loss() {
+    let (mut sim, z) = sim();
+    let below = z - 1;
+    sim.world.buildings.push(bld(9101, "WaterWheel", 20, 30, 22, 30, z, ""));
+    sim.world.buildings.push(bld(9102, "GearAssembly", 23, 30, 23, 30, z, ""));
+    sim.world.buildings.push(bld(9103, "ScrewPump", 24, 30, 25, 30, z, "FromWest"));
+    sim.power_rebuild();
+    let p = Pos::new(21, 30, below);
+    let t = sim.world.idx(p).unwrap() as u32;
+    sim.set_liquid(p, 7, false);
+    let now = sim.ticks + 1000;
+    sim.power_flow_seen(t, now);
+    sim.power_balance(now + 1);
+    assert!(sim.machine_powered(9103));
+    // Power lost 30 ticks later (a lever disengaged a gear: immediate rebalance).
+    sim.set_liquid(p, 0, false);
+    sim.power_balance(now + 31);
+    assert!(!sim.machine_powered(9103));
+    assert!(sim.pump_running_on(9103, now + 31 + PUMP_RUN_ON));
+    assert!(!sim.pump_running_on(9103, now + 32 + PUMP_RUN_ON), "run-on is 49 ticks from the loss, not from the next cadence");
+}
