@@ -182,6 +182,9 @@ pub(crate) struct BldGfx {
     pub trap_weapon: Option<Sprite>,
     pub plate: Option<Sprite>,
     pub lever: Option<Sprite>,
+    /// [machines14] Lever pulled; plates [ready, pressed] x [creature, water, magma, minecart].
+    pub lever_pulled: Option<Sprite>, // [machines14]
+    pub plates: [[Option<Sprite>; 4]; 2], // [machines14]
     pub well: Option<Sprite>,
     /// Stone, wood, metal.
     pub archery: [Option<Sprite>; 3],
@@ -463,6 +466,11 @@ impl Tables {
             trap_weapon: n("TRAP_WEAPON"),
             plate: n("TRAP_PLATE_READY"),
             lever: n("LEVER_SET"),
+            lever_pulled: n("LEVER_PULLED"), // [machines14]
+            plates: [ // [machines14]
+                [n("TRAP_PLATE_READY"), n("TRAP_PLATE_READY_WATER"), n("TRAP_PLATE_READY_MAGMA"), n("TRAP_PLATE_READY_MINECART")], // [machines14]
+                [n("TRAP_PLATE_PRESSED"), n("TRAP_PLATE_PRESSED_WATER"), n("TRAP_PLATE_PRESSED_MAGMA"), n("TRAP_PLATE_PRESSED_MINECART")], // [machines14]
+            ], // [machines14]
             well: n("BLD_WELL_WITH_ROPE").or(n("BLD_WELL")),
             archery: [n("BLD_ARCHERY_TARGET_STONE"), n("BLD_ARCHERY_TARGET_WOOD"), n("BLD_ARCHERY_TARGET_METAL")],
             support: [n("BLD_SUPPORT_STONE"), n("BLD_SUPPORT_WOOD"), n("BLD_SUPPORT_METAL")],
@@ -1462,8 +1470,13 @@ pub(crate) fn building(g: &Gfx, world: &World, b: &Building, p: Pos, out: &mut V
                 "CageTrap" => bl.trap_cage,
                 "StoneFallTrap" => bl.trap_stone,
                 "WeaponTrap" => bl.trap_weapon,
+                "Lever" if b.flags.iter().any(|f| f == "ACTIVE") => bl.lever_pulled.or(bl.lever), // [machines14]
                 "Lever" => bl.lever,
-                "PressurePlate" => bl.plate,
+                "PressurePlate" => { // [machines14] pressed/ready by trigger kind
+                    let f = |x: &str| b.flags.iter().any(|y| y == x); // [machines14]
+                    let v = if f("PLATE_TRACK") { 3 } else if f("PLATE_MAGMA") { 2 } else if f("PLATE_WATER") { 1 } else { 0 }; // [machines14]
+                    bl.plates[f("PRESSED") as usize][v].or(bl.plate) // [machines14]
+                } // [machines14]
                 _ => None,
             };
             rc(s, out);

@@ -186,7 +186,7 @@ pub fn sheet_section(g: &mut Game, b: &Building, x: f32, mut y: f32, bw: f32, bo
                 act = DevAct::Pull;
             }
             if g.ui.hovered(pr) {
-                g.ui.tooltip = Some(("Toggles every linked bridge, door, floodgate and hatch".into(), vec2(pr.x, pr.y - 4.0)));
+                g.ui.tooltip = Some(("Sends on/off to every linked building (on opens doors, raises bridges)".into(), vec2(pr.x, pr.y - 4.0))); // [machines14]
             }
         }
         let linking = g.tool == Tool::Link(b.id);
@@ -269,6 +269,7 @@ pub fn sheet_section(g: &mut Game, b: &Building, x: f32, mut y: f32, bw: f32, bo
             y += lh;
         }
     }
+    y = super::machines14::sheet_section(g, b, x, y, bw, bottom); // [machines14] target picker, plate settings, pending/jammed
     apply(g, b, act);
     y
 }
