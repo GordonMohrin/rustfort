@@ -300,6 +300,10 @@ pub fn ui_arg(g: &mut Game, k: &str, v: &str) -> bool {
             g.screen = Screen::Labor;
             g.r8.labor_tab = LaborTab::Kitchen;
         }
+        "standing-orders" => { // [decay15]
+            g.screen = Screen::Labor; // [decay15]
+            g.r8.labor_tab = LaborTab::StandingOrders; // [decay15]
+        } // [decay15]
         "pile" => {
             // Stockpile settings editor for a pile id (or the largest pile).
             let w = &g.sim.world;
