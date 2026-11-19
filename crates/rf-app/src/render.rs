@@ -409,6 +409,7 @@ pub fn draw_map(g: &mut Game) {
     crate::ui::round8::draw_map_overlay(g); // [app8] stockpile links, link tool
     crate::ui::round9::draw_map_overlay(g); // [app9] patrol routes
     crate::ui::round12::draw_map_overlay(g); // [app12] route stops, carts, power overlay, aim
+    crate::ui::fire15::draw_map_overlay(g); // [fire15] flames, smoke, burning units
     draw_selection_and_cursor(g);
 }
 

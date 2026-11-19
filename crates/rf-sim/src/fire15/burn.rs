@@ -278,7 +278,9 @@ impl Sim {
             let Some(l) = target else {
                 // Charred through: the part is lost (function lost); vital parts kill.
                 e.parts &= !(1 << p);
-                self.combat.f[s].part_state[p] |= 4;
+                if let Some(st) = self.combat.f[s].part_state.get_mut(p) {
+                    *st |= 4;
+                }
                 let body = &self.combat.bodies[bi];
                 let vital_inside = body.parts[p].internal_children.iter().any(|&c| body.parts[c as usize].flags & (bp::VITAL | bp::THOUGHT | bp::CIRC) != 0);
                 if flags & (bp::VITAL | bp::THOUGHT | bp::UPPER | bp::HEAD) != 0 || vital_inside {

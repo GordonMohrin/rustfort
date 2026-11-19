@@ -628,3 +628,42 @@ Seams only: no rule is simulated yet; each module owner adds its own section bel
 | Entity attitude `EntityInfo::attitude` | MISSING | Field only (wiki Diplomacy); set by `diplomacy`. |
 | Hauling route stop item filter `HaulStop::filter` | MISSING | Stored and editable through the API; minecarts do not apply it yet (wiki Hauling route: stop conditions and desired items). |
 | Moon phase (`Sim::moon_phase`) | MISSING | Stub returns 0; wiki Werebeast (full moon). |
+
+## Temperature, fire and magma (`[fire15]`)
+
+Code: `crates/rf-sim/src/fire15.rs` (+ `fire15/heat.rs`, `items.rs`, `tiles.rs`, `burn.rs`), public API `fire15_api.rs`, overlay `rf-app/src/ui/fire15.rs`; spec `docs/mechanics/fire15.md`. This section supersedes the rows "Temperature, freezing, steam" (fluids table), "Fire, burns, temperature" (combat table) and the temperature part of "Fire breath, dragonfire ..." (military table). Everything except the obsidian edge cases, the magma-safe test and the magma-workshop check only runs when temperature is on (`settings.temperature`, DF `FEATURE_TEMPERATURE`, or the player override `Sim::set_temperature_enabled`); the reference fort has it off.
+
+| Rule | Class | Notes |
+|---|---|---|
+| Material heat points (SPEC_HEAT, IGNITE, MELTING, BOILING, HEATDAM, COLDDAM, MAT_FIXED_TEMP) | OK | From the export (`materials.json` `heat`, now kept in `MaterialInfo::heat`). Fallback for older exports/synthetic worlds: raws templates and the vanilla inorganic MELTING/BOILING/SPEC values (w:Material definition token). |
+| Heat transfer: per tick (env - T) / SPEC_HEAT, fractions kept | OK | w:Temperature. Fixed point 16.16, truncation toward zero (ESTIMATE); reproduces the wiki's lignite example exactly (517 ticks to 11440 in magma). Only "hot" items are stepped. |
+| Environment: magma 12000, underground 10015, outside = weather API, fire 10508 -> 10708 | OK | w:Magma, w:Temperature, w:Fire; water never above 10180 (ESTIMATE). Outside temperature comes from `Sim::temperature_at` ([weather13]). |
+| Fixed-temperature materials (nether-cap 10000) | OK | Never change, never ignite from ordinary fire; survive magma (w:Magma-safe). |
+| Containers pin their contents' environment | OK | w:Temperature. |
+| Fire-safe = stable at 11000, magma-safe = stable at 12000 | FIXED r15 | w:Fire-safe, w:Magma-safe. `fluids::magma_safe` used "any stone"; granite (11440) etc. now melt. Also used by the legacy (temperature off) magma path. |
+| Items melt, boil, ignite at their points | OK | w:Material definition token. Liquids (drinks) only boil. MISSING: "glob of molten metal" items (they vanish anyway, w:Magma). |
+| Burning item: equilibrium ignite + 190 | ESTIMATE | w:Fire "about 200 above, slightly below". |
+| Burning wear 10 points/tick, 806 400 per level: gone after exactly 322 560 ticks | OK | w:Wear, w:Material definition token (materials without HEATDAM). |
+| Heat/cold damage wear 10 points per degree above HEATDAM / below COLDDAM per tick | ESTIMATE | Rate not on the wiki; wood burns up in ~0.6 day, in magma in ~1/6 day. |
+| Artifacts never wear (burn forever), but melt/boil | OK | w:Wear, w:Fire. |
+| Water puts out burning items (not in bins), units and tiles | OK / ESTIMATE | w:Fire "Artifacts", firebreaks; depth >= 1 (ESTIMATE). |
+| Grass, shrub, sapling and tree tiles burn; spread to the 8 neighbours on the same level only; trees carry fire upward | OK | w:Fire, w:Grass. Spread chance 1/8 per 10 ticks, fuel 200/300/100/1200 ticks (ESTIMATE). |
+| Ramps, constructions, roots, water-covered tiles never burn | OK | w:Fire, w:Grass ("grassy slopes will not catch on fire"). Dry and dead grass burn (ESTIMATE). |
+| Burnt grass -> ashes, burnt trees -> `TreeDead*`, burnt shrubs removed | OK / ESTIMATE | w:Grass, w:Tree; tiletype by name (ESTIMATE). MISSING: tree collapse, dead-tree rejuvenation. |
+| Dwarves avoid fire | ESTIMATE | Burning tiles get restricted traffic while they burn (w:Fire "Dangers"; DF's avoidance is not documented). |
+| Rain/snow put out outside fires | ESTIMATE | 1/4 per 10 ticks; inactive until [weather13]'s `weather_at` reports rain. |
+| Units catch fire on burning ground (1/2 per 10 ticks, 1-3 stance parts) and next to burning units (1/10) | ESTIMATE | w:Grass "a chance each turn", w:Fire. |
+| Burn wounds layer by layer from the outside; fat above its melting point (10078) melts and bleeds; charred head/upper body kills | OK / ESTIMATE | w:Temperature, w:Magma crab, w:Material science. Severity 1000 per 10 ticks (5000 in magma), bleeding by the cut formula, per-part self-extinguish 1/30 (ESTIMATE). Wound flags BURNED / MELTED. |
+| Immunity is material-based; FIREIMMUNE alone does not protect | OK | w:Creature token FIREIMMUNE; magma crab chitin 13000 is magma-proof. Races found in magma at load stay immune. |
+| Units in magma: immediate immolation, death by burns | OK / ESTIMATE | w:Magma "nearly-instant immolation". Temperature off keeps the legacy 10-tick kill. |
+| Burned-to-death units: the corpse keeps burning (no remains) | OK | w:Fire "Ghosts". |
+| Heat emitters (fire man FLAME 10800) ignite the 3x3 around them | OK | w:Fire man, w:Creature token FIXED_TEMP. Death burst: MISSING. |
+| Smoke: from every fire, ttl 700 ticks, "Smoke" thought underground at most every 2 days | ESTIMATE | w:Smoke. MISSING: pathing quirks in smoke. |
+| Steam | OK (cosmetic) | w:Steam: harmless. Counted (`fire_report().steam_puffs`, `fluid_report().steam`). |
+| Obsidian: water on a magma flow tile only makes steam | OK | w:Obsidian, w:Magma flow. Runs with temperature off too. |
+| Obsidian casting kills creatures (caged ones survive), destroys non-magma-safe items, entombs magma-safe ones | OK / ESTIMATE | w:Obsidian. Every non-magma-safe item in the tile is destroyed (ESTIMATE). MISSING: per-biome LAVA stone, pond-zone free-fall rule. |
+| Magma melts natural ice walls (7/7 water) | OK | w:Ice, w:Magma. Ice floors: MISSING. |
+| Magma workshops cancel their jobs when magma drops below 4/7 | OK | w:Magma forge. Checked every 100 ticks (ESTIMATE for "even for a moment"); temperature-independent. Moody claimers going insane: MISSING. |
+| Dragonfire / heat blast | OK (API) | `Sim::heat_blast(p, temp)` for [mega13]: items heat to `temp`, grass burns out, units ignite unless FIREIMMUNE_SUPER or immune at that temperature (w:Dragonfire). Cone geometry is [mega13]'s. |
+| Buildings melting/burning (doors, floodgates, bridges, pumps), magma mist, warm-stone dig cancel, cold damage/frostbite, fire imp and magma crab attacks | MISSING | Spec P3. |
+| Temperature off | ESTIMATE | DF would do no temperature damage at all; Rustfort keeps the legacy magma behaviour (10-tick kill, instant destruction of non-magma-safe items). Evaporation with temperature off is a [fluids] question (see the spec). |

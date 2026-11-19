@@ -10,6 +10,7 @@ pub mod build;
 pub mod building;
 pub mod burrows;
 pub mod devices; // [round 4]
+pub mod fire15; // [fire15] flames, smoke, burning units
 pub mod help; // [round 6]
 pub mod labor;
 pub mod military;
