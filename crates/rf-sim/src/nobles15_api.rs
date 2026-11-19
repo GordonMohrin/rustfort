@@ -115,7 +115,7 @@ impl Sim {
                 let (zone, value) = best.unwrap_or((-1, 0));
                 let state = match best {
                     None => ReqState::Missing,
-                    Some((_, v)) if v >= need => ReqState::Met,
+                    Some((_, v)) if v >= need || need <= 1 => ReqState::Met, // 1 = any room
                     _ => ReqState::Low,
                 };
                 rooms.push(RoomReq {

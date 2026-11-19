@@ -561,6 +561,14 @@ Trussroads: 58 entities. Own: the Channels of Direction (dwarves, civ 29, 44 car
 
 Extras: `holder_hf`, `holder_unit_any`, `holder_name`, `assignment_id`, `position_id`, `squad_id`, `responsibilities` (e.g. `TRADE`, `ACCOUNTING`, `MANAGE_PRODUCTION`, `HEALTH_MANAGEMENT`, `LAW_ENFORCEMENT`, `MEET_WORKERS`), `flags`, `precedence`, `number`, `mandate_max`, `demand_max`, `required_bedroom`, `required_office`, `required_dining`, `required_tomb`, `required_boxes`, `required_cabinets`, `required_racks`, `required_stands` (room value / furniture demands), and `mandates_detail` (`rf_import::MandateInfo`: `mode` = `Export`/`Make`/`Guild`, `item_type`, `item_subtype`, `mat`, `amount_total`, `amount_remaining`, `timeout_counter`, `timeout_limit`, `punishment_hammerstrikes`, `punishment_prison_time`). Mandates whose issuer holds no mandate position are listed in `notes`.
 
+[nobles15] Rustfort reads these extras now (no exporter change): `rf_core::NoblePosition` has
+`mandate_max`, `demand_max`, `required_office/bedroom/dining/tomb`,
+`required_boxes/cabinets/racks/stands`, `flags`, `responsibilities`, `precedence` and
+`mandates_detail` (`rf_core::MandateDetail`, the same fields as `MandateInfo`); `MandateInfo`
+also carries `punishment_hammerstrikes` and `punishment_prison_time` (months of jail). DF's
+`timeout_counter`/`timeout_limit` count in units of 10 ticks. Exports without these fields fall
+back to the vanilla raws numbers (`nobles15::pos_req`).
+
 Trussroads: 21 fort assignments (mayor = expedition leader Amost Castlelancers, manager = dungeon master, bookkeeper, chief medical dwarf, 9 militia captains; **broker, hammerer, champion, sheriff, captain of the guard and militia commander vacant**) and 12 civ assignments (king, counts, barons, general, diplomat, outpost liaison; none on the map). One mandate: the mayor's `Ban export of spears`.
 
 ### settings.json

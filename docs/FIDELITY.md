@@ -628,3 +628,40 @@ Seams only: no rule is simulated yet; each module owner adds its own section bel
 | Entity attitude `EntityInfo::attitude` | MISSING | Field only (wiki Diplomacy); set by `diplomacy`. |
 | Hauling route stop item filter `HaulStop::filter` | MISSING | Stored and editable through the API; minecarts do not apply it yet (wiki Hauling route: stop conditions and desired items). |
 | Moon phase (`Sim::moon_phase`) | MISSING | Stub returns 0; wiki Werebeast (full moon). |
+
+## Nobles, mandates and demands (`[nobles15]`)
+
+Module `crates/rf-sim/src/nobles15.rs` (spec `docs/mechanics/nobles15.md`), API
+`nobles15_api.rs`, UI "Requirements" in the nobles screen (`ui/nobles15.rs`). Sources: w:Noble
+(V50), w:Mandate, w:Demand, w:Bookkeeper, the vanilla raws `entity_default.txt` (numbers only)
+and the reference exports. Changes the state hash of forts with a mayor or another noble with
+room requirements (shifted room thoughts, new mandate timing and sentences).
+
+| Rule | Class | Notes |
+|---|---|---|
+| Room/furniture requirements, MANDATE_MAX, DEMAND_MAX, PRECEDENCE per position | OK | raws `ENTITY:MOUNTAIN` (mayor 500/500/500, baron adds a tomb, count 1500, duke 2500, monarch 10000; mandates mayor/baron 1, count 2, duke 3, monarch 5); exported `nobles.json` numbers win. Gendered titles map to the raws token. Several positions: maximum per field (ESTIMATE). |
+| Requirement met when an assigned zone of that kind has at least the value; 1 = any room | OK | w:Noble. Room value = the social module's value; offices and tombs (not valued there) use the same formula (furniture + floor + bordering walls). Furniture is counted in bedroom + office (ESTIMATE). UI colours red/yellow/green (ESTIMATE that v50 matches the old screen). |
+| `Office` zone kind, zone assignment API (`Sim::assign_zone`) | OK | DF v50 civzone `Office`; one owner per zone, several zones per unit (ESTIMATE). |
+| Furniture shortfalls give no `More*` thoughts | OBSERVED | The reference mayor (2 shortfalls for a year) had none; `MORE_FURNITURE_THOUGHTS = false`. |
+| Noble room thoughts shifted: tier - max(0, required tier - 1) | OBSERVED (H1, 2 points) | The mayor rates the common hall 2 lower than commoners, his bedroom -1. Commoners and "any room" holders unchanged. The social module's calibration of exported bedroom thoughts adds the shift back. |
+| Meetings: own office -> `OfficeQuality`, else a dining hall -> `MeetingInDiningRoom`, else own bedroom -> `MeetingInBedroom`, else `NoRooms` | OK (thought names) / ESTIMATE (order) | MEET_WORKERS holders (mayor, EL) meet at each answered petition and at complaints; nobody walks there (MISSING). |
+| Complaints: daily chance citizens / 50 000 if someone is stressed (`ReceivedComplaint`) | ESTIMATE | about 2 a year at 150 citizens, as observed. |
+| Tomb thoughts on birthdays (`TombQuality` / `TombLack`) for holders with a tomb requirement | OK (caption) / ESTIMATE (who) | |
+| SLEEP_PRETENSION: `RoomPretension` when a lower-ranked citizen owns a better bedroom, at most weekly | ESTIMATE | raws token; w:Noble silent. The vanilla mayor has none. |
+| Mandate issue: MANDATE_MAX > 0, alive, citizen, not caged/in a mood/jailed; chance 1 in MANDATE_PERIOD (setting, default 1000) per 100-tick pass; one-month cooldown shared with demands | OK (who, limits) / ESTIMATE (rate unit, cooldown) | w:Mandate; observed gaps >= 1.17 seasons. 2 in 3 production orders, 1 in 3 export bans (ESTIMATE). Items from a fixed list: unit preferences are not exported (MISSING). |
+| Production deadline 3-6 months; DF counters in 10-tick units | OK / OBSERVED | Imported mandates keep `timeout_limit - timeout_counter`. |
+| Fulfilment by items the fort makes (hook at creation, by type/subtype, not material); caravan goods do not count | OK | w:Mandate. No O(items) scans. |
+| Met -> `MandateDeadlineMet`; missed -> `MandateIgnored` + crime `ProductionOrderViolation`, sentenced at once, no witnesses | OK / OBSERVED | export r6/r7 (60 crimes). |
+| Culprit: adult citizen, not the noble, not PUNISHMENT_EXEMPTION; weight 4 with a related skill, else 1; one culprit | OK (rule) / ESTIMATE (weights, count) | Nobody -> `NoPunishment`. |
+| Punishment = the mandate's own: 1-5 hammerstrikes and 1-4 months jail, strikes first, then jail (28 days a month) | OBSERVED | Without a hammerer the old fallbacks (jail, else beating). Not started after 7 days -> `DelayedPunishment` (noble) / `PunishmentDelayed` (culprit) (ESTIMATE delay). `ImproperPunishment`: MISSING. |
+| PUNISHMENT_EXEMPTION: convicted nobles are not punished | OK | w:Noble. |
+| Export bans: by item type; end quietly after half a year; banned item traded directly -> crime of the dwarf who hauled it to the depot; inside a bin -> nobody punished, noble unhappy; `Sim::banned_goods` for the trade window | OK / ESTIMATE ("leaves the map" = trade commit) | w:Mandate. |
+| Mandates and demands end on death or a lost election | OK | w:Mandate. |
+| Elections: `Elected` / `Reelected` thoughts, re-election announcement | OK (thoughts) / ESTIMATE (wording) | Winner score unchanged (ESTIMATE). |
+| Sheriff replaced by the captain of the guard at 50 citizens, holder carried over | OK (raws) / ESTIMATE (holder) | |
+| Demands: furniture (in the fort's most common material of it) in a room the noble owns; DEMAND_MAX; chance 1 in DEMAND_PERIOD per day; due in 6 months, then `Demands` anger weekly; forgotten after 3 years; met -> happy `Demands` | OK (w:Demand rules) / ESTIMATE (rate, material without preferences, weekly anger) | Status green/yellow/orange (last month)/red. Not imported (MISSING). |
+| Manager validates new player work orders in his office above 20 citizens; ORGANIZATION speeds it up, each validation trains it | OK (raws description) / ESTIMATE (threshold, speed) | Imported and sim-made orders are not affected. No office -> a one-time warning. |
+| Bookkeeper precision 1-5; level 1 without an office, higher levels need one; records refreshed weekly; counts shown rounded by level | OK (levels, office) / ESTIMATE (work, rounding) | Resolved in the daily pass (no walking). `Sim::stock_count`. Top-bar counts stay live. |
+| Broker appraisal: values shown only with a broker who has APPRAISAL > 0 (`Sim::appraised_value`) | OK | raws BROKER description, w:Bookkeeper. Display only. |
+| Menial work exemption | MISSING (by design) | w:Noble: non-functional. |
+| Guild mandates, liaison meetings, elevation, monarch arrival | MISSING | No guild agreements; diplomacy is `[diplo13]`. |

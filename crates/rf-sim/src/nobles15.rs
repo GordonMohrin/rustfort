@@ -1039,9 +1039,10 @@ impl Sim {
         self.n15_sync_texts();
     }
 
-    /// [hook] `justice::convict_impl`: the mandate's own punishment (strikes, jail months).
+    /// [hook] `justice::convict_impl`: the mandate's own punishment as (jail days, strikes),
+    /// like `justice::sentence`; a DF month is 28 days.
     pub(crate) fn nobles15_sentence(&self, crime: i32) -> Option<(i32, i32)> {
-        self.n15.sentences.iter().find(|s| s.crime == crime).map(|s| (s.strikes as i32, s.jail_months as i32 * 28))
+        self.n15.sentences.iter().find(|s| s.crime == crime).map(|s| (s.jail_months as i32 * 28, s.strikes as i32))
     }
 
     /// [hook] `justice::convict_impl`: PUNISHMENT_EXEMPTION ("Immune dwarves aren't punished
