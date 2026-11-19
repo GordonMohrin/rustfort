@@ -75,6 +75,8 @@ pub mod undead; // [contract13] owner [undead13]: reanimation, undead, necromanc
 pub mod vampires; // [contract13] owner [vampire13]: vampires, werebeasts
 pub mod megabeasts; // [contract13] owner [mega13]: megabeasts, semi-megabeasts, titans
 pub mod diplomacy; // [contract13] owner [diplo13]: liaisons, diplomats, relations, war/peace
+pub mod fire15; // [fire15] temperature, fire and magma
+pub mod fire15_api; // [fire15] public API: temperature, fire, magma
 pub use round8_api::AnimalInfo;
 pub mod construct; // [construct]
 pub use construct::ConstructReport; // [construct]
@@ -705,6 +707,7 @@ pub struct Sim {
     vamp: vampires::Vamp, // [contract13] owner [vampire13]
     mega: megabeasts::Mega, // [contract13] owner [mega13]
     diplo: diplomacy::Diplo, // [contract13] owner [diplo13]
+    fire: fire15::Fire15, // [fire15] temperature, fire and magma
 }
 
 /// [perf9] Debug: A* searches with at least this many nodes are printed (`RF_PATH_LOG`, set
@@ -861,6 +864,7 @@ impl Sim {
             vamp: vampires::Vamp::default(), // [contract13]
             mega: megabeasts::Mega::default(), // [contract13]
             diplo: diplomacy::Diplo::default(), // [contract13]
+            fire: fire15::Fire15::default(), // [fire15]
         };
         sim.restore_core(&saved); // [saves10] tick count first: the init passes below use it
         sim.init_plants();
@@ -1310,6 +1314,7 @@ impl Sim {
         self.vampires_hash(&mut mix); // [contract13] owner [vampire13]
         self.megabeasts_hash(&mut mix); // [contract13] owner [mega13]
         self.diplomacy_hash(&mut mix); // [contract13] owner [diplo13]
+        self.fire15_hash(&mut mix); // [fire15]
         h
     }
 
@@ -1420,6 +1425,7 @@ impl Sim {
         self.fluids_tick(now); // [fluids]
         self.power_tick(now); // [gaps10] pumps and power
         self.carts_tick(now); // [carts12] minecarts and wheelbarrows
+        self.fire_tick(now); // [fire15] temperature, fire, magma contact, obsidian casting
         let tp = Instant::now(); // [perf]
         self.phase[7] += (tp - tq).as_secs_f64(); // [perf]
         if now % population::POP_PERIOD == population::POP_PHASE {

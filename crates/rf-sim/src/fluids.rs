@@ -88,6 +88,7 @@ const PIT: u8 = 8;
 const RIVER: u8 = 16;
 const SOURCE: u8 = 32;
 const FLOOR_SHAPE: u8 = 64;
+const MAGMA_FLOW: u8 = 128; // [fire15] magma flow floor (above semi-molten rock)
 
 const DIRS8: [(i32, i32); 8] = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)];
 
@@ -150,6 +151,8 @@ pub struct FluidReport {
     pub mud_tiles: usize,
     /// Units currently in deep water or magma.
     pub submerged: usize,
+    /// [fire15] Water and magma that vanished as steam on a magma flow tile (no obsidian).
+    pub steam: u64, // [fire15]
     /// Wall-clock seconds spent in the fluid tick (not part of the simulated state).
     pub time_s: f64,
 }
@@ -210,6 +213,9 @@ pub(crate) struct Fluids {
     obsidian_mat: u16,
     in_pass: bool,
     stats: FluidReport,
+    /// [fire15] Tiles cast into obsidian since `fire15` last looked (units/items there).
+    #[serde(default)] // [fire15]
+    obsidian_cells: Vec<u32>, // [fire15]
 }
 
 impl Default for Fluids {
@@ -255,6 +261,7 @@ impl Default for Fluids {
             obsidian_mat: NO_MAT,
             in_pass: false,
             stats: FluidReport::default(),
+            obsidian_cells: Vec::new(), // [fire15]
         }
     }
 }
@@ -293,11 +300,21 @@ fn class_of(shape: Shape, mat: TtMaterial, special: TtSpecial) -> u8 {
     if shape.has_floor() && !matches!(shape, StairDown | StairUpdown) {
         c |= FLOOR_SHAPE;
     }
+    if mat == TtMaterial::Magma { // [fire15]
+        c |= MAGMA_FLOW; // [fire15]
+    } // [fire15]
     c
 }
 
-/// Magma-safe material (estimate, see module docs).
+/// Magma-safe material: [fire15] stable at 12000 U by the material's heat points (wiki
+/// Magma-safe; exported values, else the raws fallback in `fire15::heat`). The old token list
+/// below is kept only for reference.
 fn magma_safe(m: &MaterialInfo) -> bool {
+    crate::fire15::heat::survives_magma(&crate::fire15::heat::heat_of(m)) // [fire15]
+}
+
+#[allow(dead_code)] // [fire15] replaced by `fire15::heat`
+fn magma_safe_old(m: &MaterialInfo) -> bool { // [fire15] renamed
     if m.is_metal {
         let t = m.token.trim_start_matches("INORGANIC:");
         return matches!(t, "IRON" | "PIG_IRON" | "STEEL" | "NICKEL" | "PLATINUM" | "ADAMANTINE");
@@ -443,6 +460,12 @@ impl Fluids {
     /// Water and magma meet in tile `i`: it becomes an obsidian wall.
     fn obsidian(&mut self, tiles: &mut [Tile], i: usize) {
         self.set(tiles, i, 0, false);
+        if self.class(&tiles[i]) & MAGMA_FLOW != 0 { // [fire15] magma flow: only a puff of steam (w:Obsidian, w:Magma flow)
+            self.stats.steam += 1; // [fire15]
+            self.touch(tiles, i); // [fire15]
+            return; // [fire15]
+        } // [fire15]
+        self.obsidian_cells.push(i as u32); // [fire15] units/items cast in obsidian
         if self.obsidian_tt != u16::MAX {
             tiles[i].tt = self.obsidian_tt;
             tiles[i].mat = self.obsidian_mat;
@@ -1262,7 +1285,14 @@ impl Sim {
                 continue;
             }
             let race = &self.world.units[self.ai[s].uidx].race;
-            let immune = if is_magma(&t) { self.fluids.fireproof.contains(race) } else { self.fluids.aquatic.contains(race) || self.fluids_nobreathe(s) };
+            let immune = if is_magma(&t) && self.fire15_on() { // [fire15] material-based immunity (w:Creature token FIREIMMUNE)
+                let race = race.clone(); // [fire15]
+                self.fire15_magma_proof(s) || (self.fluids.fireproof.contains(&race) && !self.fluids_flag_fireimmune(&race)) // [fire15] found in magma at load
+            } else if is_magma(&t) { // [fire15]
+                self.fluids.fireproof.contains(race)
+            } else {
+                self.fluids.aquatic.contains(race) || self.fluids_nobreathe(s)
+            }; // [fire15]
             if immune {
                 continue;
             }
@@ -1306,7 +1336,9 @@ impl Sim {
                 self.ai[s].wake = now + 1;
             }
             let swim = self.fluids_swim_skill(s);
-            if magma {
+            if magma && self.fire15_on() { // [fire15] burns through `fire15` (burn wounds) instead of the 10-tick kill
+                self.fire15_unit_in_magma(s, now); // [fire15]
+            } else if magma { // [fire15]
                 e.burn += 1;
                 if e.burn >= MAGMA_BURN_TICKS {
                     self.fluids.sub.swap_remove(k);
@@ -1411,6 +1443,12 @@ impl Sim {
         let mut cells = std::mem::take(&mut self.fluids.magma_new);
         cells.sort_unstable();
         cells.dedup();
+        if self.fire15_on() { // [fire15] items heat up gradually (w:Magma, w:Temperature)
+            self.fire15_magma_cells(&cells, _now); // [fire15]
+            cells.clear(); // [fire15]
+            self.fluids.magma_new = cells; // [fire15]
+            return; // [fire15]
+        } // [fire15]
         let mut doomed = Vec::new();
         for it in &self.world.items {
             if !it.flags.on_ground || it.container >= 0 || it.holder >= 0 {
@@ -1442,6 +1480,32 @@ impl Sim {
         cells.clear();
         self.fluids.magma_new = cells;
     }
+
+    /// [fire15] Obsidian was cast since `fire15` last looked.
+    pub(crate) fn fluids_has_obsidian_cells(&self) -> bool { // [fire15]
+        !self.fluids.obsidian_cells.is_empty() // [fire15]
+    } // [fire15]
+
+    /// [fire15] Take the obsidian cells (give the vector back with `fluids_return_obsidian_cells`).
+    pub(crate) fn fluids_take_obsidian_cells(&mut self) -> Vec<u32> { // [fire15]
+        std::mem::take(&mut self.fluids.obsidian_cells) // [fire15]
+    } // [fire15]
+
+    pub(crate) fn fluids_return_obsidian_cells(&mut self, v: Vec<u32>) { // [fire15]
+        if self.fluids.obsidian_cells.is_empty() { // [fire15]
+            self.fluids.obsidian_cells = v; // [fire15]
+        } // [fire15]
+    } // [fire15]
+
+    /// [fire15] Magma on the map (sevenths).
+    pub(crate) fn fluids_magma_volume(&self) -> i64 { // [fire15]
+        self.fluids.stats.magma_volume // [fire15]
+    } // [fire15]
+
+    /// [fire15] The race has FIREIMMUNE/FIREIMMUNE_SUPER in its raws.
+    pub(crate) fn fluids_flag_fireimmune(&self, race: &str) -> bool { // [fire15]
+        self.world.creature_raws.iter().find(|c| c.token == race).map_or(false, |c| c.flags.iter().chain(c.castes.iter().flat_map(|k| k.flags.iter())).any(|f| f == "FIREIMMUNE" || f == "FIREIMMUNE_SUPER")) // [fire15]
+    } // [fire15]
 
     /// [fluids] Mix fluid state into the state hash.
     pub(crate) fn fluids_hash(&self, mix: &mut impl FnMut(u64)) {
