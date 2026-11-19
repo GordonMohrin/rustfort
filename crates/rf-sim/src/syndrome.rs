@@ -256,7 +256,7 @@ impl Sim {
             }
             self.caverns.doomed.swap_remove(k);
             let s = s as usize;
-            if self.ai[s].kind != Kind::Dead {
+            if self.ai[s].kind != Kind::Dead && !self.undead_bloodless(s) { // [undead13] NOBREATHE
                 self.combat_kill(s, now, "has suffocated");
             }
         }

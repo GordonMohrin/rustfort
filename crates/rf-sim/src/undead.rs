@@ -300,11 +300,16 @@ impl Sim {
             return None;
         }
         let rec = self.undead.remains.binary_search_by_key(&id, |e| e.0).ok().map(|k| self.undead.remains[k]);
-        let src = rec.and_then(|r| self.world.unit(r.1));
+        let src = rec.and_then(|r| self.world.unit(r.1)).or_else(|| {
+            // Corpse of a unit we did not track: `kill` names it "<name>'s corpse" but gives it
+            // a generic creature material, so find the dead unit by name first.
+            let who = it.desc.strip_suffix("'s corpse").filter(|_| !piece)?;
+            self.world.units.iter().find(|u| u.flags.dead && !u.name.is_empty() && u.name == who)
+        });
         let race = match src {
             Some(u) => u.race.clone(),
             None => {
-                // Corpse of a unit we did not see die: race from its material (`CREATURE:RACE:...`).
+                // Imported corpse: race from its material (`CREATURE:RACE:...`).
                 let tok = self.world.material(it.mat).map(|m| m.token.as_str()).unwrap_or("");
                 let mut parts = tok.split(':');
                 match (parts.next(), parts.next()) {
@@ -537,6 +542,14 @@ impl Sim {
         f.squad = -1;
         f.duty = crate::military::Duty::None;
         f.sub = crate::combat::Sub::None;
+        f.uncon_until = 0; // NOSTUN: wakes up at once
+        if curse == "HUSK" {
+            // NOT_LIVING: open wounds stop bleeding (else the husk could bleed to death).
+            f.bleed = 0;
+            for w in &mut f.wounds {
+                w.bleed = 0;
+            }
+        }
         self.make_hostile(id);
         self.undead.risen.push((id, now));
         let what = if curse == "HUSK" {

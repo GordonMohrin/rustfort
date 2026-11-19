@@ -192,3 +192,34 @@ fn deterministic_rise() {
     };
     assert_eq!(go(4), go(4));
 }
+
+#[test]
+fn untracked_corpse_rises_as_its_race() {
+    // Killed while reanimation was off: the corpse is not tracked and `kill` gives it a
+    // generic creature material; it must still rise as the dead unit's race.
+    let mut sim = mk(world(), 13);
+    let id = victim(&sim);
+    let race = sim.world.unit(id).unwrap().race.clone();
+    assert!(sim.kill_unit(id, "test"));
+    run(&mut sim, 200);
+    assert!(sim.undead.remains.is_empty());
+    sim.set_reanimation_enabled(true);
+    let mut t = 0;
+    while sim.undead_report().reanimated == 0 && t < 20_000 {
+        sim.tick();
+        t += 1;
+    }
+    let z = undead_units(&sim);
+    assert!(!z.is_empty(), "corpse never rose");
+    assert_eq!(sim.world.unit(z[0]).unwrap().race, race);
+}
+
+#[test]
+fn undead_do_not_drown_or_suffocate() {
+    let mut sim = mk(world(), 17);
+    let p = sim.world.units[0].pos;
+    let s = sim.undead_spawn("DWARF", "zombie".into(), p, 1, 0).expect("spawned");
+    sim.caverns.doomed.push((s as u32, 0));
+    sim.syndrome_tick(1);
+    assert_ne!(sim.ai[s].kind, Kind::Dead, "NOBREATHE: undead cannot suffocate");
+}
