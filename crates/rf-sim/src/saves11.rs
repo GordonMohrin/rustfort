@@ -441,6 +441,7 @@ impl Sim {
         self.prefs_rebuild(); // [prefs15]
         self.decay_after_load(); // [decay15]
         self.h15_after_load(); // [health15]
+        self.nobles15_after_load(); // [nobles15] holder cache
     }
 
     /// [saves11] Encoded size of each part of the snapshot (bytes, before compression).
@@ -505,6 +506,7 @@ impl Sim {
             ("fire15", enc(&self.fire)), // [fire15]
             ("prefs", enc(&self.prefs)), // [prefs15]
             ("decay", enc(&self.decay)), // [decay15]
+            ("nobles15", enc(&self.n15)), // [nobles15]
             ("total", self.exact_snapshot()),
         ]
     }

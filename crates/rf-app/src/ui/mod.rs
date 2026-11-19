@@ -18,6 +18,7 @@ pub mod labor;
 pub mod military;
 pub mod minimap; // [app8]
 pub mod nobles; // [round 4]
+pub mod nobles15; // [nobles15] requirements, mandates, demands, bookkeeper
 pub mod orders;
 pub mod overlay;
 pub mod panels;

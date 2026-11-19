@@ -5,7 +5,7 @@ use crate::Sim;
 use rf_core::{Building, Item, ItemFlags, NoblePosition, Pos};
 
 fn noble(token: &str, holder: i32) -> NoblePosition {
-    NoblePosition { token: token.into(), name: token.to_lowercase(), holder, entity_id: 1, mandates: Vec::new() }
+    NoblePosition { token: token.into(), name: token.to_lowercase(), holder, entity_id: 1, mandates: Vec::new(), ..Default::default() } // [nobles15]
 }
 
 fn thought(sim: &Sim, id: i32, t: &str) -> bool {

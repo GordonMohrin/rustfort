@@ -764,6 +764,7 @@ impl Sim {
             sc.furn.push(Furn { pos: b.center, bid: b.id, quality: q, room, kind, item1, value: v }); // [prefs15]
         }
         self.social_revalue_rooms();
+        let n15_shift = crate::nobles15::bedroom_shifts(&self.world.nobles); // [nobles15] DF's noble severities are shifted
         let sc = &mut self.social;
         // Room levels DF reported (thought severity = tier - 2, i.e. 0 = ordinary): an owner's
         // last BedroomQuality for its bedroom, the most common DiningQuality for dining rooms.
@@ -774,7 +775,7 @@ impl Sim {
             }
             if let Some(e) = u.emotions.iter().rev().find(|e| e.thought == "BedroomQuality") {
                 for r in sc.rooms.iter_mut().filter(|r| r.kind == RoomKind::Bedroom && r.owner == u.id) {
-                    r.min_tier = (e.severity + 2).clamp(0, 7);
+                    r.min_tier = (e.severity + 2 + n15_shift.iter().find(|x| x.0 == u.id).map(|x| x.1).unwrap_or(0)).clamp(0, 7); // [nobles15] shift
                 }
             }
         }
@@ -856,7 +857,7 @@ impl Sim {
 
     /// Value of one floor or wall tile for room value (wiki "Engraving": origin multiplier x
     /// material value + engraving bonus).
-    fn room_tile_value(&self, i: usize) -> i32 {
+    pub(crate) fn room_tile_value(&self, i: usize) -> i32 { // [nobles15] pub(crate)
         let t = self.world.tiles[i];
         let info = self.world.tiletypes.get(t.tt);
         let built = info.material == TtMaterial::Construction;
@@ -893,6 +894,16 @@ impl Sim {
         let b = self.world.buildings.iter().find(|b| b.id == zone_id && b.kind == "Civzone")?;
         self.social.rooms.iter().find(|r| r.x1 == b.x1 && r.y1 == b.y1 && r.x2 == b.x2 && r.y2 == b.y2 && r.z == b.z).map(|r| r.value)
     }
+
+    /// [nobles15] Social simulation switched off.
+    pub(crate) fn social_is_off(&self) -> bool { // [nobles15]
+        self.social.off // [nobles15]
+    } // [nobles15]
+
+    /// [nobles15] Rebuild rooms (and bed owners) at the next social pass.
+    pub(crate) fn social_force_rebuild(&mut self) { // [nobles15]
+        self.social.known_buildings = usize::MAX; // [nobles15]
+    } // [nobles15]
 
     /// Make sure every unit slot has social state (new units, first call).
     fn social_ensure(&mut self) {
@@ -1111,6 +1122,7 @@ impl Sim {
             let room = self.social.seats.get(seat as usize).map(|st| st.room).unwrap_or(NONE);
             if let Some(r) = self.social.rooms.get(room as usize) {
                 let tier = r.tier();
+                if !self.nobles15_room_feel(s, "DiningQuality", tier, now) { // [nobles15] nobles rate against their requirement
                 match tier {
                     0..=1 => self.feel(s, "DiningQuality", Class::NegMild, 60, -1, tier - 2, now),
                     2 => {}
@@ -1118,6 +1130,7 @@ impl Sim {
                     5..=6 => self.feel(s, "DiningQuality", Class::Pos, 60 + 20 * tier, -1, tier - 2, now),
                     _ => self.feel(s, "DiningQuality", Class::PosStrong, 200, -1, tier - 2, now),
                 }
+                } // [nobles15]
             }
         } else {
             self.social.meals_without_table += 1;
@@ -1202,6 +1215,7 @@ impl Sim {
             match room {
                 Some(r) if r.kind == RoomKind::Bedroom && r.owner == uid => {
                     let tier = r.tier();
+                    if !self.nobles15_room_feel(s, "BedroomQuality", tier, now) { // [nobles15] nobles rate against their requirement
                     match tier {
                         0..=1 => self.feel(s, "BedroomQuality", Class::NegMild, 60, -1, tier - 2, now),
                         2 => {}
@@ -1209,6 +1223,7 @@ impl Sim {
                         5..=6 => self.feel(s, "BedroomQuality", Class::Pos, 60 + 20 * tier, -1, tier - 2, now),
                         _ => self.feel(s, "BedroomQuality", Class::PosStrong, 200, -1, tier - 2, now),
                     }
+                    } // [nobles15]
                 }
                 Some(_) => {}
                 None => self.feel(s, "LackBedroom", Class::NegMild, 80, -1, 0, now),

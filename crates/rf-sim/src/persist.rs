@@ -221,6 +221,7 @@ impl Sim {
         v.push(("link", fnv(|mix| self.link_hash(mix)))); // [machines14]
         v.push(("fire15", fnv(|mix| self.fire15_hash(mix)))); // [fire15]
         v.push(("prefs", fnv(|mix| self.prefs_hash(mix)))); // [prefs15]
+        v.push(("nobles15", fnv(|mix| self.nobles15_hash(mix)))); // [nobles15]
         v
     }
 }

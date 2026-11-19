@@ -108,6 +108,14 @@ is no generator state to save. Result: **run N, save, load, run M == run N+M (fu
   wear points, the miasma cloud (tile -> days left) and today's sources, the refuse standing
   orders and the report. Depot/door tiles, rot tiles and the vermin species pool are caches rebuilt by
   `decay_after_load` and the next daily pass.
+- **[nobles15] part `nobles15`** (`Sim::n15`, `nobles15::Nobles15`): live mandates (issuer,
+  item type/subtype, amounts, deadline, strikes, jail months), demands, pending mandate
+  sentences, who brought items to the depot while a ban runs, the shared mandate/demand
+  cooldown per noble, birthday and pretension timers, the manager's pending orders and work,
+  the bookkeeper (target level, reached level, records), report counters. The holder cache
+  (`holders`, `req_tier`) is `#[serde(skip)]` and rebuilt in `Sim::after_exact_load`. Saves
+  from before nobles15 lack the part and take the close path; the round-4 `Pop::mandates` of
+  such a save are converted at the first noble pass.
 
 ### Continuation (gold standard)
 

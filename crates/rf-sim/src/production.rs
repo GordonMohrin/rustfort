@@ -1676,6 +1676,9 @@ impl Sim {
                 }
                 continue;
             }
+            if self.nobles15_order_pending(id) {
+                continue; // [nobles15] waits for the manager's validation
+            }
             let Some(r) = Sim::recipe_of(&o.job, &o.reaction, &o.item_type, &o.item_subtype, &o.mat_category, &o.mat, None) else {
                 let name = o.job.clone();
                 self.note_unsupported(&name);
@@ -2430,6 +2433,7 @@ impl Sim {
                 if rec.skill == "SMELT" && rec.job != "MeltMetalObject" {
                     self.prefs_smelted_from(first_new); // [prefs15] metals the fort smelted (mood demands)
                 }
+                self.nobles15_job_done(first_new); // [nobles15] mandate fulfilment by workshop products
                 self.prod.done[recipe as usize] += 1;
                 // Remove the queue entry (repeat jobs stay), count the order.
                 if let Some(si) = self.prod.shops.iter().position(|sh| sh.bid == bid) {

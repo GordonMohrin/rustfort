@@ -191,6 +191,9 @@ pub struct MandateInfo {
     /// Holder unit of the issuing position.
     pub noble: i32,
     pub position: String,
+    /// [nobles15] The mandate's punishment: hammerstrikes and months of jail.
+    pub punishment_hammerstrikes: i32, // [nobles15]
+    pub punishment_prison_time: i32, // [nobles15]
 }
 
 /// Optional extra data of an export that has no place in `rf_core::World` yet.
@@ -220,6 +223,15 @@ struct RawNoble {
     noble: NoblePosition,
     mandates_detail: Vec<MandateInfo>,
 }
+
+impl RawNoble { // [nobles15]
+    /// [nobles15] The position with its mandate details (serde's flatten leaves them here).
+    fn into_position(self) -> NoblePosition { // [nobles15]
+        let mut p = self.noble; // [nobles15]
+        p.mandates_detail = self.mandates_detail.into_iter().map(|m| rf_core::MandateDetail { text: m.text, mode: m.mode, item_type: m.item_type, item_subtype: m.item_subtype, mat: m.mat, amount_total: m.amount_total, amount_remaining: m.amount_remaining, timeout_counter: m.timeout_counter, timeout_limit: m.timeout_limit, punishment_hammerstrikes: m.punishment_hammerstrikes, punishment_prison_time: m.punishment_prison_time }).collect(); // [nobles15]
+        p // [nobles15]
+    } // [nobles15]
+} // [nobles15]
 
 /// DF's defaults for an export without `settings.json` (d_init.txt of DF 53: population cap 200,
 /// strict cap 220, baby cap 1000 absolute; invasions, temperature, weather and cave-ins on).
@@ -786,7 +798,7 @@ pub fn load_export(dir: &Path) -> Result<(World, ImportReport), ImportError> {
     // Round-4 files (optional): civilizations, nobles, settings, historical figure names, caravans.
     let entities: Vec<EntityInfo> = optional(dir, "entities.json", "entities", &mut w);
     let nobles: Vec<NoblePosition> =
-        optional::<Vec<RawNoble>>(dir, "nobles.json", "nobles", &mut w).into_iter().map(|n| n.noble).collect();
+        optional::<Vec<RawNoble>>(dir, "nobles.json", "nobles", &mut w).into_iter().map(RawNoble::into_position).collect(); // [nobles15]
     let has_settings = dir.join("settings.json").exists();
     let settings: GameSettings =
         if has_settings { optional(dir, "settings.json", "settings", &mut w) } else { default_settings() };
@@ -1934,8 +1946,9 @@ mod tests {
                 holder: first,
                 entity_id: 303,
                 mandates: vec!["Ban export of spears".into()],
+                ..Default::default() // [nobles15]
             },
-            NoblePosition { token: "BROKER".into(), name: "broker".into(), holder: -1, entity_id: 303, mandates: vec![] },
+            NoblePosition { token: "BROKER".into(), name: "broker".into(), holder: -1, entity_id: 303, mandates: vec![], ..Default::default() }, // [nobles15]
         ];
         w.settings = GameSettings {
             population_cap: 90,

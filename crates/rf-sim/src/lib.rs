@@ -91,6 +91,8 @@ pub mod prefs15_api; // [prefs15] public API for preferences and item value
 pub mod decay15; // [decay15] rot, miasma sources, refuse, vermin, wear
 pub mod decay15_api; // [decay15]
 pub use decay15_api::{CorpseStage, DecayReport, RefuseOrders, VerminInfo}; // [decay15]
+pub mod nobles15; // [nobles15] room requirements, mandates, demands, bookkeeper, manager
+pub mod nobles15_api; // [nobles15]
 pub use round8_api::AnimalInfo;
 pub mod construct; // [construct]
 pub use construct::ConstructReport; // [construct]
@@ -730,6 +732,7 @@ pub struct Sim {
     fire: fire15::Fire15, // [fire15] temperature, fire and magma
     prefs: prefs::Prefs, // [prefs15]
     decay: decay15::Decay, // [decay15]
+    n15: nobles15::Nobles15, // [nobles15]
 }
 
 /// [perf9] Debug: A* searches with at least this many nodes are printed (`RF_PATH_LOG`, set
@@ -892,6 +895,7 @@ impl Sim {
             audio_cues: audio14_api::CueBuf::default(), // [audio14]
             fire: fire15::Fire15::default(), // [fire15]
             prefs: prefs::Prefs::default(), // [prefs15]
+            n15: nobles15::Nobles15::default(), // [nobles15]
         };
         sim.restore_core(&saved); // [saves10] tick count first: the init passes below use it
         sim.init_plants();
@@ -1348,6 +1352,7 @@ impl Sim {
         self.fire15_hash(&mut mix); // [fire15]
         self.prefs_hash(&mut mix); // [prefs15]
         self.decay_hash(&mut mix); // [decay15]
+        self.nobles15_hash(&mut mix); // [nobles15]
         h
     }
 
@@ -1511,6 +1516,9 @@ impl Sim {
         if now % locations::S2_PERIOD == locations::S2_PHASE {
             let _p = perf::prof::Guard::new(perf::prof::X0 + 5); // [perf13]
             self.society2_pass(now); // [society2]
+        }
+        if now % nobles15::N15_PERIOD == nobles15::N15_PHASE {
+            self.nobles15_pass(now); // [nobles15]
         }
         if now % rf_core::TICKS_PER_DAY as u64 == 611 {
             let _p = perf::prof::Guard::new(perf::prof::X0 + 6); // [perf13]
@@ -2167,6 +2175,7 @@ impl Sim {
                 }
                 self.drop_item(s, id, dest);
                 self.society_stored(id, dest); // [society] coffin / trade depot
+                self.nobles15_depot_hauled(id, s as u32); // [nobles15] who brought it (export bans)
                 self.ai[s].task = Task::Idle;
                 self.stats.items_hauled += 1;
                 self.decide(s, now);

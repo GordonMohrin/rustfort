@@ -308,7 +308,14 @@ impl Sim {
             return;
         }
         let kind = self.world.crimes[ci].kind.clone();
+        if self.nobles15_exempt(unit_id) { // [nobles15] PUNISHMENT_EXEMPTION (w:Noble)
+            self.world.crimes[ci].punishment = "None (exempt)".into(); // [nobles15]
+            self.world.crimes[ci].status = "Closed".into(); // [nobles15]
+            return; // [nobles15]
+        } // [nobles15]
         let (days, strikes) = sentence(&kind);
+        let n15 = self.nobles15_sentence(crime_id); // [nobles15] the mandate's own punishment
+        let (days, strikes) = n15.unwrap_or((days, strikes)); // [nobles15]
         let hammerer = self.s2_noble_slot("HAMMERER");
         let name = self.world.units[self.ai[s].uidx].name.clone();
         let punished = if strikes > 0 && hammerer.is_some() {
@@ -327,6 +334,15 @@ impl Sim {
             self.world.crimes[ci].punishment = "Beating".into();
             self.beating(s, now)
         };
+        // [nobles15] Mandate sentences: hammerstrikes first, then the jail time (OBSERVED).
+        let punished = if n15.is_some() && punished && strikes > 0 && hammerer.is_some() && days > 0 && self.jail_prisoner(s, crime_id, days, now) { // [nobles15]
+            self.world.crimes[ci].punishment = format!("Hammerstrikes {strikes}, jail {days} days"); // [nobles15]
+            self.world.crimes[ci].status = "Serving".into(); // [nobles15]
+            self.world.crimes[ci].sentence_days = days; // [nobles15]
+            false // [nobles15]
+        } else { // [nobles15]
+            punished // [nobles15]
+        }; // [nobles15]
         if punished {
             self.world.crimes[ci].status = "Punished".into();
         }

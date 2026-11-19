@@ -37,7 +37,48 @@ pub struct NoblePosition {
     pub entity_id: i32,
     /// Active mandates as text, e.g. `Make 3 goblets (iron)`, `Ban export of steel`.
     pub mandates: Vec<String>,
+    /// [nobles15] Position numbers as exported (`nobles.json`, raws `MANDATE_MAX` etc.); 0 =
+    /// not exported (the sim falls back to the vanilla raws table).
+    pub mandate_max: i32, // [nobles15]
+    pub demand_max: i32, // [nobles15]
+    pub required_office: i32, // [nobles15]
+    pub required_bedroom: i32, // [nobles15]
+    pub required_dining: i32, // [nobles15]
+    pub required_tomb: i32, // [nobles15]
+    pub required_boxes: i32, // [nobles15]
+    pub required_cabinets: i32, // [nobles15]
+    pub required_racks: i32, // [nobles15]
+    pub required_stands: i32, // [nobles15]
+    /// [nobles15] Assignment/position flags (`HAS_BEEN_REPLACED`, ...).
+    pub flags: Vec<String>, // [nobles15]
+    /// [nobles15] Responsibilities (`MEET_WORKERS`, `TRADE`, ...).
+    pub responsibilities: Vec<String>, // [nobles15]
+    /// [nobles15] Raws PRECEDENCE (lower = higher rank), 0 = unknown.
+    pub precedence: i32, // [nobles15]
+    /// [nobles15] Mandates with their numbers (`mandates_detail` of `nobles.json`).
+    pub mandates_detail: Vec<MandateDetail>, // [nobles15]
 }
+
+/// [nobles15] A mandate with DF's counters (export `nobles.json` `mandates_detail`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)] // [nobles15]
+#[serde(default)] // [nobles15]
+pub struct MandateDetail { // [nobles15]
+    /// e.g. `Make 3 spears`, `Ban export of spears`.
+    pub text: String, // [nobles15]
+    /// `Make`, `Export`, `Guild`.
+    pub mode: String, // [nobles15]
+    pub item_type: String, // [nobles15]
+    pub item_subtype: String, // [nobles15]
+    pub mat: String, // [nobles15]
+    pub amount_total: i32, // [nobles15]
+    pub amount_remaining: i32, // [nobles15]
+    /// DF counter in units of 10 ticks; at `timeout_limit` the mandate is due.
+    pub timeout_counter: i32, // [nobles15]
+    pub timeout_limit: i32, // [nobles15]
+    pub punishment_hammerstrikes: i32, // [nobles15]
+    /// Months of jail.
+    pub punishment_prison_time: i32, // [nobles15]
+} // [nobles15]
 
 /// Relevant DF game settings (d_init / world settings).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

@@ -1131,6 +1131,7 @@ impl Sim {
     pub(crate) fn answer_petition_impl(&mut self, id: i32, accept: bool) -> bool {
         let now = self.ticks;
         let Some(pi) = self.locs.petitions.iter().position(|p| p.id == id && p.status == "Pending") else { return false };
+        self.nobles15_petition_meeting(now); // [nobles15] the mayor/EL meets the petitioner
         let (unit, kind) = (self.locs.petitions[pi].unit, self.locs.petitions[pi].kind.clone());
         if unit < 0 {
             self.answer_location_petition(pi, accept, false);

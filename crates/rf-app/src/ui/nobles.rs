@@ -178,6 +178,7 @@ pub fn draw_nobles(g: &mut Game) {
         }
         y += h;
     }
+    super::nobles15::draw(g, r); // [nobles15] requirements panel
     if let Some(tok) = g.r4.appoint.clone() {
         let pr = Rect::new(r.x + r.w - pad - picker_w, r.y + pad + 1.5 * GH * s + 12.0 * s, picker_w, r.h - 2.0 * pad - 1.5 * GH * s - 12.0 * s);
         if let Some(a) = draw_picker(g, &tok, pr) {
@@ -189,6 +190,7 @@ pub fn draw_nobles(g: &mut Game) {
         NAct::Close => {
             g.screen = Screen::None;
             g.r4.appoint = None;
+            super::nobles15::close(); // [nobles15]
         }
         NAct::Picker(t) => {
             g.r4.appoint = if g.r4.appoint.as_deref() == Some(t.as_str()) { None } else { Some(t) };

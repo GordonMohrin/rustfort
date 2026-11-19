@@ -1347,7 +1347,9 @@ impl Sim {
             let text = if n.token == "MAYOR" { format!("{name} has been elected {title}.") } else { format!("{name} is now the {title}.") };
             self.announce(now, text.clone(), None, AnnouncementKind::Info);
             self.pop.rep.elections.push((now, text));
-            self.feel(s, "BecomeNoble", Class::Pos, 200, -1, 0, now);
+            self.nobles15_elected(s, incumbent, true, now); // [nobles15] Elected (BecomeNoble when off)
+        } else if self.world.nobles[ni].token == "MAYOR" { // [nobles15]
+            self.nobles15_elected(s, incumbent, false, now); // [nobles15] Reelected
         }
     }
 
@@ -1369,6 +1371,7 @@ impl Sim {
                 let n = &mut self.world.nobles[k];
                 n.token = "MAYOR".into();
                 n.name = "mayor".into();
+                crate::nobles15::adopt_raws(n); // [nobles15] the EL's exported numbers are not the mayor's
                 // The position is new: announce even if the expedition leader wins.
                 n.holder = -1;
                 self.elect(k, now);
@@ -1381,6 +1384,9 @@ impl Sim {
             }
         }
         // Mandates.
+        if self.nobles15_active() {
+            return; // [nobles15] `nobles15` takes the mandates over at its first pass
+        }
         let mut k = 0;
         while k < self.pop.mandates.len() {
             let m = &self.pop.mandates[k];
@@ -1448,6 +1454,9 @@ impl Sim {
     }
 
     fn mandates_season(&mut self, now: u64) {
+        if self.nobles15_active() {
+            return; // [nobles15] mandates are issued by `nobles15`
+        }
         for k in 0..self.world.nobles.len() {
             let (tok, holder) = (self.world.nobles[k].token.clone(), self.world.nobles[k].holder);
             if !is_noble_with_mandates(&tok) || holder < 0 || !self.unit_alive(holder) {
@@ -1492,6 +1501,7 @@ impl Sim {
                     holder: -1,
                     entity_id: self.world.meta.group_id,
                     mandates: Vec::new(),
+                    ..Default::default() // [nobles15]
                 });
                 self.world.nobles.len() - 1
             }
@@ -1889,7 +1899,7 @@ pub(crate) mod tests {
     #[test]
     fn mayor_is_elected_at_fifty_citizens() {
         let mut w = World::synthetic(48, 48, 20);
-        w.nobles.push(rf_core::NoblePosition { token: "EXPEDITION_LEADER".into(), name: "expedition leader".into(), holder: 1, entity_id: 0, mandates: vec![] });
+        w.nobles.push(rf_core::NoblePosition { token: "EXPEDITION_LEADER".into(), name: "expedition leader".into(), holder: 1, entity_id: 0, mandates: vec![], ..Default::default() }); // [nobles15]
         let mut sim = Sim::new(w, 11);
         sim.run_ticks(2 * DAY as u32);
         assert!(sim.world.nobles.iter().all(|n| n.token != "MAYOR"));
@@ -1910,8 +1920,9 @@ pub(crate) mod tests {
     #[test]
     fn mandates_are_met_or_missed() {
         let mut w = World::synthetic(48, 48, 20);
-        w.nobles.push(rf_core::NoblePosition { token: "MAYOR".into(), name: "mayor".into(), holder: 1, entity_id: 0, mandates: vec!["Make 2 chairs (granite)".into(), "Make 1 crowns".into()] });
+        w.nobles.push(rf_core::NoblePosition { token: "MAYOR".into(), name: "mayor".into(), holder: 1, entity_id: 0, mandates: vec!["Make 2 chairs (granite)".into(), "Make 1 crowns".into()], ..Default::default() }); // [nobles15]
         let mut sim = Sim::new(w, 12);
+        sim.n15.off = true; // [nobles15] the old mandate code path
         sim.run_ticks(DAY as u32 + 50);
         assert_eq!(sim.pop.mandates.len(), 2);
         let t = sim.world.idx(sim.world.units[0].pos).unwrap();
