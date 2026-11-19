@@ -554,7 +554,7 @@ stub they show an empty state.
   shows the land title (`Sim::land_title`) and the diplomacy counters.
 - **Threats** (F3, toolbar right): active threats (`Sim::threats`: megabeasts, titans,
   forgotten beasts, sieges, undead, necromancer sieges, werebeasts, vampires) with **Go**
-  (centers and selects the first creature), the megabeasts that came and their fate
+  (centers and selects the first creature; disabled while all of them are off the map), the megabeasts that came and their fate
   (`Sim::megabeasts`), sky and moon, the **world event toggles** (weather, reanimation,
   megabeasts, vampires, werebeasts, diplomats) and the module counters.
 - **Unit sheet** (Overview): markers from `Sim::unit_curse` (necromancer, undead, intelligent
