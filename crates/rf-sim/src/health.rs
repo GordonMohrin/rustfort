@@ -431,7 +431,7 @@ impl Sim {
         if have & ml::SUTURE != 0 && self.health.threads > 0 && f.wounds.iter().any(|w| w.flags & OPEN != 0 && (w.bleed > 0 || w.sev >= 2_000 || w.flags & wf::SEVERED != 0) && w.flags & hf::SUTURED == 0) {
             return Some(Treat::Suture);
         }
-        if have & ml::SURGERY != 0 && f.wounds.iter().any(|w| crate::health15::needs_surgery(w, self.ticks)) {
+        if have & ml::SURGERY != 0 && !self.h15.off && f.wounds.iter().any(|w| crate::health15::needs_surgery(w, self.ticks)) { // [health15] (not when health15 is off)
             return Some(Treat::Surgery); // [health15] compound fracture or old infection first
         }
         if have & ml::BONE != 0 && f.wounds.iter().any(|w| w.flags & wf::BROKEN != 0 && w.flags & hf::SET == 0 && crate::health15::needs_setting(w)) { // [health15] no supply; only displaced fractures

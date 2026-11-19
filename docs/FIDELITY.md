@@ -654,3 +654,6 @@ Spec `docs/mechanics/health15.md`. Module `crates/rf-sim/src/health15/`, API `he
 | Chief medical dwarf: health screen only, no rule effect | OK | wiki DF2014 Chief medical dwarf; we show the screen without one (UI choice). |
 | Severity tiers in the health screen | OK | wiki Health screen. |
 | Water quality for cleaning, wound necrosis, moving patients to tables, inventory modes in the export | MISSING | |
+| An immobilized torso fracture (part without LIMB/STANCE/GRASP) does not stop standing; only immobilized limbs need a crutch | ESTIMATE | spec M5; the old rule (set fractures stand) for the torso. |
+| Stocking hauls nobody takes are re-planned every 400 ticks; only supplies in reach of the chest are chosen | ESTIMATE | DF assigns hauls only to reachable items. |
+| Excision of old infections and compound-fracture surgery only with health15 on | OK | health15 off = the round-5 rules. |

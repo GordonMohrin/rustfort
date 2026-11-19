@@ -225,11 +225,24 @@ impl Sim {
 
     /// M2: every 400 ticks: queue stocking hauls for short hospitals with chests.
     pub(crate) fn h15_stock_pass(&mut self, now: u64) {
-        // Finished or abandoned hauls leave the list.
-        let ai = &self.ai;
-        self.h15.stock.retain(|&(id, _, s)| {
-            s == NONE || ((s as usize) < ai.len() && matches!(ai[s as usize].task, Task::GoPickup(x, _) | Task::GoStore(x, _) if x == id))
-        });
+        // Finished or abandoned hauls leave the list. Hauls nobody took since the last pass are
+        // planned again (a hauler may not reach them; they must not block the hospital).
+        let mut k = 0;
+        while k < self.h15.stock.len() {
+            let (id, key, s) = self.h15.stock[k];
+            let running = s != NONE && (s as usize) < self.ai.len() && matches!(self.ai[s as usize].task, Task::GoPickup(x, _) | Task::GoStore(x, _) if x == id);
+            if running {
+                k += 1;
+                continue;
+            }
+            self.h15.stock.remove(k);
+            if s == NONE {
+                let sup = self.item_idx.get(&id).and_then(|&i| sup_of_kind(&self.world.items[i as usize].kind));
+                if let (Some(sup), Some(h)) = (sup, self.h15.hosp.iter_mut().find(|h| h.key == key)) {
+                    h.have[sup as usize] = (h.have[sup as usize] - 1).max(0);
+                }
+            }
+        }
         if self.h15.chest_tiles.is_empty() {
             return;
         }
@@ -251,7 +264,7 @@ impl Sim {
                 if hp.have[k as usize] >= hp.want[k as usize] {
                     continue;
                 }
-                if let Some(id) = self.h15_find_stock_item(k, now) {
+                if let Some(id) = self.h15_find_stock_item(k, h, now) {
                     self.h15.hosp[h].have[k as usize] += 1;
                     self.h15.stock.push((id, key, NONE));
                     break; // one per hospital and pass
@@ -262,15 +275,20 @@ impl Sim {
 
     /// Free item of supply kind `k` outside every hospital (best material first for thread
     /// and cloth: wiki "doctors prefer the most expensive").
-    fn h15_find_stock_item(&self, k: Sup, now: u64) -> Option<i32> {
+    fn h15_find_stock_item(&self, k: Sup, h: usize, now: u64) -> Option<i32> {
         let mut best: Option<(i32, i32)> = None;
+        let chest = self.h15.hosp[h].chests[0] as usize;
+        let cc = self.nav.comp_near(chest);
+        if cc == 0 {
+            return None;
+        }
         for idx in 0..self.world.items.len() {
             let it = &self.world.items[idx];
             if sup_of_kind(&it.kind) != Some(k) || !self.item_free(idx, now) || self.h15_sup_of(idx) != Some(k) {
                 continue;
             }
-            if self.h15_hosp_at(it.pos).is_some() || self.h15.stock.iter().any(|e| e.0 == it.id) || self.world.idx(it.pos).is_none() {
-                continue;
+            if self.h15_hosp_at(it.pos).is_some() || self.h15.stock.iter().any(|e| e.0 == it.id) || self.world.idx(it.pos).map(|t| self.nav.comp_near(t) != cc).unwrap_or(true) {
+                continue; // inside a hospital already, planned, or out of reach of the chest
             }
             let v = if matches!(k, Sup::Thread | Sup::Cloth) { self.world.material(it.mat).map(|m| m.value).unwrap_or(0) } else { 0 };
             let key = (-v, it.id);
@@ -286,7 +304,25 @@ impl Sim {
         if self.h15.off || self.h15.stock.is_empty() || self.ai[s].labors & labor::HAUL_ITEM == 0 || self.ai[s].kind != Kind::Worker {
             return false;
         }
-        let Some(e) = self.h15.stock.iter().position(|e| e.2 == NONE) else { return false };
+        let pos = self.ai[s].pos as usize;
+        let c = self.nav.comp_near(pos);
+        if c == 0 {
+            return false;
+        }
+        // The first open haul this hauler can reach (item and chest in its component).
+        let mut pick = None;
+        for (e, &(id, key, who)) in self.h15.stock.iter().enumerate() {
+            if who != NONE {
+                continue;
+            }
+            let reach = self.item_idx.get(&id).and_then(|&i| self.world.idx(self.world.items[i as usize].pos)).map(|t| self.nav.comp_near(t) == c).unwrap_or(true);
+            let chest_ok = self.h15.hosp.iter().find(|h| h.key == key).and_then(|h| h.chests.get(id as usize % h.chests.len().max(1))).map(|&t| self.nav.comp_near(t as usize) == c).unwrap_or(true);
+            if reach && chest_ok {
+                pick = Some(e);
+                break;
+            }
+        }
+        let Some(e) = pick else { return false };
         let (id, key, _) = self.h15.stock[e];
         let Some(&idx) = self.item_idx.get(&id) else {
             self.h15.stock.remove(e);
@@ -301,8 +337,6 @@ impl Sim {
             self.h15.stock.remove(e);
             return false;
         }
-        let pos = self.ai[s].pos as usize;
-        let c = self.nav.comp_near(pos);
         let Some(t) = self.world.idx(self.world.items[idx].pos) else { return false };
         let chest = self.h15.hosp[h].chests[(id as usize) % self.h15.hosp[h].chests.len()];
         if c == 0 || self.nav.comp_near(t) != c || self.nav.comp_near(chest as usize) != c {

@@ -29,6 +29,8 @@ mod outcome;
 mod supplies;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod verify; // adversarial verification tests
 
 pub(crate) use ortho::{heal_of_tissue, immobilized, layer_from_raw, mx_of_flags, needs_setting, needs_surgery, scale_heal, settable_now, settable_tissue};
 #[allow(unused_imports)]
@@ -248,6 +250,9 @@ impl Sim {
         self.h15.inited = true;
         self.init_health(); // treatment flags of exported wounds first
         self.h15_rebuild_hospitals();
+        if !self.h15.hosp.is_empty() {
+            self.health_refresh_daily(); // count the stock already in the hospitals
+        }
         self.h15_import_disabilities();
     }
 

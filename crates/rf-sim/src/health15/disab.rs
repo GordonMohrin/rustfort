@@ -38,9 +38,12 @@ impl Sim {
             if f.part_state.get(ku).map(|&x| x & (1 | 4) != 0).unwrap_or(false) {
                 st = st.max(1);
             }
+            // An immobilized fracture takes the function of a limb (crutch); on the torso it
+            // no longer stops standing (spec M5: only immobilized STANCE limbs need a crutch).
+            let limb = body.parts[ku].flags & (bp::LIMB | bp::STANCE | bp::GRASP) != 0;
             for w in &f.wounds {
                 if w.part as usize == ku && w.flags & wf::BROKEN != 0 {
-                    st = st.max(if immobilized(w) { 1 } else { 2 });
+                    st = st.max(if !immobilized(w) { 2 } else if limb { 1 } else { 0 });
                 }
             }
             k = body.parts[ku].parent;
