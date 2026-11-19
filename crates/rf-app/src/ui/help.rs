@@ -399,7 +399,7 @@ mod tests {
                 }
             }
         }
-        assert!(missing.len() <= 8, "{missing:?}");
+        assert!(missing.len() <= 10, "{missing:?}"); // [ui13] +2: RF_DIPLOMACY / RF_THREATS come from add_builtin, like RF_HELP
         let r = &SECTIONS[1].1[0];
         assert_eq!(row_keys(&b, r), "Space");
         let m = mouse_rows(&b);
