@@ -731,3 +731,20 @@ Module `crates/rf-sim/src/diplomacy.rs`; hooks in `trade.rs` (caravan arrival, c
 | Peace offer: non-goblin civ at war for at least a year with attitude > -30 sends an envoy in its caravan season; accepting restores trade | ESTIMATE | wiki Diplomacy (peace). |
 | Unanswered demands: tree quota imposed, tribute counts as refused, requests and peace offers lapse after 14 days | ESTIMATE | |
 | Elevation announcement wording, meeting screen dialogue | MISSING | Short own wording; DF's meeting conversation not reproduced. |
+## Minecarts round 13 (`[perf13]`)
+
+| Rule | Class | Notes |
+|---|---|---|
+| Per-stop item filter (`HaulStop::filter`, `set_stop_filter`) | OK / ESTIMATE | wiki Hauling route ("desired items" of a stop). Uses the stockpile filter syntax: category must match, `*` takes a group, `!X` excludes; type-like groups match kind/subtype, `quality_*` the quality, others the material token or DF's built-in lists (WOOD, COAL, glass, ash). Item colors are ignored (ESTIMATE). A stop without a filter keeps the round-12 rule (load what a later stop's piles take). |
+| Guided carts follow the track | OK / ESTIMATE | wiki Minecart (guiding): the guide walks the track tiles to the next stop (corners turn, junctions go straight). Falls back to the walking path when no track leads there or a track tile is not walkable (ESTIMATE). |
+| Cart hits cart | ESTIMATE | wiki Minecart (collisions happen; no formula published). 1-D elastic collision by load weight when a cart enters a tile with another cart on the ground and is faster along the line of travel; the hitter stays on its tile; a hit idle/stopped cart starts rolling, unless dwarves are working on it (load, unload, fetch): then the hitter just stops. |
+| Cart hits creature | ESTIMATE | wiki Minecart (fast carts knock creatures down and hurt them). From 25 000 speed: creatures on the entered tile are unconscious for momentum/50 ticks (10..1 000); the cart loses momentum as if hitting 60Γ. Injuries are MISSING. |
+| Checkpoint effect, cart-on-cart derailing | MISSING | |
+
+Speed work in round 13 (`[perf13]`, no rule change, the state hash stays the same):
+
+| Change | Class | Notes |
+|---|---|---|
+| Cavern detection (`detect_caverns`) on a bitset | OK | One linear pass marks open cavern tiles (tiletype shape looked up per tiletype, not per tile); the flood fill clears bits instead of a `Vec<bool>`. Same regions in the same order; about 4.5x faster (450 -> 90 Mcyc per season on r5). |
+| Item scans prefiltered by production class | OK | Container scans (`rebuild_containers`, `bring_containers`) and the reaction census only compare kind strings for items whose class can match; the food census asks the brew/cook tests only for food classes. |
+| Profile counters | OK | `--features prof`: production pass and per-tick pass sub-steps; coarse counters use the thread's own cycles on Windows (rdtsc counts wall time, which a busy machine inflates). |

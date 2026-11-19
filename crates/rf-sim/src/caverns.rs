@@ -38,7 +38,7 @@
 
 use crate::rng::Rng;
 use crate::{AnnouncementKind, Kind, Sim};
-use rf_core::{tile_flags, Shape, Skill, Unit, UnitFlags, NO_MAT};
+use rf_core::{tile_flags, Skill, Unit, UnitFlags, NO_MAT}; // [perf13] Shape: see perf::cavern_open_bits
 
 /// Minimum size of a cavern region in tiles (estimate).
 const MIN_CAVERN: usize = 1_500;
@@ -144,13 +144,17 @@ impl Sim {
         if now % rf_core::TICKS_PER_DAY as u64 != 611 {
             return;
         }
+        { let _p = crate::perf::prof::Guard::new(crate::perf::prof::Y0 + 1); // [perf13]
         self.beasts_daily(now);
+        } // [perf13]
         let season = self.world.calendar.month() / 3;
         if season == self.caverns.last_season {
             return;
         }
         self.caverns.last_season = season;
+        { let _p = crate::perf::prof::Guard::new(crate::perf::prof::Y0); // [perf13]
         self.detect_caverns();
+        } // [perf13]
         self.cave_wildlife(now);
         self.forgotten_beast_check(now);
     }
@@ -163,31 +167,16 @@ impl Sim {
         if n == 0 {
             return;
         }
-        let tt = &self.world.tiletypes;
         let tiles = &self.world.tiles;
-        let sub_open = |i: usize| -> bool {
-            let t = &tiles[i];
-            if t.flags & tile_flags::SUBTERRANEAN == 0 || t.flags & tile_flags::OUTSIDE != 0 {
-                return false;
-            }
-            let s = tt.get(t.tt).shape;
-            if s == Shape::Empty {
-                return true;
-            }
-            if !s.has_floor() || i + layer >= n {
-                return false;
-            }
-            let a = &tiles[i + layer];
-            a.flags & tile_flags::SUBTERRANEAN != 0 && tt.get(a.tt).shape == Shape::Empty
-        };
-        let mut seen = vec![false; n];
+        // [perf13] Open cavern tiles as a bitset (one linear pass), the flood clears the bits
+        // it visits: the same regions in the same order as the per-tile check before.
+        let mut open = crate::perf::cavern_open_bits(tiles, &self.world.tiletypes, layer); // [perf13]
         let mut stack: Vec<usize> = Vec::new();
         let mut found: Vec<CavernLayer> = Vec::new();
-        for start in 0..n {
-            if seen[start] || !sub_open(start) {
-                continue;
-            }
-            seen[start] = true;
+        for w0 in 0..open.len() { // [perf13]
+          while open[w0] != 0 { // [perf13]
+            let start = w0 * 64 + open[w0].trailing_zeros() as usize; // [perf13]
+            open[w0] &= open[w0] - 1; // [perf13]
             stack.push(start);
             let (mut size, mut revealed, mut magma, mut zmin, mut zmax) = (0usize, 0usize, 0usize, i16::MAX, i16::MIN);
             let mut floors: Vec<u32> = Vec::new();
@@ -210,8 +199,9 @@ impl Sim {
                 let y = (i / dx) % dy;
                 let zz = i / layer;
                 let mut push = |j: usize, stack: &mut Vec<usize>| {
-                    if !seen[j] && sub_open(j) {
-                        seen[j] = true;
+                    let (w, b) = (j >> 6, 1u64 << (j & 63)); // [perf13]
+                    if open[w] & b != 0 { // [perf13]
+                        open[w] &= !b; // [perf13]
                         stack.push(j);
                     }
                 };
@@ -245,6 +235,7 @@ impl Sim {
                 floors
             };
             found.push(CavernLayer { id: 0, z_min: zmin, z_max: zmax, tiles: size, revealed, magma: magma * 10 > size, breached: false, spawn });
+          } // [perf13]
         }
         found.sort_by_key(|l| (std::cmp::Reverse(l.z_max), l.z_min));
         // Regions whose z ranges overlap or touch are one layer (a cavern is split by pillars

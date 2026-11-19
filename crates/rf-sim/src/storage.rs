@@ -292,6 +292,9 @@ impl Sim {
             if m.dead || it.container >= 0 || it.holder >= 0 || !it.flags.on_ground || it.flags.in_building || it.building >= 0 {
                 continue;
             }
+            if !crate::perf::pc_maybe_container(m.pc) {
+                continue; // [perf13]
+            }
             let cl = container_class(&it.kind, &it.subtype);
             if cl == CL_NONE {
                 continue;
@@ -387,9 +390,14 @@ impl Sim {
             return;
         }
         self.store.last_pass = now;
+        { let _p = crate::perf::prof::Guard::new(crate::perf::prof::Y0 + 3); // [perf13]
         self.rebuild_containers(false);
+        } // [perf13]
+        { let _p = crate::perf::prof::Guard::new(crate::perf::prof::Y0 + 4); // [perf13]
         self.bring_containers(now);
+        } // [perf13]
         if now % (rf_core::TICKS_PER_DAY as u64) < STORE_PERIOD {
+            let _p = crate::perf::prof::Guard::new(crate::perf::prof::Y0 + 5); // [perf13]
             self.rot_pass();
         }
     }
@@ -422,6 +430,9 @@ impl Sim {
         // Free empty containers not serving a pile, by class (one item scan).
         let mut cands: Vec<(u8, i32, usize, usize)> = Vec::new();
         for idx in 0..self.world.items.len() {
+            if !crate::perf::pc_maybe_container(self.imeta[idx].pc) {
+                continue; // [perf13]
+            }
             let it = &self.world.items[idx];
             let cl = container_class(&it.kind, &it.subtype);
             if cl == CL_NONE || self.store.cont_ix.contains_key(&it.id) || self.store.bring.contains_key(&it.id) {

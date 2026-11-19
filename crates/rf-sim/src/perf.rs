@@ -12,7 +12,7 @@ use std::collections::HashMap;
 /// is an empty inline function. Counts are inclusive (a nested counter is also in its caller).
 #[allow(dead_code)] // the names and the table size are only read with the `prof` feature
 pub(crate) mod prof {
-    pub const N: usize = 49; // [perf12] +16 decide sub-calls
+    pub const N: usize = 76; // [perf12] +16 decide sub-calls; [perf13] +13 pass sub-calls
     pub const NAMES: [&str; N] = [
         "think worker", "think other", "combat_think", "fighter_think", "soldier_think", "civilian_think", "find_target", "attack",
         "strike", "threat_scan", "request_path", "decide", "sync_wounds", "solve_paths", "commit_paths", "pursue",
@@ -22,7 +22,16 @@ pub(crate) mod prof {
         // [perf12] decide sub-calls
         "d moods", "d combat", "d health", "d defense", "d power", "d society", "d animals", "d lifestyle",
         "d society2", "d construct", "d try_job", "d try_prod", "d try_haul", "d idle_work", "d wander", "d needs",
+        // [perf13] production pass and per-tick pass sub-calls
+        "p census", "p ind_census", "p orders", "p shops", "p farm_work", "p storage",
+        "x defense", "x moods", "x health", "x caverns", "x animals", "x society2", "x growth",
+        "c detect", "c beasts_daily", "i rx_items", "s containers", "s bring", "s rot",
+        "tmp0", "tmp1", "tmp2", "tmp3", "tmp4", "tmp5", "tmp6", "tmp7",
     ];
+    pub const P0: usize = 49; // [perf13] first production sub-call counter
+    pub const X0: usize = 55; // [perf13] first per-tick pass counter
+    pub const Y0: usize = 62; // [perf13] finer counters
+    pub const TMP: usize = 68; // [perf13] scratch counters for ad-hoc profiling (rdtsc)
     pub const D0: usize = 33; // [perf12] first decide sub-call counter (order of NAMES)
     pub const HAUL_NO_ITEM: usize = 30;
     pub const HAUL_NO_DEST: usize = 31;
@@ -70,9 +79,39 @@ pub(crate) mod prof {
             // SAFETY: rdtsc has no preconditions on x86_64.
             unsafe { core::arch::x86_64::_rdtsc() }
         }
+        /// [perf13] The calling thread's own CPU cycles on Windows (`QueryThreadCycleTime`):
+        /// rdtsc counts wall time, which other busy programs inflate by 2x and more. The call
+        /// costs about 1.5 kcyc, so only the coarse pass counters (from `P0` on) use it.
+        #[cfg(windows)]
+        #[inline(always)]
+        pub fn tc() -> u64 {
+            extern "system" {
+                fn GetCurrentThread() -> isize;
+                fn QueryThreadCycleTime(thread: isize, cycles: *mut u64) -> i32;
+            }
+            let mut c = 0u64;
+            // SAFETY: plain Win32 calls with a valid out pointer; the pseudo handle needs no closing.
+            unsafe {
+                QueryThreadCycleTime(GetCurrentThread(), &mut c);
+            }
+            c
+        }
+        #[cfg(not(windows))]
+        #[inline(always)]
+        pub fn tc() -> u64 {
+            t()
+        }
+        #[inline(always)]
+        pub fn t_for(k: usize) -> u64 {
+            if (super::P0..super::TMP).contains(&k) {
+                tc()
+            } else {
+                t()
+            }
+        }
         #[inline(always)]
         pub fn add(k: usize, t0: u64) {
-            CYC[k].fetch_add(t().wrapping_sub(t0), Relaxed);
+            CYC[k].fetch_add(t_for(k).wrapping_sub(t0), Relaxed); // [perf13] t_for
             CNT[k].fetch_add(1, Relaxed);
         }
         pub fn report() -> Vec<(&'static str, u64, u64)> {
@@ -86,19 +125,23 @@ pub(crate) mod prof {
             0
         }
         #[inline(always)]
+        pub fn t_for(_k: usize) -> u64 {
+            0
+        }
+        #[inline(always)]
         pub fn add(_k: usize, _t0: u64) {}
         pub fn report() -> Vec<(&'static str, u64, u64)> {
             Vec::new()
         }
     }
-    pub use imp::{add, report, t};
+    pub use imp::{add, report, t, t_for}; // [perf13] t_for
 
     /// Counts the cycles until it is dropped (`let _p = prof::Guard::new(prof::STRIKE);`).
     pub struct Guard(#[allow(dead_code)] usize, #[allow(dead_code)] u64);
     impl Guard {
         #[inline(always)]
         pub fn new(k: usize) -> Guard {
-            Guard(k, t())
+            Guard(k, t_for(k)) // [perf13]
         }
     }
     #[cfg(feature = "prof")]
@@ -396,4 +439,70 @@ impl Sim {
         }
         pick.map(|p| p.2)
     }
+}
+
+/// [perf13] Open cavern tiles (`caverns::detect_caverns`) as a bitset, one bit per tile: a
+/// subterranean, not outside tile that is open space, or a floor with subterranean open space
+/// directly above. Same test as the per-tile closure it replaces, done in one linear pass with
+/// the tiletype shapes looked up once per tiletype instead of once per tile.
+pub(crate) fn cavern_open_bits(tiles: &[rf_core::Tile], tt: &rf_core::TiletypeTable, layer: usize) -> Vec<u64> {
+    use rf_core::{tile_flags, Shape};
+    let n = tiles.len();
+    // Shape class per tiletype id: 1 = open space, 2 = has a floor, 0 = other.
+    let mut cls = [0u8; 1 << 16];
+    for info in &tt.infos {
+        let s = tt.get(info.id).shape;
+        cls[info.id as usize] = if s == Shape::Empty { 1 } else if s.has_floor() { 2 } else { 0 };
+    }
+    // Tiletype ids missing from the table resolve to a dummy with `Shape::None`.
+    let dummy = tt.get(u16::MAX).shape;
+    let dummy_cls = if dummy == Shape::Empty { 1 } else if dummy.has_floor() { 2 } else { 0 };
+    let known: Vec<bool> = {
+        let mut k = vec![false; 1 << 16];
+        for info in &tt.infos {
+            if tt.get(info.id).id == info.id {
+                k[info.id as usize] = true;
+            }
+        }
+        k
+    };
+    for (id, c) in cls.iter_mut().enumerate() {
+        if !known[id] {
+            *c = dummy_cls;
+        }
+    }
+    let sub_empty = |t: &rf_core::Tile| t.flags & tile_flags::SUBTERRANEAN != 0 && cls[t.tt as usize] == 1;
+    let mut bits = vec![0u64; n.div_ceil(64)];
+    for (i, t) in tiles.iter().enumerate() {
+        if t.flags & tile_flags::SUBTERRANEAN == 0 || t.flags & tile_flags::OUTSIDE != 0 {
+            continue;
+        }
+        let open = match cls[t.tt as usize] {
+            1 => true,
+            2 => i + layer < n && sub_empty(&tiles[i + layer]),
+            _ => false,
+        };
+        if open {
+            bits[i >> 6] |= 1 << (i & 63);
+        }
+    }
+    bits
+}
+
+/// [perf13] Can an item of production class `p` (`ItemMeta::pc`) be a container (`BIN`,
+/// `BARREL`, large pot, `BAG`)? Lets the storage scans skip the kind string compare for every
+/// other item. `pc::NONE` covers `BIN` and tools whose subtype was set after classifying.
+#[inline]
+pub(crate) fn pc_maybe_container(p: u8) -> bool {
+    use crate::production::pc;
+    matches!(p, pc::NONE | pc::CONTAINER | pc::BAG)
+}
+
+/// [perf13] Can an item of production class `p` be a reaction reagent kind (`BAR`, `BOULDER`,
+/// `GLOB`, `LIQUID_MISC`, `BUCKET`, `ROUGH`, see `rx_census_item`)? Boulders are classified
+/// as `BOULDER`, `ORE` or `NONE` (by material); globs, liquids and rough gems as `NONE`.
+#[inline]
+pub(crate) fn pc_maybe_reagent(p: u8) -> bool {
+    use crate::production::pc;
+    matches!(p, pc::NONE | pc::BOULDER | pc::ORE | pc::BAR | pc::BUCKET)
 }
