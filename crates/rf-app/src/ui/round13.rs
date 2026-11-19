@@ -1259,8 +1259,8 @@ fn demo(g: &mut Game) {
     threats.push(Threat { kind: ThreatKind::Siege, name: "Goblin siege".into(), race: "GOBLIN".into(), units: vec![], pos: None, since: now.saturating_sub(5 * DAY), entity_id: other(0) });
     g.r13.demo_threats = threats;
     g.r13.demo_beasts = vec![
-        MegabeastInfo { unit_id: unit(3).map(|e| e.0).unwrap_or(-1), name: "Uthros the Fiery".into(), race: "DRAGON".into(), kind: ThreatKind::Megabeast, arrived: now.saturating_sub(DAY / 2), alive: true, kills: 2, slain_by: -1 },
-        MegabeastInfo { unit_id: -1, name: "Rimtar Bronzehulk".into(), race: "COLOSSUS_BRONZE".into(), kind: ThreatKind::Megabeast, arrived: now.saturating_sub(120 * DAY), alive: false, kills: 5, slain_by: g.sim.world.citizens().next().map(|u| u.id).unwrap_or(-1) },
+        MegabeastInfo { unit_id: unit(3).map(|e| e.0).unwrap_or(-1), name: "Uthros the Fiery".into(), race: "DRAGON".into(), kind: ThreatKind::Megabeast, arrived: now.saturating_sub(DAY / 2), alive: true, kills: 2, slain_by: -1, caught: false },
+        MegabeastInfo { unit_id: -1, name: "Rimtar Bronzehulk".into(), race: "COLOSSUS_BRONZE".into(), kind: ThreatKind::Megabeast, arrived: now.saturating_sub(120 * DAY), alive: false, kills: 5, slain_by: g.sim.world.citizens().next().map(|u| u.id).unwrap_or(-1), caught: false },
     ];
     g.r13.demo_demands = vec![
         Demand { id: 9001, kind: DemandKind::TreeQuota, entity_id: other(0), text: "The diplomat demands that you fell no more than 100 trees this year.".into(), amount: 100, due: now + 336 * DAY, answer: None },
