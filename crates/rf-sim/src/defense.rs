@@ -67,8 +67,10 @@ use rf_core::{Pos, Skill, Unit, UnitFlags};
 use std::collections::HashMap;
 
 /// Mechanism reaction delay (lever or pressure plate -> linked building), estimate.
+/// [machines14] Deprecated: per-device delays live in `linkage` (`DELAY_GATE` etc.).
 pub const LINK_DELAY: u64 = 100;
 /// Ticks until a pressure plate resets and sends "off" (estimate).
+/// [machines14] Deprecated: plates close `linkage::PLATE_CLOSE` ticks after the condition ends.
 pub const PLATE_RESET: u64 = 100;
 /// Ticks a dwarf needs to pull a lever (estimate).
 pub const PULL_TICKS: u64 = 10;
@@ -597,27 +599,30 @@ impl Sim {
         if now % 600 == 300 {
             self.post_reload_jobs();
         }
-        if now % 10 == 0 {
-            for mi in 0..self.def.mechs.len() {
-                let m = &self.def.mechs[mi];
-                if m.kind == MechKind::PressurePlate && m.on && now >= m.plate_until {
-                    self.def.mechs[mi].on = false;
-                    self.send_signals(mi, false, now);
-                }
-            }
-        }
+        // [machines14] Plates are polled as sensors in `linkage_tick` (no timed reset here).
     }
 
     fn send_signals(&mut self, mi: usize, on: bool, now: u64) {
-        let targets = self.def.mechs[mi].targets.clone();
-        for t in targets {
-            self.def.signals.push((now + LINK_DELAY, t, on));
-        }
+        let _ = now; // [machines14]
+        for k in 0..self.def.mechs[mi].targets.len() { // [machines14]
+            let t = self.def.mechs[mi].targets[k]; // [machines14]
+            self.link_send(t, on); // [machines14] routed through linkage (per-device delays)
+        } // [machines14]
         let id = self.def.mechs[mi].id;
         if let Some(b) = self.world.buildings.iter_mut().find(|b| b.id == id) {
             set_flag(&mut b.flags, "ACTIVE", on);
         }
     }
+
+    /// [machines14] `on` of a mechanism building (None if it is not one).
+    pub(crate) fn def_on(&self, id: i32) -> Option<bool> { // [machines14]
+        self.def.by_id.get(&id).map(|&mi| self.def.mechs[mi].on) // [machines14]
+    } // [machines14]
+
+    /// [machines14] linkage sets a door/hatch/floodgate/bridge/spikes state (`Mech::on` meaning).
+    pub(crate) fn defense_apply(&mut self, target: i32, on: bool, now: u64) { // [machines14]
+        self.apply_signal(target, on, now); // [machines14]
+    } // [machines14]
 
     /// A linked building receives an on/off signal.
     fn apply_signal(&mut self, target: i32, on: bool, now: u64) {
@@ -835,15 +840,8 @@ impl Sim {
             }
             match self.def.mechs[mi].kind {
                 MechKind::PressurePlate => {
-                    if trig || (citizen && self.def.mechs[mi].plate_citizens) {
-                        self.def.stats.plates_triggered += 1;
-                        let was = self.def.mechs[mi].on;
-                        self.def.mechs[mi].on = true;
-                        self.def.mechs[mi].plate_until = now + PLATE_RESET;
-                        if !was {
-                            self.send_signals(mi, true, now);
-                        }
-                    }
+                    let _ = (citizen, trig); // [machines14]
+                    self.link_plate_enter(s as u32, tile); // [machines14] plates are sensors in linkage
                 }
                 MechKind::CageTrap if trig => {
                     if let Some(&cage) = self.trap_items(mi, &["CAGE"]).first() {
@@ -1781,6 +1779,7 @@ impl Sim {
         }
     }
 
+    #[allow(dead_code)] // [machines14] replaced by linkage::link_now / link_queue
     pub(crate) fn defense_link(&mut self, trigger: i32, target: i32) -> Result<(), String> {
         let tk = self.def.by_id.get(&target).map(|&m| self.def.mechs[m].kind);
         let gk = self.def.by_id.get(&trigger).map(|&m| self.def.mechs[m].kind);
@@ -2188,7 +2187,7 @@ mod tests {
         }
         place(&mut w, false);
         let mut sim = quiet(w);
-        sim.link_building(601, 600).unwrap();
+        sim.link_building_now(601, 600).unwrap(); // [machines14] link_building queues a mechanic job
         (sim, Pos::new(bx, by, hz), Pos::new(bx + 1, by + 2, hz))
     }
 
@@ -2246,7 +2245,7 @@ mod tests {
         w.buildings.push(building(701, "Trap", "Lever", 22, 22, 22, 22, hz));
         place(&mut w, false);
         let mut sim = quiet(w);
-        sim.link_building(701, 700).unwrap();
+        sim.link_building_now(701, 700).unwrap(); // [machines14]
         let (a, b, on) = (Pos::new(24, 24, hz), Pos::new(30, 24, hz), Pos::new(27, 24, hz));
         assert!(sim.is_walkable(on), "the bridge is a floor over the moat");
         assert!(sim.find_path(a, b).is_some());
@@ -2258,14 +2257,16 @@ mod tests {
 
     #[test]
     fn lever_job_is_done_by_a_dwarf_and_locks_the_door() {
+        // [machines14] DF (wiki Lever): a linked door is shut; "on" opens it at once, "off" shuts it.
         let (mut w, gap) = walled_hall();
         w.buildings.push(building(800, "Door", "", gap.x, gap.y, gap.x, gap.y, gap.z));
         w.buildings.push(building(801, "Trap", "Lever", gap.x - 4, gap.y - 3, gap.x - 4, gap.y - 3, gap.z));
         place(&mut w, false);
         let mut sim = quiet(w);
-        sim.link_building(801, 800).unwrap();
+        sim.link_building_now(801, 800).unwrap(); // [machines14]
         assert!(sim.link_building(800, 801).is_err(), "a door is no trigger");
         let (a, b) = (gap.offset(-3, -1, 0), gap.offset(3, -1, 0));
+        assert!(sim.find_path(a, b).is_none(), "a linked door is shut and locked"); // [machines14]
         sim.pull_lever(801);
         assert_eq!(sim.lever_jobs_pending(801), 1);
         let mut pulled_at = None;
@@ -2274,18 +2275,19 @@ mod tests {
             if pulled_at.is_none() && sim.defense_stats().levers_pulled == 1 {
                 pulled_at = Some(t);
             }
-            if !sim.is_walkable(gap) {
+            if sim.is_walkable(gap) { // [machines14]
                 break;
             }
         }
         assert!(pulled_at.is_some(), "somebody pulled the lever");
         assert_eq!(sim.lever_jobs_pending(801), 0);
-        assert!(!sim.is_walkable(gap), "the linked door closed and locked");
-        assert!(sim.find_path(a, b).is_none());
-        assert!(sim.world.building(800).unwrap().flags.iter().any(|f| f == "CLOSED"));
+        assert!(sim.is_walkable(gap), "the linked door opened"); // [machines14]
+        assert!(sim.find_path(a, b).is_some()); // [machines14]
+        assert!(!sim.world.building(800).unwrap().flags.iter().any(|f| f == "CLOSED")); // [machines14]
         sim.pull_lever_now(801);
-        sim.run_ticks(LINK_DELAY as u32 + 2);
-        assert!(sim.find_path(a, b).is_some(), "pulled again: open");
+        sim.run_ticks(2); // [machines14] doors react at once
+        assert!(sim.find_path(a, b).is_none(), "pulled again: shut"); // [machines14]
+        assert!(sim.world.building(800).unwrap().flags.iter().any(|f| f == "CLOSED")); // [machines14]
     }
 
     #[test]
@@ -2295,28 +2297,28 @@ mod tests {
         w.buildings.push(building(900, "Door", "", gap.x, gap.y, gap.x, gap.y, gap.z));
         w.buildings.push(building(901, "Trap", "PressurePlate", plate.x, plate.y, plate.x, plate.y, plate.z));
         let mut sim = quiet(w);
-        sim.link_building(901, 900).unwrap();
+        sim.link_building_now(901, 900).unwrap(); // [machines14]
         // Citizens do not set it off.
         let t = sim.world.idx(plate).unwrap() as u32;
         let dw = sim.unit_slot[&1];
         let now = sim.ticks();
         sim.move_to(dw, t, now);
         sim.run_ticks(LINK_DELAY as u32 + 5);
-        assert!(sim.is_walkable(gap));
+        assert!(!sim.is_walkable(gap)); // [machines14] the linked door stays shut
         let g = goblin_at(&mut sim, plate.offset(-1, 0, 0));
         let s = sim.unit_slot[&g];
         let now = sim.ticks();
         sim.move_to(s, t, now);
-        sim.run_ticks(LINK_DELAY as u32 + 5);
+        sim.run_ticks(2); // [machines14] plates fire at once, doors react at once
         assert_eq!(sim.defense_stats().plates_triggered, 1);
-        assert!(!sim.is_walkable(gap), "plate on: door locked");
-        // After the plate resets the door opens again.
+        assert!(sim.is_walkable(gap), "plate on: door open"); // [machines14]
+        // [machines14] 99 ticks after the goblin left the plate, the door shuts again.
         let away = sim.world.idx(plate.offset(-1, -1, 0)).unwrap() as u32;
         let now = sim.ticks();
         sim.move_to(s, away, now);
         sim.combat.f[s].uncon_until = u64::MAX / 2; // stays off the plate
-        sim.run_ticks((PLATE_RESET + LINK_DELAY) as u32 + 20);
-        assert!(sim.is_walkable(gap), "plate off: door open");
+        sim.run_ticks(crate::linkage::PLATE_CLOSE as u32 + 5); // [machines14]
+        assert!(!sim.is_walkable(gap), "plate off: door shut"); // [machines14]
     }
 
     #[test]
@@ -2364,7 +2366,7 @@ mod tests {
         w.buildings.push(building(1200, "Floodgate", "", gap.x, gap.y, gap.x, gap.y, gap.z));
         w.buildings.push(building(1201, "Trap", "Lever", 22, 24, 22, 24, gap.z));
         let mut sim = quiet(w);
-        sim.link_building(1201, 1200).unwrap();
+        sim.link_building_now(1201, 1200).unwrap(); // [machines14]
         let (a, b) = (gap.offset(-3, -1, 0), gap.offset(3, -1, 0));
         assert!(sim.find_path(a, b).is_none(), "floodgates start closed");
         sim.pull_lever_now(1201);

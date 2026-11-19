@@ -107,6 +107,10 @@ pub(crate) struct Power {
     pub flow_at: Vec<u64>,
     pub work: Vec<PumpWork>,
     pub stats: PowerStats,
+    /// [machines14] Machine indices of the pumps, newest (highest building id) first.
+    pub pump_order: Vec<u32>, // [machines14]
+    /// [machines14] Pumps keep running until this tick after losing power (49-tick run-on): (bid, tick), sorted.
+    pub run_until: Vec<(i32, u64)>, // [machines14]
 }
 
 /// Counters for reports and tests.
@@ -175,6 +179,7 @@ impl Sim {
             if is_machine(b).is_some() {
                 let jobs = b.jobs.iter().filter(|j| j.job == "OperatePump" && !j.suspended).count() as u64;
                 h = crate::rng::splitmix(h ^ (b.id as u64) << 8 ^ (b.built as u64) << 40 ^ jobs << 41 ^ (b.stage as u64 & 0xff));
+                h = crate::machinery::machine_sig_extra(h, b); // [machines14] DISENGAGED gears
             }
         }
         h
@@ -228,6 +233,7 @@ impl Sim {
                     for (dx, dy, dz) in [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)] {
                         push(self.tile_at(lo, dx, dy, dz));
                     }
+                    if crate::machinery::gear_disengaged(b) { ports.clear(); } // [machines14] a disengaged gear transmits nothing
                 }
                 MachineKind::AxleHorizontal => {
                     // Along the axis: the direction string (`NS`/`EW`) or the longer side.
@@ -253,6 +259,7 @@ impl Sim {
                         push(self.tile_at(hi, 0, 1, 0));
                     }
                     push(self.tile_at(center, 0, 0, 1));
+                    for o in crate::machinery::wheel_center_ports(self, b) { push(Some(o)); } // [machines14] beside the centre, across the axis
                     for &t in &tiles {
                         let p = self.world.pos_of(t as usize);
                         if let Some(u) = self.tile_at(p, 0, 0, -1) {
@@ -260,7 +267,10 @@ impl Sim {
                         }
                     }
                 }
-                MachineKind::Windmill => push(self.tile_at(center, 0, 0, -1)),
+                MachineKind::Windmill => {
+                    push(self.tile_at(center, 0, 0, -1));
+                    for o in crate::machinery::windmill_ring(self, b) { push(Some(o)); } // [machines14] the 12 tiles around the 3x3
+                }
                 MachineKind::ScrewPump | MachineKind::Millstone | MachineKind::Rollers => {
                     for &t in &tiles {
                         let p = self.world.pos_of(t as usize);
@@ -270,7 +280,9 @@ impl Sim {
                         if kind != MachineKind::Rollers {
                             push(self.tile_at(p, 0, 0, 1));
                         }
+                        if kind == MachineKind::ScrewPump { push(self.tile_at(p, 0, 0, -1)); } // [machines14] pump stacks connect below
                     }
+                    if kind == MachineKind::Rollers { crate::machinery::roller_ports_across(self, b, &tiles, &mut ports); } // [machines14] long rollers: across only
                     if kind == MachineKind::ScrewPump {
                         // "Pump from north": the input end is north, the output south.
                         let d = b.direction.to_ascii_lowercase();
@@ -295,6 +307,8 @@ impl Sim {
                 }
             }
             ports.retain(|t| !tiles.contains(t));
+            crate::machinery::drop_floored_vertical(self, &tiles, &mut ports); // [machines14] floors block power between levels
+            if kind == MachineKind::ScrewPump && intake != NONE && !crate::machinery::intake_open(self, intake) { intake = NONE; } // [machines14] intake column must be open
             ms.push(Machine { bid: b.id, kind, tiles, ports, net: 0, intake, output, under });
         }
         // Tile -> machine, then mutual connections.
@@ -348,6 +362,10 @@ impl Sim {
             }
         }
         self.power.work = work;
+        self.power.run_until.retain(|e| ms.iter().any(|m| m.bid == e.0)); // [machines14]
+        let mut order: Vec<u32> = (0..ms.len() as u32).filter(|&i| ms[i as usize].kind == MachineKind::ScrewPump).collect(); // [machines14]
+        order.sort_by_key(|&i| std::cmp::Reverse(ms[i as usize].bid)); // [machines14] newest first (wiki Screw pump)
+        self.power.pump_order = order; // [machines14]
         self.power.nets = vec![PowerNet::default(); roots.len()];
         self.power.stats.machines = ms.len();
         self.power.stats.networks = roots.len();
@@ -355,7 +373,7 @@ impl Sim {
     }
 
     /// Recompute production and use of every network.
-    fn power_balance(&mut self, now: u64) {
+    pub(crate) fn power_balance(&mut self, now: u64) { // [machines14] pub(crate) for tests
         let mut nets = vec![PowerNet::default(); self.power.nets.len()];
         let day = now / rf_core::TICKS_PER_DAY as u64;
         for m in &self.power.machines {
@@ -366,7 +384,7 @@ impl Sim {
                         let k = self.power.under.binary_search(&t).ok();
                         let fresh = k.map(|k| self.power.flow_at[k] + FLOW_FRESH > now && self.power.flow_at[k] > 0).unwrap_or(false);
                         let (d, magma) = self.liquid_at(self.world.pos_of(t as usize));
-                        fresh && d > 0 && !magma
+                        fresh && d >= crate::machinery::WHEEL_MIN_DEPTH && !magma // [machines14] 4/7 (wiki Water wheel)
                     });
                     n.used += WHEEL_USE;
                     if flowing {
@@ -395,6 +413,7 @@ impl Sim {
         for n in &mut nets {
             n.powered = n.produced > 0 && n.produced >= n.used;
         }
+        self.pump_run_on(&nets, now); // [machines14]
         self.power.nets = nets;
     }
 
@@ -417,12 +436,13 @@ impl Sim {
         if self.power.machines.is_empty() {
             return;
         }
-        for k in 0..self.power.machines.len() {
+        for o in 0..self.power.pump_order.len() { // [machines14] newest first
+            let k = self.power.pump_order[o] as usize; // [machines14]
             let m = &self.power.machines[k];
             if m.kind != MachineKind::ScrewPump || m.intake == NONE || m.output == NONE {
                 continue;
             }
-            let powered = self.power.nets.get(m.net as usize).map(|n| n.powered).unwrap_or(false);
+            let powered = self.power.nets.get(m.net as usize).map(|n| n.powered).unwrap_or(false) || self.pump_running_on(m.bid, now); // [machines14] 49-tick run-on
             let manned = self.power.work.iter().any(|w| w.bid == m.bid && w.claimed != NONE && w.until > now);
             if powered || manned {
                 let (a, b) = (m.intake, m.output);
@@ -432,7 +452,7 @@ impl Sim {
     }
 
     /// Move everything that fits from the intake to the output (intake at least 2/7).
-    fn pump_step(&mut self, a: usize, b: usize) {
+    pub(crate) fn pump_step(&mut self, a: usize, b: usize) { // [machines14] pub(crate) for tests
         let (pa, pb) = (self.world.pos_of(a), self.world.pos_of(b));
         let (da, ma) = self.liquid_at(pa);
         if da < 2 || !self.fluids.holds(&self.world.tiles, b) {
@@ -440,7 +460,8 @@ impl Sim {
         }
         let (db, mb) = self.liquid_at(pb);
         if db > 0 && mb != ma {
-            return; // water and magma do not mix in the pump (ESTIMATE)
+            self.fluids_obsidian_at(b); // [machines14] pumping into the other liquid makes obsidian (wiki Screw pump)
+            return;
         }
         let m = da.min(7 - db);
         if m == 0 {
@@ -448,6 +469,7 @@ impl Sim {
         }
         self.set_liquid(pa, da - m, ma);
         self.set_liquid(pb, db + m, ma);
+        if !ma { self.world.tiles[b].flags &= !(tile_flags::SALT | tile_flags::STAGNANT); } // [machines14] pumped water is clean
         self.power.stats.pumped += m as u64;
     }
 
@@ -635,7 +657,7 @@ mod tests {
         sim.power_balance(sim.ticks);
         assert!(!sim.machine_powered(9103), "a dry wheel turns nothing");
         // Still water does not turn it either.
-        sim.set_liquid(Pos::new(21, 30, below), 3, false);
+        sim.set_liquid(Pos::new(21, 30, below), 4, false); // [machines14] a wheel needs 4/7
         let t = sim.world.idx(Pos::new(21, 30, below)).unwrap() as u32;
         sim.power_balance(sim.ticks + 1_000);
         assert!(!sim.machine_powered(9103));
@@ -658,9 +680,12 @@ mod tests {
         }
         let sz = (20i16 * 2 / 3).max(2);
         let floor = w.tiletypes.by_name("StoneFloor1").unwrap();
+        let open = w.tiletypes.by_name("OpenSpace").unwrap(); // [machines14]
         for x in [19, 29] {
             let i = w.idx(Pos::new(x, 12, sz - 1)).unwrap();
             w.tiles[i].tt = floor;
+            let j = w.idx(Pos::new(x, 12, sz)).unwrap(); // [machines14] the intake column must be open (wiki Screw pump)
+            w.tiles[j].tt = open; // [machines14]
         }
         let mut sim = Sim::new(w, seed);
         sim.set_invasions(false);

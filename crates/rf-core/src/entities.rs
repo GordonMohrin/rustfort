@@ -299,7 +299,28 @@ pub struct Building {
     pub links: Vec<i32>,
     /// Bridge raise direction (`N`, `S`, `E`, `W`, `RETRACT`), trap subtype details, etc.
     pub direction: String,
+    /// [machines14] Pressure plate trigger ranges (export extra `plate`); None = not a plate / unknown.
+    #[serde(default)] // [machines14]
+    pub plate: Option<PlateInfo>, // [machines14]
+    /// [machines14] Track stop friction (export extra `friction`); 0 = unknown (use the subtype label).
+    #[serde(default)] // [machines14]
+    pub friction: i32, // [machines14]
 }
+
+/// [machines14] Pressure plate trigger ranges (DF `plate_info`; the key names match the export).
+/// Creature weight in DF's plate units (body size), liquids in sevenths, track in Γ (max 0 = any).
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)] // [machines14]
+#[serde(default)] // [machines14]
+pub struct PlateInfo { // [machines14]
+    pub unit_min: i32, // [machines14]
+    pub unit_max: i32, // [machines14]
+    pub water_min: i32, // [machines14]
+    pub water_max: i32, // [machines14]
+    pub magma_min: i32, // [machines14]
+    pub magma_max: i32, // [machines14]
+    pub track_min: i32, // [machines14]
+    pub track_max: i32, // [machines14]
+} // [machines14]
 
 /// One queued job in a workshop/furnace (DF `job` linked to the building).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

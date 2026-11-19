@@ -75,6 +75,10 @@ pub mod undead; // [contract13] owner [undead13]: reanimation, undead, necromanc
 pub mod vampires; // [contract13] owner [vampire13]: vampires, werebeasts
 pub mod megabeasts; // [contract13] owner [mega13]: megabeasts, semi-megabeasts, titans
 pub mod diplomacy; // [contract13] owner [diplo13]: liaisons, diplomats, relations, war/peace
+mod machinery; // [machines14] machine details: gear disengaging, ports, pump run-on
+pub mod linkage; // [machines14] mechanism links: signals, device delays, pressure plates, link jobs
+pub mod machines14_api; // [machines14] public API (link picker, plate settings, device state, power nets)
+pub use linkage::{DevKind, LinkStats}; // [machines14]
 pub use round8_api::AnimalInfo;
 pub mod construct; // [construct]
 pub use construct::ConstructReport; // [construct]
@@ -488,6 +492,8 @@ enum Task {
     Animal,
     /// [carts12] Route work `.0` (load/unload a minecart, push, ride, guide, wheelbarrow; see `minecarts`).
     Cart(u32),
+    /// [machines14] Mechanic linking trigger `.0` to target `.1` (see `linkage`).
+    Link(i32, i32), // [machines14]
 }
 
 #[derive(serde::Serialize, serde::Deserialize)] // [saves11]
@@ -705,6 +711,7 @@ pub struct Sim {
     vamp: vampires::Vamp, // [contract13] owner [vampire13]
     mega: megabeasts::Mega, // [contract13] owner [mega13]
     diplo: diplomacy::Diplo, // [contract13] owner [diplo13]
+    link: linkage::Linkage, // [machines14]
 }
 
 /// [perf9] Debug: A* searches with at least this many nodes are printed (`RF_PATH_LOG`, set
@@ -749,7 +756,7 @@ fn dig_class(m: TtMaterial) -> TtMaterial {
 fn blocks_movement(kind: &str) -> bool {
     matches!(
         kind,
-        "Statue" | "Support" | "Floodgate" | "WindowGlass" | "WindowGem" | "GrateWall" | "BarsVertical" | "GearAssembly"
+        "Statue" | "Support" | "Floodgate" | "WindowGlass" | "WindowGem" | "GrateWall" | "BarsVertical" // [machines14] no GearAssembly: gears do not block movement (wiki)
     )
 }
 
@@ -861,6 +868,7 @@ impl Sim {
             vamp: vampires::Vamp::default(), // [contract13]
             mega: megabeasts::Mega::default(), // [contract13]
             diplo: diplomacy::Diplo::default(), // [contract13]
+            link: linkage::Linkage::default(), // [machines14]
         };
         sim.restore_core(&saved); // [saves10] tick count first: the init passes below use it
         sim.init_plants();
@@ -1224,6 +1232,7 @@ impl Sim {
             (_, Task::OperatePump(b)) => ("Operate Pump", self.world.building(b).map(|b| b.center)), // [gaps10]
             (_, Task::SiegeOperate(b)) => (self.engines_caption(b), self.world.building(b).map(|b| b.center)), // [siege12]
             (_, Task::LoadTrap(b, _)) => (self.defense_reload_caption(b), self.world.building(b).map(|b| b.center)), // [defense]
+            (_, Task::Link(_, t)) => ("Link a Building to a Trigger", self.world.building(t).map(|b| b.center)), // [machines14]
             (_, Task::Idle) | (_, Task::Wander) => ("No Job", None),
             (_, Task::GoJob(j)) | (_, Task::Job(j)) => {
                 let job = &self.jobs[j as usize];
@@ -1310,6 +1319,7 @@ impl Sim {
         self.vampires_hash(&mut mix); // [contract13] owner [vampire13]
         self.megabeasts_hash(&mut mix); // [contract13] owner [mega13]
         self.diplomacy_hash(&mut mix); // [contract13] owner [diplo13]
+        self.link_hash(&mut mix); // [machines14]
         h
     }
 
@@ -1428,6 +1438,7 @@ impl Sim {
         let tq = Instant::now(); // [perf]
         self.phase[8] += (tq - tp).as_secs_f64(); // [perf]
         self.defense_tick(now); // [defense]
+        self.linkage_tick(now); // [machines14] signals, device delays, pressure plates
         if now % 100 == 73 {
             self.moods_pass(now); // [moods]
         }
@@ -1933,6 +1944,9 @@ impl Sim {
         if pf!(4, self.power_try_job(s, now)) {
             return; // [gaps10] Operate pump by hand
         }
+        if !restricted && self.linkage_try_job(s, now) { // [machines14]
+            return; // [machines14] Link a building to a trigger
+        } // [machines14]
         if self.engines_try_job(s, now) {
             return; // [siege12] load and fire siege engines
         }
@@ -2036,6 +2050,7 @@ impl Sim {
             Task::OperatePump(b) => self.power_arrive_pump(s, b, now), // [gaps10]
             Task::SiegeOperate(b) => self.engines_arrive(s, b, now), // [siege12]
             Task::LoadTrap(b, it) => self.defense_arrive_reload(s, b, it, now), // [defense]
+            Task::Link(g, t) => self.linkage_arrive(s, g, t, now), // [machines14]
             Task::Wander | Task::Idle => {
                 self.ai[s].task = Task::Idle;
                 let mut r = Rng::for_unit(self.seed, s, now, 5);
@@ -2196,6 +2211,7 @@ impl Sim {
             Task::OperatePump(b) => self.power_cancel_pump(s, b), // [gaps10]
             Task::SiegeOperate(b) => self.engines_cancel(s, b), // [siege12]
             Task::LoadTrap(b, it) => self.defense_cancel_reload(s, b, it), // [defense]
+            Task::Link(g, t) => self.linkage_cancel(s, g, t), // [machines14]
             Task::GoJob(j) | Task::Job(j) => {
                 if self.jobs[j as usize].claimed == s as u32 {
                     self.jobs[j as usize].claimed = NONE;

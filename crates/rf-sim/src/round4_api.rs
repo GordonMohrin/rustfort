@@ -62,10 +62,12 @@ impl Sim {
     }
 
     /// Link a lever/pressure plate to a target building (DF: needs mechanisms).
-    /// [defense] Targets: doors, hatches, floodgates, bridges, upright spikes. Instant (no
-    /// mechanic job or mechanisms needed yet).
+    /// [machines14] Queues a mechanic job that installs 2 mechanisms (one in the target, one in
+    /// the trigger); `link_building_now` links at once (tests, scripts). Targets: doors,
+    /// hatches, floodgates, bridges, upright spikes, grates, bars, gear assemblies, track
+    /// stops, cages, chains, supports.
     pub fn link_building(&mut self, trigger_id: i32, target_id: i32) -> Result<(), String> {
-        self.defense_link(trigger_id, target_id)
+        self.link_queue(trigger_id, target_id) // [machines14]
     }
 
     /// Current caravan at the depot, if any.

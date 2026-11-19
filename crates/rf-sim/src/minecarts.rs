@@ -769,11 +769,11 @@ impl Sim {
         }
     }
 
-    fn carts_bld_rebuild(&mut self) {
+    pub(crate) fn carts_bld_rebuild(&mut self) { // [machines14] pub(crate): linkage switches track stops
         let mut h = 0xCA27u64;
         for b in &self.world.buildings {
-            if b.built && (b.kind == "TrackStop" || b.kind == "Rollers") {
-                h = crate::rng::splitmix(h ^ (b.id as u64) << 8 ^ (b.kind.len() as u64) << 40 ^ (b.subtype.len() as u64) << 44 ^ (b.direction.len() as u64) << 48);
+            if b.built && (crate::linkage::is_track_stop(b) || b.kind == "Rollers") { // [machines14] exported stops are Trap/TrackStop
+                h = crate::rng::splitmix(h ^ (b.id as u64) << 8 ^ (b.kind.len() as u64) << 40 ^ (b.subtype.len() as u64) << 44 ^ (b.direction.len() as u64) << 48 ^ (crate::linkage::stop_disabled(b) as u64) << 56); // [machines14] DISABLED
             }
         }
         if h == self.carts.bld_sig && !self.carts.blds.is_empty() || h == 0xCA27 && self.carts.blds.is_empty() {
@@ -783,11 +783,11 @@ impl Sim {
         self.carts.bld_sig = h;
         let mut v = Vec::new();
         for b in &self.world.buildings {
-            if !b.built || (b.kind != "TrackStop" && b.kind != "Rollers") {
+            if !b.built || (!crate::linkage::is_track_stop(b) && b.kind != "Rollers") || crate::linkage::stop_disabled(b) { // [machines14] Trap/TrackStop; disabled stops are plain track
                 continue;
             }
             let roller = b.kind == "Rollers";
-            let (value, dir) = if roller { (roller_speed(&b.subtype), parse_dir(&b.direction)) } else { (stop_friction(&b.subtype), parse_dir(&b.direction)) };
+            let (value, dir) = if roller { (roller_speed(&b.subtype), parse_dir(&b.direction)) } else { (crate::linkage::stop_friction_of(b), parse_dir(&b.direction)) }; // [machines14] exported friction
             for y in b.y1..=b.y2 {
                 for x in b.x1..=b.x2 {
                     if let Some(t) = self.world.idx(Pos::new(x, y, b.z)) {
@@ -1143,6 +1143,7 @@ impl Sim {
             self.world.units[uidx].pos = p;
         }
         self.carts.stats.tiles += 1;
+        if self.def.trap_tile(t) { let w = self.load_weight(item) + if rider != NONE { self.world.units[self.ai[rider as usize].uidx].body_size / 1000 } else { 0 }; self.link_plate_cart(t, w); } // [machines14] track plates
     }
 
     /// Where a cart leaving tile `t` in direction `d` goes: Ok(next tile) or Err(fall-to tile,

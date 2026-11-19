@@ -440,6 +440,11 @@ impl Fluids {
         self.touch(tiles, b);
     }
 
+    /// [machines14] Public wrapper of `obsidian` for screw pumps.
+    pub(crate) fn obsidian_pub(&mut self, tiles: &mut [Tile], i: usize) { // [machines14]
+        self.obsidian(tiles, i); // [machines14]
+    } // [machines14]
+
     /// Water and magma meet in tile `i`: it becomes an obsidian wall.
     fn obsidian(&mut self, tiles: &mut [Tile], i: usize) {
         self.set(tiles, i, 0, false);
