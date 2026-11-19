@@ -659,7 +659,7 @@ Module `crates/rf-sim/src/decay15.rs` (spec: `docs/mechanics/decay15.md`). On by
 | Vermin thoughts, starving dwarves eat vermin, animal traps | not simulated | w:Vermin, w:Food | MISSING |
 | Wear levels | 806 400 points per level, destroyed after XX; value 100/75/50/25 % (also for clothing worn out by `lifestyle`) | w:Wear | OK |
 | Refuse-pile wear | clothing and armor one level per 56 days, bones and shells per 336 days; artifacts never | w:Wear, w:Bone ("quite quickly", "much slower") | ESTIMATE |
-| Combat wear (armor, weapons) | not simulated | w:Wear | MISSING |
+| Combat wear | armor that deflects a blow gains a quarter level with chance ratio/20 (max 1/4), ratio = attacker shear fracture / armor shear yield (edged) or impact yields (blunt); own RNG stream, fights unchanged; weapons never wear | w:Wear; export: metal armor 5-10 % worn, 0 of 535 weapons | ESTIMATE |
 | Heat, cold, fire wear; 100-year organic wear | not simulated | w:Wear | MISSING |
 | Masterwork meal lost to rot or vermin (cook's thought) | not simulated | w:Kitchen | MISSING |
 | Exporter: rot_timer, wear_timer, material ROTS flags, refuse standing orders, vermin list | not exported yet (calibration still from item-id ages) | spec section 10 | MISSING |

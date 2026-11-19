@@ -67,6 +67,7 @@ pub fn draw_standing_orders(g: &mut Game, c: Rect) {
         format!("Miasma: up to {} sources, {} tiles", r.miasma_sources_max, r.miasma_tiles_max),
         format!("Vermin now: {}   seen: {}   ate: {}   killed: {}", r.vermin_live, r.vermin_spawned, r.vermin_ate, r.vermin_killed),
         format!("Worn on refuse piles: {} levels, {} items gone", r.wear_levels_refuse, r.items_worn_out),
+        format!("Armor worn in combat: {} levels", r.wear_levels_combat),
         format!("Items with a rot timer: {}", r.rot_tracked),
     ];
     for l in &lines {

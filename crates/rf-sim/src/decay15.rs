@@ -185,9 +185,9 @@ fn seg_never_rots(seg: &str) -> bool {
 
 /// Description words of body parts that do not rot.
 fn desc_never_rots(d: &str) -> bool {
-    ["tooth", "teeth", "chitin", "bone", "skull", "shell", "horn", "hoof", "nail", "hair", "wool", "feather", "scale", "claw", "talon", "ivory"]
-        .iter()
-        .any(|w| d.contains(w))
+    const W: [&str; 16] = ["tooth", "teeth", "chitin", "bone", "skull", "shell", "horn", "hoof", "nail", "hair", "wool", "feather", "scale", "claw", "talon", "ivory"];
+    // Whole words only ("unicorn" or "snail" corpses do rot); plurals count.
+    d.split(|c: char| !c.is_ascii_alphabetic()).any(|w| W.iter().any(|k| w == *k || (w.len() == k.len() + 1 && w.starts_with(k) && w.ends_with('s'))))
 }
 
 fn limits(class: u8, id: i32) -> (u16, u16) {
@@ -807,6 +807,45 @@ impl Sim {
         }
     }
 
+    /// Combat wear (w:Wear: "armor suffers wear depending on the material properties of the
+    /// body part/weapon hitting it"): a piece that deflects a blow gains a quarter level with
+    /// chance `clamp(ratio / 20, 0, 1/4)`, ratio = attacker shear fracture / armor shear yield
+    /// (edged) or attacker / armor impact yield (blunt) (ESTIMATE; export: 5-10 % of metal
+    /// armor worn, weapons never). Draws from its own stream, so fight results do not change.
+    pub(crate) fn decay_armor_hit(&mut self, idx: usize, w_strength: f32, edge: bool, a: usize, now: u64) {
+        if !self.decay_on() {
+            return;
+        }
+        let it = &self.world.items[idx];
+        if it.flags.artifact || it.quality >= 6 || self.imeta[idx].dead {
+            return;
+        }
+        let am = self.mech_of_mat(it.mat);
+        let ratio = w_strength / if edge { am.sy } else { am.iy }.max(1.0);
+        let p = (ratio / 20.0).clamp(0.0, 0.25);
+        let id = it.id;
+        let mut r = Rng::for_unit(self.seed, a, now, 0xDEC4 ^ (id as u64) << 16);
+        if r.below(10_000) as f32 >= p * 10_000.0 {
+            return;
+        }
+        let pts = self.decay.wear_pts.entry(id).or_insert(0);
+        *pts += WEAR_LEVEL_PTS / 4;
+        self.decay.rep.wear_levels_combat_pts += 1;
+        if *pts < WEAR_LEVEL_PTS {
+            return;
+        }
+        *pts -= WEAR_LEVEL_PTS;
+        let w = self.world.items[idx].wear;
+        if w >= 3 {
+            self.decay.wear_pts.remove(&id);
+            self.destroy_item(id);
+            self.decay.rep.items_worn_out += 1;
+        } else {
+            self.decay_apply_wear_level(idx, w, w + 1);
+            self.decay.rep.wear_levels_combat += 1;
+        }
+    }
+
     /// Clothing, armor, bones and shells lying on refuse piles wear out (w:Wear, w:Bone).
     fn decay_refuse_wear(&mut self, _now: u64) {
         let mut pts = std::mem::take(&mut self.decay.wear_pts);
@@ -1084,11 +1123,15 @@ impl Sim {
             let pen = self.vermin_sp(&v.race).map(|s| s.pen).unwrap_or(2);
             let (vx, vy, vz) = self.nav.xyz(v.tile as usize);
             let mut best: Option<i32> = None;
-            for &fid in &self.foods {
+            // Food items are the fresh food-class entries of the rot map (id order).
+            for (&fid, st) in &self.decay.rot {
+                if st.stage != 0 || !matches!(st.class, C_FOOD | C_PLANT | C_FISH_RAW) {
+                    continue;
+                }
                 let Some(&i) = self.item_idx.get(&fid) else { continue };
                 let i = i as usize;
                 let it = &self.world.items[i];
-                if self.imeta[i].dead || it.flags.rotten || it.holder >= 0 || self.imeta[i].reserved > 0 || it.flags.in_job {
+                if self.imeta[i].dead || it.holder >= 0 || self.imeta[i].reserved > 0 || it.flags.in_job || it.flags.in_building {
                     continue;
                 }
                 let pos = if it.container >= 0 { self.item_idx.get(&it.container).map(|&c| self.world.items[c as usize].pos).unwrap_or(it.pos) } else { it.pos };
@@ -1098,9 +1141,8 @@ impl Sim {
                 if self.vermin_resist(i) >= pen {
                     continue;
                 }
-                if best.map(|b| fid < b).unwrap_or(true) {
-                    best = Some(fid);
-                }
+                best = Some(fid);
+                break;
             }
             self.decay.vermin[k].next_meal = now + DAY;
             let Some(fid) = best else { continue };
@@ -1110,6 +1152,7 @@ impl Sim {
             } else {
                 self.destroy_item(fid);
                 self.foods.retain(|&x| x != fid);
+                self.decay.rot.remove(&fid);
             }
             self.decay.rep.vermin_ate += 1;
         }

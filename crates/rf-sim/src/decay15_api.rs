@@ -45,6 +45,9 @@ pub struct DecayReport {
     pub vermin_left: u64,
     pub remains_made: u64,
     pub wear_levels_refuse: u64,
+    /// Combat wear: quarter levels added and whole levels gained by armor.
+    pub wear_levels_combat_pts: u64,
+    pub wear_levels_combat: u64,
     pub items_worn_out: u64,
     /// Live vermin right now.
     pub vermin_live: usize,
