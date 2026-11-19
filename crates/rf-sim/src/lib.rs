@@ -2191,6 +2191,7 @@ impl Sim {
         let corpse = self.create_item("CORPSE", mat, tile as usize, format!("{name}'s corpse")); // [undead13] id kept
         self.undead_remains(s, corpse, false); // [undead13] corpses can rise; undead destroyed
         self.social_death(s, now); // [social]
+        self.diplomacy_unit_died(s, why); // [diplo13] killed merchants/envoys anger their civ
     }
 
     fn cancel_task(&mut self, s: usize) {
@@ -2789,6 +2790,7 @@ impl Sim {
     }
 
     fn fell_tree(&mut self, s: usize, base: usize, _now: u64) {
+        self.diplomacy_tree_felled(); // [diplo13] elven tree quota
         let (bx, by, bz) = self.nav.xyz(base);
         let mut tree: Vec<usize> = vec![base];
         let mut k = 0;

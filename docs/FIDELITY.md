@@ -710,3 +710,24 @@ Module `crates/rf-sim/src/megabeasts.rs` (tests in `megabeasts/tests.rs`). wiki 
 | Slaying: announcement with slayer, fort history, thoughts | OK / ESTIMATE | "The <race> <name> has been slain by <slayer>!"; kept in `Sim::megabeast_history()`. Thoughts `SlewMegabeast` (slayer, strong positive) and `MegabeastSlain` (other citizens, mild) are ESTIMATE (DF: killed a megabeast thought, plus fame for the slayer, MISSING). |
 | Caught in a cage trap | OK | wiki Megabeast (caged megabeasts can be trained). Recorded as caught (`MegabeastInfo::caught`), not slain: no slaying announcement or thoughts, no longer a threat. |
 | Megabeasts leaving after some time, flying (roc, dragon), multiple hydra heads | MISSING | They walk and fight to the death. |
+## Diplomacy (`[diplo13]`)
+
+Module `crates/rf-sim/src/diplomacy.rs`; hooks in `trade.rs` (caravan arrival, committed trade, goods unloading) and `lib.rs` (`kill`, `fell_tree`). Runs once a day (`DIPLO_DAY_PHASE`); switch off with `set_diplomacy_enabled(false)`.
+
+| Rule | Class | Notes |
+|---|---|---|
+| Outpost liaison travels with the fort's own civilization's caravan and meets the host noble a few days after arrival | OK | wiki Outpost liaison. Delay 1-3 days is ESTIMATE. |
+| Envoys (liaison, diplomats) still come when the caravan finds no usable trade depot and leaves at once | ESTIMATE | wiki Outpost liaison, Trade depot; the envoy travels with the caravan but its meeting does not need the depot. |
+| Host = land holder, else mayor, else expedition leader; nobody to receive the envoy -> meeting "Missed", small attitude loss | OK / ESTIMATE | wiki Diplomat, Noble. The penalty (-5) is ESTIMATE. |
+| Liaison asks for requests; accepting makes a one-year trade agreement, requested goods come in double numbers | ESTIMATE | wiki Outpost liaison (requests raise the chance/amount of goods). DF has a per-item request screen with priorities; Rustfort matches request words against caravan goods kinds/subtypes and doubles their count. |
+| Elevation to barony / county / duchy at the liaison meeting, in order, when population AND created wealth AND exported wealth meet `LAND_HOLDER_POP/PROD/TRADE_TRIGGER` | OK | wiki Noble (land holder), Barony; difficulty settings read from the save, vanilla defaults 20/100 000/10 000 etc. otherwise (the defaults are ESTIMATE where the save carries none). |
+| Land holder appointed (baron -> count -> duke, same unit promoted) | ESTIMATE | wiki Land holder: DF lets the player choose / the monarch appoints; Rustfort promotes the existing holder or appoints the host. No arrival of an outside noble. |
+| Diplomats of other civilizations only come once the fort has a land holder | OK | wiki Diplomat. |
+| Elven tree quota per year (`TREE_FELL_COUNT`, `_SAVAGE` when savagery >= 66), every felled tree counts; exceeding it angers the elves, more each week | OK / ESTIMATE | wiki Diplomat, Tree. Quota is set even if refused (refusing costs attitude). Weekly extra penalty is ESTIMATE. Savagery threshold depends on `World::climate` (0 = unknown until weather13's importer fills it). |
+| Human diplomats demand tribute when their attitude is negative; paid as gifts to their caravan before the deadline | ESTIMATE | wiki Diplomat (tribute demands). Amount formula (500 + 50 x displeasure + exports/100) is ESTIMATE. |
+| Attitude -100..100: + profitable trades and gifts, - merchants/visitors (-10) and envoys (-40) killed by the fort (struck down by a fort dwarf, or crushed by a drawbridge; deaths to goblins, cave-ins or wounds bled out later are not held against the fort), refused demands, broken quotas, unpaid tribute; seasonal drift to a baseline | ESTIMATE | DF tracks this inside the entity; the numbers are ESTIMATE. |
+| War declaration at attitude <= -50: relation War, caravans stop (`trade_partner`), their merchants on the map leave at once, envoys/demands voided | OK / ESTIMATE | wiki Diplomacy, War. Threshold ESTIMATE. |
+| War parties of a civilization that declared war here (1 in 3 per season, 3-7 units, ambush raid) | ESTIMATE | wiki Ambush, Siege. Goblin sieges stay with `raids`. |
+| Peace offer: non-goblin civ at war for at least a year with attitude > -30 sends an envoy in its caravan season; accepting restores trade | ESTIMATE | wiki Diplomacy (peace). |
+| Unanswered demands: tree quota imposed, tribute counts as refused, requests and peace offers lapse after 14 days | ESTIMATE | |
+| Elevation announcement wording, meeting screen dialogue | MISSING | Short own wording; DF's meeting conversation not reproduced. |

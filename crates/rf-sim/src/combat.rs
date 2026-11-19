@@ -1982,7 +1982,9 @@ impl Sim {
                 "destroyed" => "has been destroyed", // [undead13]
                 _ => "has been struck down",
             };
+            self.diplo.killer = Some(a); // [diplo13] who killed a merchant or envoy
             self.combat_kill(d, now, text);
+            self.diplo.killer = None; // [diplo13]
             self.combat.stats.kills += 1;
             if !self.mega.slots.is_empty() { // [mega13]
                 self.mega_blow(a, d, true); // [mega13] a megabeast's kill

@@ -426,6 +426,7 @@ impl Sim {
             }
         }
         self.trade.rep.trades.push((now, ov, rv, out.reply.clone()));
+        self.diplomacy_traded(ov, rv); // [diplo13] attitude from trade, gifts pay tribute
         out
     }
 
@@ -793,6 +794,7 @@ impl Sim {
             log.left = Some(now);
             self.trade.rep.caravans.push(log);
             self.announce(now, format!("Merchants from {civ} have arrived, but there is no trade depot."), None, AnnouncementKind::Warning);
+            self.diplomacy_caravan_arrived(e.id, now); // [diplo13] the envoy comes even without a usable depot
             return false;
         };
         let tiles = self.depot_tiles(depot);
@@ -803,6 +805,7 @@ impl Sim {
             log.left = Some(now);
             self.trade.rep.caravans.push(log);
             self.announce(now, format!("The merchants from {civ} cannot reach the trade depot."), None, AnnouncementKind::Warning);
+            self.diplomacy_caravan_arrived(e.id, now); // [diplo13] the envoy comes even without a usable depot
             return false;
         }
         self.combat_sync_units();
@@ -893,6 +896,7 @@ impl Sim {
         });
         let p = self.world.pos_of(edge as usize);
         self.announce(now, format!("A caravan from {civ} has arrived."), Some(p), AnnouncementKind::Info);
+        self.diplomacy_caravan_arrived(e.id, now); // [diplo13] liaison / diplomat travels with it
         true
     }
 
@@ -979,6 +983,7 @@ impl Sim {
         let scale = if wagons > 0 { 1 + wagons } else { 1 };
         for &(kind, sub, sel, lo, hi) in goods_list(&race) {
             let n = (lo + r.below(hi - lo + 1)) * scale;
+            let n = n * self.diplomacy_request_mult(kind, sub); // [diplo13] liaison trade agreement
             for _ in 0..n {
                 let Some(mat) = self.mat_for(sel, &mut r) else { break };
                 let q = match r.below(100) {
@@ -1033,7 +1038,7 @@ impl Sim {
         self.announce(now, "The merchants have arrived and are unloading their goods.".into(), Some(pos), AnnouncementKind::Info);
     }
 
-    fn caravan_leave(&mut self, now: u64) {
+    pub(crate) fn caravan_leave(&mut self, now: u64) { // [diplo13] merchants of a civ declaring war leave
         let Some(c) = self.trade.caravan.as_mut() else { return };
         c.leaving = true;
         c.leave_at = now;
