@@ -64,6 +64,7 @@ pub fn close() {
 fn draw_panel(g: &mut Game, r: Rect) {
     let s = g.ui.scale;
     let lh = g.ui.line_h();
+    draw_rectangle(r.x, r.y, r.w, r.h, Color::new(0.06, 0.06, 0.07, 1.0));
     panel(&mut g.ui, r);
     let pad = 10.0 * s;
     let (x, mut y) = (r.x + pad, r.y + pad);
@@ -113,7 +114,14 @@ fn draw_panel(g: &mut Game, r: Rect) {
         g.font.draw("Mandates", x, y, s, col::TEXT_HI);
         y += lh;
         let ms = g.sim.mandates();
-        if ms.is_empty() {
+        // Before the first noble pass the imported mandate texts are all there is.
+        let texts: Vec<(i32, String)> = if ms.is_empty() { g.sim.world.nobles.iter().flat_map(|n| n.mandates.iter().map(move |t| (n.holder, t.clone()))).collect() } else { Vec::new() };
+        for (holder, t) in &texts {
+            let who = g.sim.world.unit(*holder).map(|u| u.name.clone()).unwrap_or_default();
+            g.font.draw(&clip(&format!("{who}: {t}"), maxc), x + 8.0 * s, y, s, col::TEXT_CYAN);
+            y += lh;
+        }
+        if ms.is_empty() && texts.is_empty() {
             g.font.draw("none", x + 8.0 * s, y, s, col::TEXT_DIM);
             y += lh;
         }
