@@ -143,6 +143,8 @@ pub enum Screen {
     Tasks,
     /// [app10] Hauling routes (DF `D_HAULING`).
     Hauling,
+    Diplomacy, // [ui13] civilizations, demands, meetings (F2)
+    Threats, // [ui13] megabeasts, undead, werebeasts, weather (F3)
 }
 
 /// Sort order of the citizens list.
@@ -470,6 +472,7 @@ pub struct Game {
     pub r10: crate::ui::round10::R10Ui,
     /// [app12] Hauling editor, machine and siege engine sheets, power overlay, build directions.
     pub r12: crate::ui::round12::R12Ui,
+    pub r13: crate::ui::round13::R13Ui, // [ui13]
 }
 
 /// [round 6] How the game loop ended.
@@ -508,6 +511,7 @@ pub fn date_string(c: &rf_core::Calendar) -> String {
 }
 
 /// DF-style season: `Early Spring`.
+#[allow(dead_code)] // [ui13] the top bar uses Sim::season_label now
 pub fn season_string(c: &rf_core::Calendar) -> String {
     let part = ["Early", "Mid", "Late"][(c.month().rem_euclid(3)) as usize];
     format!("{part} {}", c.season_name())
@@ -659,6 +663,7 @@ impl Game {
             r9: Default::default(),
             r10: Default::default(),
             r12: Default::default(), // [app12]
+            r13: Default::default(), // [ui13]
         };
         // [round 6] Defaults from the settings for a fresh start (imports, synthetic forts).
         if loaded.new_game {
@@ -953,6 +958,7 @@ impl Game {
                 _ if crate::ui::round8::ui_arg(self, k, v) => {}
                 _ if crate::ui::round9::ui_arg(self, k, v) => {} // [app9]
                 _ if crate::ui::round12::ui_arg(self, k, v) => {} // [app12]
+                _ if crate::ui::round13::ui_arg(self, k, v) => {} // [ui13]
                 _ if crate::ui::round10::ui_arg(self, k, v) => {} // [app10]
                 _ if crate::ui::military::ui_arg(self, k, v) => {} // [mil-ui]
                 _ => eprintln!("unknown --ui state {u}"),
@@ -1130,6 +1136,7 @@ impl Game {
         self.update_hostiles();
         crate::ui::round9::update(self); // [app9] raid boxes, petitions, combat reports
         crate::ui::round4::update(self); // [round 4] caravan arrival
+        crate::ui::round13::update(self); // [ui13] threats, demands, weather poll and alerts
     }
 
     /// Keep each `run_ticks` call around 1 ms so the frame budget is respected.
@@ -1202,6 +1209,9 @@ impl Game {
         // [round 5] Inside the smooth/traffic/item menus their DESIGNATE_* keys pick the tool.
         if crate::ui::round5::submenu_keys(self) {
             return;
+        }
+        if crate::ui::round13::keys(self) {
+            return; // [ui13] F2 Diplomacy, F3 Threats, Enter closes the demand box
         }
         if crate::ui::round12::keys(self) {
             return; // [app12] Tab turns the building being placed
@@ -1467,6 +1477,8 @@ impl Game {
     pub fn escape(&mut self) {
         if self.alert.is_some() {
             self.alert = None;
+        } else if crate::ui::round13::close_popup(self) {
+            // [ui13] the demand box
         } else if self.r4.popup.is_some() {
             self.r4.popup = None;
         } else if crate::ui::round9::escape(self) {

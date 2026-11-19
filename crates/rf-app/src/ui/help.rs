@@ -72,6 +72,8 @@ pub const SECTIONS: &[(&str, &[HelpRow])] = &[
             r("Reports", &["D_ANNOUNCE"]),
             r("Tasks", &["D_JOBLIST"]),    // [app10]
             r("Hauling", &["D_HAULING"]), // [app10]
+            r("Diplomacy", &["RF_DIPLOMACY"]), // [ui13]
+            r("Threats and weather", &["RF_THREATS"]), // [ui13]
         ],
     ),
     (
@@ -397,7 +399,7 @@ mod tests {
                 }
             }
         }
-        assert!(missing.len() <= 8, "{missing:?}");
+        assert!(missing.len() <= 10, "{missing:?}"); // [ui13] +2: RF_DIPLOMACY / RF_THREATS come from add_builtin, like RF_HELP
         let r = &SECTIONS[1].1[0];
         assert_eq!(row_keys(&b, r), "Space");
         let m = mouse_rows(&b);

@@ -39,6 +39,8 @@ fn modal(g: &mut Game) -> bool {
         g.alert = None;
     } else if g.r4.popup.is_some() {
         g.r4.popup = None;
+    } else if crate::ui::round13::close_popup(g) {
+        // [ui13] the demand box
     } else if g.r9.popups.pop_front().is_some() {
         // the front announcement box
     } else if g.r10.ctx.take().is_some() {

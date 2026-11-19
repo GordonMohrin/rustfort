@@ -748,3 +748,22 @@ Speed work in round 13 (`[perf13]`, no rule change, the state hash stays the sam
 | Cavern detection (`detect_caverns`) on a bitset | OK | One linear pass marks open cavern tiles (tiletype shape looked up per tiletype, not per tile); the flood fill clears bits instead of a `Vec<bool>`. Same regions in the same order; about 4.5x faster (450 -> 90 Mcyc per season on r5). |
 | Item scans prefiltered by production class | OK | Container scans (`rebuild_containers`, `bring_containers`) and the reaction census only compare kind strings for items whose class can match; the food census asks the brew/cook tests only for food classes. |
 | Profile counters | OK | `--features prof`: production pass and per-tick pass sub-steps; coarse counters use the thread's own cycles on Windows (rdtsc counts wall time, which a busy machine inflates). |
+## Round 13 interface (`[ui13]`)
+
+Interface only: it shows what the round-13 modules report through `round13_api.rs` and sends the
+player's answers back. The rules themselves are the module owners' sections.
+
+| Item | Class | Notes |
+|---|---|---|
+| Weather and temperature in the top bar | ESTIMATE | DF v50 shows the weather and temperature on the top bar (wiki Weather, Temperature). Rustfort writes degrees Celsius from degrees Urist (U = F + 9968); DF's own wording of the temperature line is not copied. |
+| Rain, snow, fog, evil rain/cloud drawn over outside tiles | ESTIMATE | wiki Weather, Evil weather: precipitation falls only on tiles open to the sky; evil clouds drift over a region. The look (streaks, flakes, veils) is Rustfort's; DF Premium draws its own weather sprites, which are not used. |
+| Snow cover on the ground | ESTIMATE | wiki Weather: snow settles on the surface in cold seasons. Drawn as a white veil where `Sim::snow_at` is true. |
+| Moon phase names (28-day cycle, 14 = full) | ESTIMATE | wiki Werebeast: transformation at the full moon. The eight phase names are common English, not DF text. |
+| Diplomacy screen: civilizations, relation, attitude, wars | ESTIMATE | DF v50 has no single diplomacy screen; the wiki Diplomacy and Civilization pages describe relations, wars and envoys. The layout is Rustfort's; data from `Sim::diplomacy_entities`. |
+| Demands: tree quota, tribute, peace, liaison requests; Accept / Refuse | OK | wiki Diplomat (elven tree quota, tribute, peace talks), Outpost liaison (requests for next year's caravan). The answer goes to `Sim::answer_demand`; consequences are the diplomacy module's. |
+| Liaison request categories | ESTIMATE | wiki Outpost liaison: the requests list item categories. The 18 categories shown are a short list, not DF's full request screen with per-item quantities. |
+| Meetings with envoys (diplomat, liaison, elevation, land holder) | OK | wiki Diplomat, Outpost liaison, Nobles (barony/county/duchy elevation). Shown as a log. |
+| Threats screen (megabeasts, titans, forgotten beasts, sieges, undead, necromancers, werebeasts, vampires) | ESTIMATE | DF has no threats screen; it announces arrivals (wiki Megabeast, Forgotten beast, Siege, Necromancer, Werebeast, Vampire). Rustfort lists them with Go buttons. |
+| World event toggles (weather, reanimation, megabeasts, vampires, werebeasts, diplomats) | ESTIMATE | DF sets these per world (worldgen) or in d_init; Rustfort lets them change in game. |
+| Unit sheet curse markers; accusing a suspected vampire | ESTIMATE | wiki Vampire (drained corpses, interrogation and conviction unmask them; the true name shows after), Undead, Necromancer, Husk, Thrall, Werebeast. DF has no "suspected" marker; Rustfort shows the module's suspicion and the accusation goes to `Sim::accuse_vampire` instead of DF's interrogation in the justice screen. |
+| Alerts: demand box (pauses), Demands / Threats badges, status lines | ESTIMATE | DF pauses and shows a box when a diplomat or liaison wants to meet (wiki Diplomat); the badges are Rustfort's. |

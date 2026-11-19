@@ -532,4 +532,26 @@ impl Sim {
     pub fn stop_filter(&self, route: i32, stop: usize) -> Vec<String> {
         self.world.haul_routes.iter().find(|r| r.id == route).and_then(|r| r.stops.get(stop)).map(|s| s.filter.clone()).unwrap_or_default()
     }
+
+    // -------------------------------------------------------------- toggle getters [ui13]
+
+    /// Megabeast attacks on (see `set_megabeasts_enabled`). [ui13]
+    pub fn megabeasts_enabled(&self) -> bool { // [ui13]
+        !self.mega.off // [ui13]
+    } // [ui13]
+
+    /// Vampires among migrants on (see `set_vampires_enabled`). [ui13]
+    pub fn vampires_enabled(&self) -> bool { // [ui13]
+        !self.vamp.vampires_off // [ui13]
+    } // [ui13]
+
+    /// Werebeasts on (see `set_werebeasts_enabled`). [ui13]
+    pub fn werebeasts_enabled(&self) -> bool { // [ui13]
+        !self.vamp.werebeasts_off // [ui13]
+    } // [ui13]
+
+    /// Diplomats, liaisons and demands on (see `set_diplomacy_enabled`). [ui13]
+    pub fn diplomacy_enabled(&self) -> bool { // [ui13]
+        !self.diplo.off // [ui13]
+    } // [ui13]
 }
