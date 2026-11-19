@@ -1601,13 +1601,30 @@ impl Sim {
 
     fn n15_take_records(&mut self, now: u64) {
         let mut rec: Vec<(String, i32)> = Vec::new();
+        // [perf15] Small direct-mapped cache kind -> index in `rec` (checked by one string
+        // compare) in front of the binary search; cleared when an insert shifts the indices.
+        let mut hit = [u16::MAX; 64]; // [perf15]
         for (i, it) in self.world.items.iter().enumerate() {
             if self.imeta[i].dead || it.flags.construction || it.holder >= 0 && !self.unit_slot.get(&it.holder).map(|&s| self.world.units[self.ai[s].uidx].flags.citizen).unwrap_or(false) {
                 continue;
             }
+            let kb = it.kind.as_bytes(); // [perf15]
+            let h = (kb.len() ^ (*kb.first().unwrap_or(&0) as usize).wrapping_mul(7) ^ (*kb.last().unwrap_or(&0) as usize).wrapping_mul(13)) & 63; // [perf15]
+            let c = hit[h] as usize; // [perf15]
+            if c < rec.len() && rec[c].0 == it.kind { // [perf15]
+                rec[c].1 += it.stack.max(1); // [perf15]
+                continue; // [perf15]
+            } // [perf15]
             match rec.binary_search_by(|(k, _)| k.as_str().cmp(it.kind.as_str())) {
-                Ok(p) => rec[p].1 += it.stack.max(1),
-                Err(p) => rec.insert(p, (it.kind.clone(), it.stack.max(1))),
+                Ok(p) => {
+                    rec[p].1 += it.stack.max(1);
+                    hit[h] = p as u16; // [perf15]
+                }
+                Err(p) => {
+                    rec.insert(p, (it.kind.clone(), it.stack.max(1)));
+                    hit = [u16::MAX; 64]; // [perf15]
+                    hit[h] = p as u16; // [perf15]
+                }
             }
         }
         self.n15.bk.records = rec;
