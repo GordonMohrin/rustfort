@@ -427,7 +427,7 @@ fn miasma_spreads_up_stairs() {
 }
 
 #[test]
-fn miasma_lingers_two_days_after_source_removed() {
+fn miasma_lingers_after_source_removed() {
     let (mut w, _) = world();
     let p = Pos::new(22, 22, hz());
     rotten_meat(&mut w, 9840, p);
@@ -435,10 +435,10 @@ fn miasma_lingers_two_days_after_source_removed() {
     days(&mut sim, 1);
     assert!(miasma(&sim, p));
     sim.destroy_item(9840);
-    days(&mut sim, 1);
-    assert!(miasma(&sim, p));
-    days(&mut sim, 1);
-    assert!(miasma(&sim, p));
+    for _ in 0..MIASMA_LINGER_DAYS {
+        days(&mut sim, 1);
+        assert!(miasma(&sim, p), "the cloud lingers");
+    }
     days(&mut sim, 1);
     assert!(!miasma(&sim, p));
 }

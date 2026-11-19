@@ -13,7 +13,7 @@
 //! - **Miasma**: rotten items of GENERATES_MIASMA materials lying loose on Subterranean tiles
 //!   are sources; it spreads 2 tiles orthogonally and up/down, not through closed doors or
 //!   hatches (a door is open while a creature stands in it), never into 7/7 water, and
-//!   lingers 2 days after the source is gone. `lifestyle::miasma_day` takes the set.
+//!   lingers 1 day after the source is gone. `lifestyle::miasma_day` takes the set.
 //! - **Refuse**: animal corpses, body parts, bones, skins, rotten food and tattered (XX)
 //!   clothing become refuse (refuse hauling, refuse piles). Standing orders: gather refuse,
 //!   gather outdoor refuse (off by default), dump per type.
@@ -59,7 +59,8 @@ pub const REMAINS_ROT_DAYS: u16 = 14;
 pub const REMAINS_GONE_DAYS: u16 = 14;
 /// Miasma reach and how long a cloud lingers without a source (ESTIMATE).
 pub const MIASMA_RANGE: u32 = 2;
-pub const MIASMA_LINGER_DAYS: u8 = 2;
+/// 1 day: with 2 the 2-year bench gave 93 "Miasma" thoughts a month (round 13: 66, export 30-60).
+pub const MIASMA_LINGER_DAYS: u8 = 1;
 /// Wear points per level (w:Wear) and the value multiplier per level.
 pub const WEAR_LEVEL_PTS: u32 = 806_400;
 pub const WEAR_VALUE_PCT: [i32; 4] = [100, 75, 50, 25];
