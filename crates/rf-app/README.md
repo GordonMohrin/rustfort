@@ -562,7 +562,7 @@ stub they show an empty state.
   vampirism**, `Sim::accuse_vampire`; werebeast in were-form; megabeast).
 - **Alerts**: a new open demand opens a box (pauses; **Accept** / **Refuse** /
   **Diplomacy...** / **Later**; Enter, Esc or right-click close it); a blinking **Demands (n)**
-  and **Threats (n)** badge under the top bar opens the screen; new threats and evil weather
+  and **Threats (n)** badge under the top bar opens the screen (hidden while a big screen is open, so it never covers a title); new threats and evil weather
   write a status line. Monsters and sieges keep the hostile arrival alert.
 
 ### Feel round: right-click, seen hostiles, portraits (tag `[feel-ui]`)

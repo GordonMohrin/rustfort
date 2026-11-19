@@ -422,6 +422,9 @@ pub fn draw_topbar_weather(g: &mut Game, x: f32, ty: f32, h: f32) -> f32 {
 
 /// Blinking "Threats" / "Demands" badges under the top bar (below the petitions badge).
 pub fn draw_badges(g: &mut Game, top: f32) {
+    if g.screen != Screen::None {
+        return; // over a big screen the badge would cover its title; the tabs show the counts
+    }
     let s = g.ui.scale;
     let mut y = top + 4.0 * s;
     if g.r9.pet_pending > 0 && g.screen != Screen::Petitions {
@@ -564,13 +567,16 @@ fn attitude_bar(g: &Game, x: f32, y: f32, w: f32, a: i32) {
 fn draw_civs(g: &mut Game, body: Rect) {
     let s = g.ui.scale;
     let lh = g.ui.line_h();
-    let ents = g.r13.entities.clone();
+    let mut ents = g.r13.entities.clone();
+    // Own civilization first, then the named ones (real civilizations), then nameless entities.
+    ents.sort_by_key(|e| (e.relation != "Own", e.name.is_empty()));
     if ents.is_empty() {
         g.font.draw("No civilizations known yet (the world's entities come with the import).", body.x, body.y, s, col::TEXT_DIM);
         return;
     }
     if g.r13.ent_sel.map(|id| !ents.iter().any(|e| e.id == id)).unwrap_or(true) {
         g.r13.ent_sel = ents.iter().find(|e| e.relation == "Own").or(ents.first()).map(|e| e.id);
+        g.r13.scroll = ents.iter().position(|e| Some(e.id) == g.r13.ent_sel).unwrap_or(0); // scrolled into view
     }
     let lw = (body.w * 0.5).floor();
     let list = Rect::new(body.x, body.y, lw - 10.0 * s, body.h);
@@ -666,8 +672,11 @@ fn draw_civs(g: &mut Game, body: Rect) {
                 None => g.r13.requests.push((e.id, v)),
             }
         }
-        g.font.draw(&clip("The liaison arrives with the autumn caravan and takes these home.", dc), dx, y, s, col::TEXT_DIM);
-        y += lh + 6.0 * s;
+        for l in super::round9::wrap("The liaison arrives with the autumn caravan and takes these home.", dc) {
+            g.font.draw(&l, dx, y, s, col::TEXT_DIM);
+            y += lh;
+        }
+        y += 6.0 * s;
     }
     // Their demands and meetings.
     let open: Vec<Demand> = g.r13.demands.iter().filter(|d| d.entity_id == e.id && d.answer.is_none()).cloned().collect();
@@ -694,14 +703,11 @@ fn draw_demands(g: &mut Game, body: Rect) {
     // Open first, newest first.
     ds.sort_by(|a, b| a.answer.is_some().cmp(&b.answer.is_some()).then(b.id.cmp(&a.id)));
     if ds.is_empty() {
-        let mut y = body.y;
-        for l in [
-            "No demands or offers.",
-            "Diplomats of other civilizations come with their caravans: elves set tree quotas, humans may ask",
-            "for tribute, and a civilization at war may offer peace. Your own civilization's outpost liaison asks",
-            "what the fortress wants with next year's caravan (Civilizations tab).",
-        ] {
-            g.font.draw(l, body.x, y, s, if y == body.y { col::TEXT } else { col::TEXT_DIM });
+        g.font.draw("No demands or offers.", body.x, body.y, s, col::TEXT);
+        let mut y = body.y + lh;
+        let t = "Diplomats of other civilizations come with their caravans: elves set tree quotas, humans may ask for tribute, and a civilization at war may offer peace. Your own civilization's outpost liaison asks what the fortress wants with next year's caravan (Civilizations tab).";
+        for l in super::round9::wrap(t, (body.w / (GW * s)) as usize) {
+            g.font.draw(&l, body.x, y, s, col::TEXT_DIM);
             y += lh;
         }
         return;
@@ -729,17 +735,27 @@ fn draw_demands(g: &mut Game, body: Rect) {
         if d.due > 0 {
             extra.push(if d.due > now { format!("due in {} days", (d.due - now).div_ceil(DAY)) } else { "overdue".into() });
         }
-        if !extra.is_empty() {
-            let t = extra.join(", ");
-            g.font.draw(&t, body.x + g.font.width(&head, s) + 12.0 * s, y, s, col::TEXT_CYAN);
+        let room = maxc.saturating_sub(head.chars().count() + 2);
+        if !extra.is_empty() && room > 3 {
+            let t = clip(&extra.join(", "), room);
+            g.font.draw(&t, body.x + g.font.width(&clip(&head, maxc), s) + 12.0 * s, y, s, col::TEXT_CYAN);
         }
         y += lh;
-        let text = if d.text.is_empty() { String::new() } else { d.text.clone() };
-        for l in super::round9::wrap(&text, maxc).into_iter().take(2) {
-            g.font.draw(&l, body.x + 2.0 * GW * s, y, s, col::TEXT);
+        // Text and hint share the three lines under the head (the hint wraps when the text is short).
+        let tc = maxc.saturating_sub(2);
+        let text = super::round9::wrap(&d.text, tc);
+        let hint = super::round9::wrap(&demand_hint(d), tc);
+        let nt = text.len().min(if hint.len() > 1 { 1 } else { 2 });
+        for l in text.iter().take(nt) {
+            g.font.draw(l, body.x + 2.0 * GW * s, y, s, col::TEXT);
             y += lh;
         }
-        g.font.draw(&clip(&demand_hint(d), maxc), body.x + 2.0 * GW * s, y, s, col::TEXT_DIM);
+        for (i, l) in hint.iter().take(3 - nt).enumerate() {
+            let l = if i + 1 == 3 - nt && hint.len() > 3 - nt { clip(&format!("{l} ..."), tc) } else { l.clone() };
+            g.font.draw(&l, body.x + 2.0 * GW * s, y, s, col::TEXT_DIM);
+            y += lh;
+        }
+        let _ = y;
         // Buttons or the answer.
         let bw = 14.0 * GW * s;
         let bx = body.x + body.w - 2.0 * bw - 6.0 * s;
@@ -833,10 +849,10 @@ fn draw_threats(g: &mut Game) {
     let ts = g.r13.threats.clone();
     g.font.draw(&format!("Active threats ({})", ts.len()), left.x, left.y, s, col::BORDER_HI);
     let mut y = left.y + lh + 4.0 * s;
-    let list_h = (left.h * 0.55).max(4.0 * lh);
+    let list_h = if ts.is_empty() { 2.0 * lh } else { (left.h * 0.55).max(4.0 * lh) }; // no gap when empty
     let mut go: Option<(Option<Pos>, i32)> = None;
     if ts.is_empty() {
-        g.font.draw("None. The fortress is safe for now.", left.x, y, s, col::TEXT_GOOD);
+        g.font.draw("None reported (hostile arrivals also show in the top bar).", left.x, y, s, col::TEXT_DIM);
     } else {
         let row_h = 2.0 * lh + 6.0 * s;
         let area = Rect::new(left.x, y, left.w, list_h);
