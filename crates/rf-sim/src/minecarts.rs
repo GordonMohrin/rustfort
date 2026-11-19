@@ -1484,6 +1484,15 @@ impl Sim {
         if ub >= ua {
             return false; // the cart ahead is as fast: no impact
         }
+        if b.state != CartState::Moving && self.carts.jobs.iter().any(|jb| jb.cart == b.item) {
+            // [perf13] A standing cart that dwarves are loading, unloading, pushing or fetching
+            // stays put (their jobs hold it); the hitter stops against it.
+            let c = &mut self.carts.carts[k];
+            c.v = 0;
+            c.prog = len - 1;
+            self.carts.stats.cart_collisions += 1;
+            return true;
+        }
         let ma = self.load_weight(a.item).max(1) as i64;
         let mb = self.load_weight(b.item).max(1) as i64;
         let va = ((ma - mb) * ua + 2 * mb * ub) / (ma + mb);
