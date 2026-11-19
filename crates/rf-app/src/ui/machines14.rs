@@ -10,7 +10,7 @@ use super::{checkbox, clip, col, text_button, BtnState};
 use crate::font::GH;
 use crate::game::{Game, Screen, Selected};
 use macroquad::prelude::*;
-use rf_core::{Building, PlateInfo, Pos};
+use rf_core::{Building, PlateInfo};
 use rf_sim::machines14_api::PlateSettings;
 use rf_sim::DevKind;
 use std::cell::Cell;
