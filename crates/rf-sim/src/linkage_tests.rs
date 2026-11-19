@@ -560,3 +560,107 @@ fn link_job_with_a_vanished_end_is_dropped() {
     sim.run_ticks(201);
     assert!(sim.link_jobs().is_empty(), "the trigger is gone: the job is dropped");
 }
+
+#[test]
+fn support_brought_down_by_a_lever_frees_its_tile() {
+    let (mut w, _) = walled_hall();
+    let z = hall_z();
+    let p = Pos::new(22, 21, z);
+    w.buildings.push(building(1501, "Support", "", p.x, p.y, p.x, p.y, z));
+    w.buildings.push(building(1502, "Trap", "Lever", 20, 20, 20, 20, z));
+    let mut sim = quiet(w);
+    assert!(!sim.is_walkable(p), "a support blocks its tile");
+    sim.link_building_now(1502, 1501).unwrap();
+    sim.pull_lever_now(1502);
+    sim.run_ticks(2);
+    assert!(sim.world.building(1501).is_none());
+    assert!(sim.is_walkable(p), "the support is gone: its tile is free again");
+}
+
+#[test]
+fn imported_open_wall_grate_is_passable_and_closes_on_off() {
+    let (mut w, gap) = walled_hall();
+    let mut g = building(1600, "GrateWall", "", gap.x, gap.y, gap.x, gap.y, gap.z);
+    g.flags = vec!["OPEN".into()];
+    g.links = vec![1601];
+    let mut l = building(1601, "Trap", "Lever", 20, 20, 20, 20, gap.z);
+    l.flags = vec!["ACTIVE".into()];
+    l.links = vec![1600];
+    w.buildings.push(g);
+    w.buildings.push(l);
+    let mut sim = quiet(w);
+    sim.run_ticks(1);
+    assert!(sim.is_walkable(gap), "an open grate is no wall");
+    sim.pull_lever_now(1601); // off: closes after 100
+    sim.run_ticks(102);
+    assert!(!sim.is_walkable(gap), "closed");
+    sim.remove_building(1600);
+    sim.run_ticks(2);
+    assert!(sim.is_walkable(gap), "a removed grate gives its tile back");
+}
+
+#[test]
+fn closed_floor_bars_carry_walkers_over_a_gap() {
+    let (mut w, _) = walled_hall();
+    let z = hall_z();
+    let p = Pos::new(22, 18, z);
+    let open = w.tiletypes.by_name("OpenSpace").unwrap();
+    w.tile_mut(p).unwrap().tt = open;
+    w.tile_mut(p.offset(0, 0, -1)).unwrap().tt = open; // a two-level drop
+    w.buildings.push(building(1700, "BarsFloor", "", p.x, p.y, p.x, p.y, z));
+    w.buildings.push(building(1701, "Trap", "Lever", 20, 20, 20, 20, z));
+    let mut sim = quiet(w);
+    sim.run_ticks(1);
+    assert!(sim.is_walkable(p), "closed floor bars are a floor");
+    sim.link_building_now(1701, 1700).unwrap();
+    sim.pull_lever_now(1701); // on: opens after 100
+    sim.run_ticks(102);
+    assert!(!sim.is_walkable(p), "open floor bars leave the gap");
+}
+
+#[test]
+fn plate_closing_and_half_done_link_job_survive_a_save() {
+    let (mut sim, _gap, plate) = plate_door(&[], None);
+    let hz = plate.z;
+    sim.world.buildings.push(building(805, "Door", "", 29, 27, 29, 27, hz));
+    sim.world.buildings.push(building(806, "Trap", "Lever", 28, 22, 28, 22, hz));
+    let t = sim.world.idx(Pos::new(29, 25, hz)).unwrap();
+    for _ in 0..2 {
+        sim.create_item("TRAPPARTS", 0, t, "mechanism".into());
+    }
+    let uidx = sim.ai[0].uidx;
+    sim.world.units[uidx].labors.push("MECHANIC".into());
+    sim.ai[0].labors |= crate::labor::MECHANIC;
+    sim.run_ticks(2);
+    sim.link_building(806, 805).unwrap();
+    let s = creature(&mut sim, plate.offset(-1, 0, 0), 60_000, false);
+    step(&mut sim, s, plate);
+    sim.run_ticks(3);
+    step(&mut sim, s, plate.offset(-1, -1, 0));
+    // Run until the plate is closing and the mechanic is busy with the job.
+    let mut ok = false;
+    for _ in 0..400 {
+        sim.run_ticks(1);
+        let busy = sim.link_jobs().first().map(|j| j.worker.is_some()).unwrap_or(false);
+        let closing = sim.plate_state(901).map(|p| p.closing_in.is_some()).unwrap_or(false);
+        if busy && closing {
+            ok = true;
+            break;
+        }
+        if sim.plate_state(901).map(|p| !p.pressed).unwrap_or(true) {
+            // The plate closed before the mechanic started: press it again.
+            step(&mut sim, s, plate);
+            sim.run_ticks(2);
+            step(&mut sim, s, plate.offset(-1, -1, 0));
+        }
+    }
+    assert!(ok, "a plate closing while a link job is in progress");
+    let snap = sim.exact_snapshot();
+    let mut w = sim.world.clone();
+    w.sim_exact = snap;
+    let mut b = Sim::new(w, 7);
+    assert_eq!(b.restore_mode(), "exact");
+    sim.run_ticks(500);
+    b.run_ticks(500);
+    assert_eq!(sim.state_hash(), b.state_hash());
+}

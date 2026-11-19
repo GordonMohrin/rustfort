@@ -250,6 +250,8 @@ pub(crate) struct Linkage {
     /// Jammed doors and floodgates (building ids, sorted).
     pub jammed: Vec<i32>,
     pub stats: LinkStats,
+    /// Tiles whose nav state follows a grate, bars or support: (tile, building id), sorted.
+    pub navdev: Vec<(u32, i32)>,
     #[serde(skip)]
     scratch: Vec<(i32, bool)>,
 }
@@ -290,6 +292,7 @@ impl Sim {
     pub(crate) fn linkage_tick(&mut self, now: u64) {
         if self.world.buildings.len() != self.link.nb || now % 100 == 59 {
             self.link_sync_plates();
+            self.link_sync_nav();
         }
         if now % 100 == 61 && !self.link.plates.is_empty() {
             self.link_rescan_plates();
@@ -521,6 +524,52 @@ impl Sim {
         self.link.stats.changes += 1;
     }
 
+    /// Grates and bars block (wall) or carry (floor) while closed, supports always block;
+    /// deconstructed ones give their tiles back. Imported open grates and player-built devices
+    /// get the nav state of their flags here.
+    pub(crate) fn link_sync_nav(&mut self) {
+        let mut want: Vec<(u32, i32, bool, bool)> = Vec::new(); // (tile, bid, wall, floor)
+        for (bi, b) in self.world.buildings.iter().enumerate() {
+            if !b.built {
+                continue;
+            }
+            let (wall, floor) = match b.kind.as_str() {
+                "GrateWall" | "BarsVertical" => (!has(&b.flags, "OPEN"), false),
+                "GrateFloor" | "BarsFloor" => (false, !has(&b.flags, "OPEN")),
+                "Support" => (true, false),
+                _ => continue,
+            };
+            for t in self.link_tiles(bi) {
+                want.push((t, b.id, wall, floor));
+            }
+        }
+        if want.is_empty() && self.link.navdev.is_empty() {
+            return;
+        }
+        want.sort_unstable();
+        let old = std::mem::take(&mut self.link.navdev);
+        for &(t, bid) in &old {
+            if want.binary_search_by(|w| (w.0, w.1).cmp(&(t, bid))).is_err() {
+                let i = t as usize;
+                if self.nav.is_blocked_tile(i) || self.nav.floor_override(i) {
+                    self.nav.set_blocked(i, false);
+                    self.nav.set_floor_override(i, false);
+                    self.after_tile_change(i);
+                }
+            }
+        }
+        for &(t, _, wall, floor) in &want {
+            let i = t as usize;
+            if self.nav.is_blocked_tile(i) != wall || self.nav.floor_override(i) != floor {
+                self.nav.set_blocked(i, wall);
+                self.nav.set_floor_override(i, floor);
+                self.after_tile_change(i);
+            }
+        }
+        self.link.navdev = want.iter().map(|w| (w.0, w.1)).collect();
+        self.link_settle_nav();
+    }
+
     fn link_settle_nav(&mut self) {
         if self.nav.suspect {
             self.nav.rebuild_components();
@@ -597,6 +646,7 @@ impl Sim {
         }
         self.remove_building(bid);
         self.defense_scan();
+        self.link_sync_nav();
         if k == DevKind::Support {
             let mut changed: Vec<usize> = tiles.iter().map(|&t| t as usize).collect();
             for &t in tiles {

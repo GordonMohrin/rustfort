@@ -489,6 +489,5 @@ mod tests {
         assert_eq!(next_step(10_000, false), 10_000);
         assert_eq!(state_word(DevKind::Bridge, true), "raised");
         assert_eq!(pending_word(DevKind::Spikes, false), "extending");
-        let _ = Pos::new(0, 0, 0);
     }
 }
