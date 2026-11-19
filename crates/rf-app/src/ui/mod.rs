@@ -10,6 +10,7 @@ pub mod build;
 pub mod building;
 pub mod burrows;
 pub mod devices; // [round 4]
+pub mod health15; // [health15] fort health overview, medical rows of the unit sheet
 pub mod help; // [round 6]
 pub mod labor;
 pub mod military;

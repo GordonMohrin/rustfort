@@ -81,7 +81,7 @@ fn icon_or(g: &mut Game, name: &str, r: Rect, fb: Ico) {
 
 // ------------------------------------------------------------------ Places
 
-const PLACE_TABS: &[&str] = &["Locations", "Zones", "Stockpiles", "Workshops", "Farm plots"];
+const PLACE_TABS: &[&str] = &["Locations", "Zones", "Stockpiles", "Workshops", "Farm plots", "Health"]; // [health15] Health
 
 pub fn draw_places(g: &mut Game) {
     let s = g.ui.scale;
@@ -103,7 +103,8 @@ pub fn draw_places(g: &mut Game) {
         1 => draw_zones(g, body),
         2 => draw_buildings(g, body, |k| k == "Stockpile"),
         3 => draw_buildings(g, body, |k| k == "Workshop" || k == "Furnace"),
-        _ => draw_buildings(g, body, |k| k == "FarmPlot"),
+        4 => draw_buildings(g, body, |k| k == "FarmPlot"), // [health15] explicit arm
+        _ => super::health15::draw_health(g, body), // [health15]
     }
     // Pickers on top.
     if let Some(zone) = g.r8.pl_make {

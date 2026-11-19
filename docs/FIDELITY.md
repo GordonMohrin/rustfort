@@ -628,3 +628,29 @@ Seams only: no rule is simulated yet; each module owner adds its own section bel
 | Entity attitude `EntityInfo::attitude` | MISSING | Field only (wiki Diplomacy); set by `diplomacy`. |
 | Hauling route stop item filter `HaulStop::filter` | MISSING | Stored and editable through the API; minecarts do not apply it yet (wiki Hauling route: stop conditions and desired items). |
 | Moon phase (`Sim::moon_phase`) | MISSING | Stub returns 0; wiki Werebeast (full moon). |
+
+## [health15] Hospital and medicine depth
+
+Spec `docs/mechanics/health15.md`. Module `crates/rf-sim/src/health15/`, API `health15_api.rs`, UI Places > Health and the unit health tab.
+
+| Item | Class | Notes |
+|---|---|---|
+| v50 hospital locations (meeting zones assigned to a hospital location) count as hospitals, alongside hospital civzones | OK | wiki Hospital; the reference fort's hospital is a location on a meeting zone. |
+| Hospital furniture: beds, tables, chests (box/cabinet), traction benches inside the zones | OK | wiki Hospital, Traction bench. |
+| Hospital supplies: 7 kinds, desired counts, chests earmarked by position, haulers stock them, care jobs prefer stocked items | OK / ESTIMATE | wiki Hospital; default desired counts and the unit conversions (thread/cloth/powder/soap units) are ESTIMATE. Imported from `locations[].supplies`. |
+| Sutures stay sewn into the patient; splints, casts and crutches stay with the patient | OK | measured in the reference fort: thread carriers equal sutured dwarves. Dressing cloth is still consumed (MISSING: kept as bandage). |
+| Soap: 15 units per cleaning, a bar lasts 10 cleanings | ESTIMATE | wiki Soap gives only "used for cleaning". |
+| Plaster powder: kiln reaction, gypsum-class boulder + empty bag, product kept in the bag | OK | raws `MAKE_PLASTER_POWDER` (reaction_other.txt); fuel handling as the other kiln reactions. |
+| Cast needs plaster powder, an empty bucket and water nearby; cloth | OK / ESTIMATE | wiki Cast; the bucket and water are only checked, not walked to (ESTIMATE); duration ESTIMATE. |
+| Fracture classes: displaced (needs setting), compound (surgery before setting), overlapping (traction bench) | OK / ESTIMATE | wiki DF2014 Health care, Traction bench; the class thresholds and the 1/4 overlap roll are ESTIMATE. |
+| Unset fractures worsen; immobilized fractures do not force bed rest | OK / ESTIMATE | wiki Splint; worsening rate ESTIMATE. |
+| Overlapping fracture rebreaks when the patient leaves the traction bench early | OK | Toady One (DF dev notes). |
+| Cloth slings for minor non-weight-bearing parts | ESTIMATE | |
+| Per-tissue HEALING_RATE (bone about 10x slower than skin, nerves never) | OK | raws tissue_template_default.txt; exported as layer `healing_rate`; rest and hospital bonus ESTIMATE. |
+| Motor/sensory nerve damage, permanent; imported from exported wounds and scars | OK / ESTIMATE | wiki Nerve; odds per muscle wound (1/6) ESTIMATE. |
+| Motor loss of a stance part: cannot stand; crutch for leg function loss; no crutch for spinal injury | OK | wiki Crutch. |
+| Crutch walking penalty x2 falling to x1 at Legendary+5 (crutch walker skill); crawl speed 2990/900 of walking | OK shape / ESTIMATE base | wiki Crutch walker; the crawl ratio from the creature gaits in the raws. The exporter does not export the crawl gait yet (MISSING). |
+| Treatment success by skill (suture, set bone, surgery, cleaning); surgery off a table halves the skill | ESTIMATE / OK | wiki Surgeon (table). The percentages are ESTIMATE. |
+| Chief medical dwarf: health screen only, no rule effect | OK | wiki DF2014 Chief medical dwarf; we show the screen without one (UI choice). |
+| Severity tiers in the health screen | OK | wiki Health screen. |
+| Water quality for cleaning, wound necrosis, moving patients to tables, inventory modes in the export | MISSING | |
