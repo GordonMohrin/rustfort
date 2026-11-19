@@ -1,7 +1,7 @@
 //! [diplo13] Run an imported fort headless and report its diplomacy (round 13).
 //!
 //!   cargo run -p rf-sim --release --example diplomacy -- [--export <dir>] [--ticks 806400]
-//!       [--seed 1] [--answer accept|refuse]
+//!       [--seed 1] [--answer accept|refuse] [--no-invasions]
 //!
 //! Prints the meetings, demands (with answers), the land title, the diplomacy report and the
 //! attitude/relation of every trading or warring civilization. `--answer` answers every open
@@ -29,6 +29,9 @@ fn main() {
         }
     }
     let mut sim = Sim::new(world, seed);
+    if args.iter().any(|a| a == "--no-invasions") {
+        sim.set_invasions(false);
+    }
     let start = Instant::now();
     let mut done = 0u64;
     while done < ticks {
@@ -48,6 +51,7 @@ fn main() {
     }
     let (felled, quotas) = sim.tree_quota();
     println!("trees felled this year: {felled}, quotas {quotas:?}, tribute owed {:?}", sim.tribute_owed());
+    println!("citizens alive: {}", sim.world.citizens().count());
     println!("land title: {:?}", sim.land_title());
     println!("report: {:?}", sim.diplomacy_report());
     println!("meetings:");
