@@ -102,6 +102,10 @@ pub(crate) struct Diplo {
     pub last_season: i32,
     /// Units of land holders appointed here, for the UI: (title level, unit).
     pub holders: Vec<(u8, i32)>,
+    /// Attacker slot of the combat blow that is killing a unit right now (set by `strike`,
+    /// taken by `diplomacy_unit_died` in the same call chain; never outlives it).
+    #[serde(skip)]
+    pub killer: Option<usize>,
 }
 
 fn clamp_att(a: i32) -> i32 {
@@ -233,6 +237,7 @@ impl Sim {
             .trade
             .caravan
             .as_ref()
+            .filter(|c| c.civ_id == entity) // a caravan that found no depot was never set up
             .and_then(|c| c.members.first())
             .map(|m| self.world.units[self.ai[m.slot as usize].uidx].id)
             .unwrap_or(-1);
@@ -298,6 +303,7 @@ impl Sim {
     /// [hook] `Sim::kill`: a unit died. Merchants, envoys and visitors of other civilizations
     /// killed on the map anger their civilization (natural deaths do not).
     pub(crate) fn diplomacy_unit_died(&mut self, s: usize, why: &str) {
+        let killer = self.diplo.killer.take();
         if self.diplo.off || !self.diplo.init {
             return;
         }
@@ -305,7 +311,14 @@ impl Sim {
         if u.flags.hostile || u.flags.citizen || u.flags.animal || u.civ_id < 0 || !(u.flags.merchant || u.flags.visitor) {
             return;
         }
-        if why.contains("old age") || why.contains("starved") || why.contains("dehydration") {
+        // Only deaths the fort caused count: struck down by a fort dwarf, or crushed by the
+        // fort's drawbridge. Goblins ambushing a caravan or a cave-in do not anger the civ.
+        let by_fort = match killer {
+            // Merchants and visitors run as workers too: only citizens count as the fort.
+            Some(k) => k != s && k < self.ai.len() && { let f = &self.world.units[self.ai[k].uidx].flags; f.citizen && !f.hostile },
+            None => why.contains("drawbridge"),
+        };
+        if !by_fort {
             return;
         }
         let (civ, id) = (u.civ_id, u.id);
@@ -500,6 +513,10 @@ impl Sim {
         // A due caravan of theirs does not come.
         if self.trade.due.as_ref().map(|d| d.1.id == entity).unwrap_or(false) {
             self.trade.due = None;
+        }
+        // Their merchants on the map pack up and leave at once.
+        if self.trade.caravan.as_ref().map(|c| c.civ_id == entity && !c.leaving).unwrap_or(false) {
+            self.caravan_leave(now);
         }
         self.diplo.rep.wars_declared += 1;
         let name = self.diplo_entity_name(entity);
@@ -941,6 +958,35 @@ mod tests {
         s.world.nobles.clear();
         assert!(s.force_envoy(12, false).is_none());
         assert_eq!(s.diplomacy_meetings().last().unwrap().state, "Missed");
+    }
+
+    #[test]
+    fn only_merchants_killed_by_the_fort_count() {
+        let mut s = sim();
+        let slots: Vec<usize> = (0..s.ai.len()).filter(|&k| s.ai[k].kind == crate::Kind::Worker).collect();
+        assert!(slots.len() >= 3);
+        let (victim, dwarf) = (slots[0], slots[1]);
+        let u = &mut s.world.units[s.ai[victim].uidx];
+        u.flags.citizen = false;
+        u.flags.merchant = true;
+        u.civ_id = 12;
+        // Killed by something that is not the fort (no attacker recorded): ignored.
+        s.diplomacy_unit_died(victim, "has been struck down");
+        assert!(s.diplo.deaths.is_empty());
+        // Struck down by another merchant (not a citizen): ignored.
+        let other = s.ai[slots[2]].uidx;
+        s.world.units[other].flags.citizen = false;
+        s.diplo.killer = Some(slots[2]);
+        s.diplomacy_unit_died(victim, "has been struck down");
+        assert!(s.diplo.deaths.is_empty());
+        // Struck down by a fort dwarf: counts.
+        s.diplo.killer = Some(dwarf);
+        s.diplomacy_unit_died(victim, "has been struck down");
+        assert_eq!(s.diplo.deaths.len(), 1);
+        assert!(s.diplo.killer.is_none());
+        // The drawbridge is the fort's doing too.
+        s.diplomacy_unit_died(victim, "has been crushed by a drawbridge");
+        assert_eq!(s.diplo.deaths.len(), 2);
     }
 
     #[test]

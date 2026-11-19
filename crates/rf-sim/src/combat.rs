@@ -1975,7 +1975,9 @@ impl Sim {
                 "brain" | "head" => "has been struck down",
                 _ => "has been struck down",
             };
+            self.diplo.killer = Some(a); // [diplo13] who killed a merchant or envoy
             self.combat_kill(d, now, text);
+            self.diplo.killer = None; // [diplo13]
             self.combat.stats.kills += 1;
             return true;
         }

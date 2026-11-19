@@ -1038,7 +1038,7 @@ impl Sim {
         self.announce(now, "The merchants have arrived and are unloading their goods.".into(), Some(pos), AnnouncementKind::Info);
     }
 
-    fn caravan_leave(&mut self, now: u64) {
+    pub(crate) fn caravan_leave(&mut self, now: u64) { // [diplo13] merchants of a civ declaring war leave
         let Some(c) = self.trade.caravan.as_mut() else { return };
         c.leaving = true;
         c.leave_at = now;
