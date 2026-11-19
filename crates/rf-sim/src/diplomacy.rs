@@ -673,7 +673,7 @@ impl Sim {
         } else {
             self.diplo.rep.refused += 1;
         }
-        let _ = player;
+        let _ = player; // reserved: the UI may show who answered
         let year_end = now + (TICKS_PER_YEAR - self.world.calendar.year_tick).max(0) as u64;
         match (kind, accept) {
             (DemandKind::Request, true) => {
@@ -684,10 +684,8 @@ impl Sim {
             (DemandKind::Request, false) => {}
             (DemandKind::TreeQuota, true) => {
                 self.diplo.quotas.retain(|q| q.0 != civ);
-                let over = self.diplo.felled > amount;
                 // Trees felled earlier this year count against it (wiki: yearly allowance).
                 self.diplo.quotas.push((civ, amount, false));
-                let _ = over;
                 self.diplo_shift(civ, 5);
             }
             (DemandKind::TreeQuota, false) => {
