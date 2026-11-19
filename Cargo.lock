@@ -905,7 +905,7 @@ checksum = "d902046e6a28a1e4c3cab97258a0ce11e994903f01c2d97a9447a0b3df85f4f6"
 
 [[package]]
 name = "rf-app"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "bincode",
  "crc32fast",
@@ -926,14 +926,14 @@ dependencies = [
 
 [[package]]
 name = "rf-core"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "rf-gfx"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "image 0.25.10",
  "rf-core",
@@ -944,7 +944,7 @@ dependencies = [
 
 [[package]]
 name = "rf-import"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "rf-core",
  "serde",
@@ -953,7 +953,7 @@ dependencies = [
 
 [[package]]
 name = "rf-raws"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "rf-core",
  "windows 0.58.0",
@@ -961,14 +961,14 @@ dependencies = [
 
 [[package]]
 name = "rf-save-v09"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "rf-sim"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "bincode",
  "rayon",

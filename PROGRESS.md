@@ -6,6 +6,41 @@ DFHack exports in date order (table in [docs/VALIDATION.md](docs/VALIDATION.md))
 87 citizens) is the main one. These exports are not distributed. Speeds are headless ticks per
 second on a 6-core desktop CPU, often measured while other builds were running.
 
+## v0.15.0 (2026-11-20): fire and magma, preferences and item value, rot and vermin, deeper medicine, noble mandates and demands
+
+Every topic was first analyzed as a DF mechanics spec (`docs/mechanics/<topic>.md`, from the wiki and the raws), then implemented and adversarially reviewed.
+
+- **Fire, temperature and magma** (`fire15/`, `docs/mechanics/fire15.md`):
+  - Material heat properties are imported from the raws: ignition, melting and boiling points, specific heat, fixed temperatures.
+  - Items and units heat up next to magma and fire. Burning tiles spread fire to grass, trees and flammable items. Wood and other flammable materials burn; metals melt; magma-safe shells survive.
+  - Dragonfire and fire breath ignite their targets; burning units take damage and panic.
+  - Fire overlay in the UI.
+- **Preferences, quality and item value** (`prefs.rs`, `item_value.rs`, `mood_prefs.rs`, `docs/mechanics/prefs15.md`):
+  - Unit preferences (materials, items, creatures, colors) are exported from DF and imported.
+  - Item value follows DF v50: base value, material value, quality multiplier, decorations.
+  - Seeing, using or admiring preferred things gives the right thoughts. Strange moods use preferences when they pick materials.
+  - Preferences shown on the unit sheet.
+- **Rot, miasma, refuse, vermin and wear** (`decay15`, `docs/mechanics/decay15.md`):
+  - Rot timers for food and corpses, corpse stages, miasma from rotting matter that spreads underground and lingers for a day.
+  - Refuse orders, cat patrols, vermin that eat from the rot map, armor and clothing wear (including combat wear).
+- **Medicine** (`health15`, `docs/mechanics/health15.md`):
+  - Hospital zones with supply stocking (thread, cloth, splints, crutches, plaster, soap, buckets).
+  - Tissue healing rates from the raws, fracture classes, splints, casts, traction benches, nerve damage, crutches and permanent outcomes.
+  - Health overview screen and medical rows in the unit list.
+- **Nobles** (`nobles15`, `docs/mechanics/nobles15.md`):
+  - Room requirements of each position (office, bedroom, dining room, tomb), mandates (production and export bans) and demands, with unhappy thoughts and complaints when they are not met.
+  - Bookkeeper accuracy levels and weekly records, manager work orders.
+  - Requirements panel with rooms, mandates, demands and the bookkeeper level.
+- **Speed:** the new modules first cost 21 % (77k ticks/s). The hospital stocking pass scanned all items once per supply kind; it now scans a per-kind cache, and the bookkeeper's record scan caches its kind lookups. No behaviour change.
+- **Result:**
+  - 2-year bench on r5: state hash 0ddb72d437334a83 (1 and N threads), changed on purpose by the new mechanics. More dwarves survive the two years than in v0.14 (67 vs 57 alive).
+  - Speed about 101k ticks/s against 105k for v0.14 (measured alternating); the difference comes from the extra living units. Scale with 487 citizens: 42.2k ticks/s.
+  - 707 tests pass; save/load IDENTICAL; chaos harness 8 seeds, 0 panics.
+- **Known gaps:**
+  - Vermin are a simplified model (no individual vermin entities or species behaviour).
+  - Miasma only from materials that generate it in the raws.
+  - The animal census and a few other passes still scan all items by kind string; a per-item kind code would speed them up.
+
 ## v0.14.0 (2026-11-19): levers and pressure plates like DF, machine construction, DF music and sounds
 
 Every topic was first analyzed as a DF mechanics spec (`docs/mechanics/<topic>.md`, from the wiki and the raws), then implemented and adversarially reviewed.
