@@ -269,16 +269,19 @@ fn pools(world: &World) -> Pools {
     }
     let prefstring = world.creature_raws.iter().any(|c| c.flags.iter().any(|f| f == "HAS_PREFSTRING"));
     for c in &world.creature_raws {
-        let has = |f: &str| c.flags.iter().any(|x| x == f);
+        // The exporter writes DFHack creature flags: caste tokens appear as `HAS_ANY_<TOKEN>`
+        // (`HAS_ANY_VERMIN_HATEABLE`, `HAS_ANY_COMMON_DOMESTIC`); raws use the bare token.
+        let has = |f: &str| c.flags.iter().any(|x| x == f || x.strip_prefix("HAS_ANY_") == Some(f));
         if has("VERMIN_HATEABLE") {
             p.hateable.push(c.token.clone());
         }
-        if c.token == "DWARF" || has("MEGABEAST") || has("TITAN") || has("UNIQUE_DEMON") || has("FEATURE_BEAST") || has("EQUIPMENT_WAGON") {
+        if c.token == "DWARF" || has("MEGABEAST") || has("TITAN") || has("UNIQUE_DEMON") || has("DEMON") || has("FEATURE_BEAST") || has("EQUIPMENT_WAGON") {
             continue;
         }
         if has("COMMON_DOMESTIC") || has("PET") {
             p.domestic.push(c.token.clone());
-        } else if !prefstring || has("HAS_PREFSTRING") {
+        } else if has("HAS_PREFSTRING") || (!prefstring && !has("INTELLIGENT_SPEAKS")) {
+            // Without prefstring data: no civilized races (they have no [PREFSTRING]) ESTIMATE.
             p.wild.push(c.token.clone());
         }
     }
@@ -485,15 +488,19 @@ impl Sim {
         if from >= n {
             return;
         }
-        if self.world.units[from..].iter().any(wants_prefs) {
-            let pools = pools(&self.world);
-            for i in from..n {
-                if wants_prefs(&self.world.units[i]) {
-                    let v = derive_with(&self.world, &self.world.units[i], &pools);
+        let pools = if self.world.units[from..].iter().any(wants_prefs) { Some(pools(&self.world)) } else { None };
+        for i in from..n {
+            match &pools {
+                Some(pools) if wants_prefs(&self.world.units[i]) => {
+                    let v = derive_with(&self.world, &self.world.units[i], pools);
                     self.world.units[i].preferences = v;
                     self.prefs.rep.derived_units += 1;
-                } else if self.world.units[i].preferences.iter().any(|p| !p.derived) {
-                    self.prefs.rep.exported_units += 1;
+                }
+                _ => {
+                    // Counted also when no unit of the batch needs derived ones.
+                    if self.world.units[i].preferences.iter().any(|p| !p.derived) {
+                        self.prefs.rep.exported_units += 1;
+                    }
                 }
             }
         }

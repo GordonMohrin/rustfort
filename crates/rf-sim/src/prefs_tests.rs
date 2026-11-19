@@ -329,3 +329,57 @@ fn unit_preferences_api_lists_lines() {
     let _ = Pos::new(0, 0, 0);
     let _ = Item { flags: ItemFlags::default(), ..Default::default() };
 }
+
+/// [prefs15] verifier: the exporter writes DFHack creature flags (`HAS_ANY_VERMIN_HATEABLE`,
+/// `HAS_ANY_COMMON_DOMESTIC`, `HAS_ANY_DEMON`), not the caste tokens of the raws.
+#[test]
+fn derived_creature_preferences_read_exported_flags() {
+    let mut w = World::synthetic(48, 48, 20);
+    let raw = |t: &str, f: &str| rf_core::CreatureRaw { token: t.into(), flags: vec![f.into(), "HAS_ANY_RACE_GAIT".into()], ..Default::default() };
+    w.creature_raws = vec![
+        raw("BAT", "HAS_ANY_VERMIN_HATEABLE"),
+        raw("RAT", "HAS_ANY_VERMIN_HATEABLE"),
+        raw("DOG", "HAS_ANY_COMMON_DOMESTIC"),
+        raw("GOBLIN", "HAS_ANY_INTELLIGENT_SPEAKS"),
+        raw("DEMON_1", "HAS_ANY_DEMON"),
+        raw("TROUT", "HAS_ANY_NATURAL_ANIMAL"),
+    ];
+    let s = Sim::new(w, 5);
+    let mut liked_dog = 0;
+    for u in s.world.units.iter().filter(|u| u.race == "DWARF") {
+        let hated: Vec<&str> = u.preferences.iter().filter(|p| p.kind == "HateCreature").map(|p| p.token.as_str()).collect();
+        assert_eq!(hated.len(), 1, "always one hated vermin");
+        assert!(hated[0] == "BAT" || hated[0] == "RAT");
+        for p in u.preferences.iter().filter(|p| p.kind == "LikeCreature") {
+            assert!(p.token != hated[0], "never likes the hated creature");
+            assert!(["DOG", "TROUT", "BAT", "RAT"].contains(&p.token.as_str()), "{}", p.token);
+            liked_dog += (p.token == "DOG") as u32;
+        }
+    }
+    assert!(liked_dog > 0, "the domestic pool is filled");
+}
+
+/// [prefs15] verifier: exported preferences are counted even when no unit needs derived ones.
+#[test]
+fn exported_units_counted_without_derived_ones() {
+    let mut w = World::synthetic(48, 48, 20);
+    let mut n = 0;
+    for u in w.units.iter_mut().filter(|u| u.race == "DWARF") {
+        u.preferences = vec![like("LikeMaterial", |p| p.mat = 0)];
+        n += 1;
+    }
+    let s = Sim::new(w, 5);
+    assert_eq!(s.prefs_report().derived_units, 0);
+    assert_eq!(s.prefs_report().exported_units, n);
+}
+
+/// [prefs15] verifier: derived colors / shapes / forms are placeholders, not names to show.
+#[test]
+fn derived_placeholders_are_not_shown_as_names() {
+    let s = sim();
+    for u in s.world.units.iter().filter(|u| u.race == "DWARF") {
+        for l in s.unit_preferences(u.id) {
+            assert!(!l.text.contains('#'), "{}", l.text);
+        }
+    }
+}

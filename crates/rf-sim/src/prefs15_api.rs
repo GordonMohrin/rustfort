@@ -76,11 +76,23 @@ impl Sim {
                 "HateCreature" => ("dislike", format!("hates {}", self.creature_name(&p.token))),
                 "LikePlant" | "LikeTree" => ("plant", format!("likes {}", p.token.to_ascii_lowercase().replace('_', " "))),
                 "LikeFood" => ("food", if p.item_type == "DRINK" { format!("likes to drink {}", mat()) } else { format!("likes to eat {}", mat()) }),
+                // Derived colors / shapes / forms are placeholders (`COLOR#12`): no name to show.
+                "LikeColor" if p.descriptor.is_empty() || p.descriptor.contains('#') => ("other", "likes a certain color".to_string()),
+                "LikeShape" if p.descriptor.is_empty() || p.descriptor.contains('#') => ("other", "likes a certain shape".to_string()),
                 "LikeColor" => ("other", format!("likes the color {}", p.descriptor.to_ascii_lowercase().replace('_', " "))),
                 "LikeShape" => ("other", format!("likes the shape {}", p.descriptor.to_ascii_lowercase().replace('_', " "))),
-                "LikePoeticForm" => ("other", format!("likes a poetic form ({})", p.descriptor)),
-                "LikeMusicalForm" => ("other", format!("likes a musical form ({})", p.descriptor)),
-                "LikeDanceForm" => ("other", format!("likes a dance form ({})", p.descriptor)),
+                "LikePoeticForm" | "LikeMusicalForm" | "LikeDanceForm" => {
+                    let what = match p.kind.as_str() {
+                        "LikePoeticForm" => "poetic",
+                        "LikeMusicalForm" => "musical",
+                        _ => "dance",
+                    };
+                    if p.descriptor.is_empty() || p.descriptor.contains('#') {
+                        ("other", format!("likes a certain {what} form"))
+                    } else {
+                        ("other", format!("likes a {what} form ({})", p.descriptor))
+                    }
+                }
                 k => ("other", k.to_string()),
             };
             out.push(PrefLine { group, text: if p.active { text } else { format!("{text} (inactive)") }, derived: p.derived });
