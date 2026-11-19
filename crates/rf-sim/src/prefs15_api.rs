@@ -61,7 +61,10 @@ impl Sim {
         for p in &u.preferences {
             let mat = || {
                 if p.mat == rf_core::NO_MAT {
-                    "something not found here".to_string()
+                    match p.mat_token.strip_prefix('?').filter(|c| !c.is_empty()) {
+                        Some(c) => format!("a {c} not found here"),
+                        None => "something not found here".to_string(),
+                    }
                 } else {
                     self.world.material(p.mat).map(|m| m.name.clone()).unwrap_or_else(|| p.mat_token.to_ascii_lowercase())
                 }

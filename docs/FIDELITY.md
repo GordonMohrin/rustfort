@@ -628,3 +628,35 @@ Seams only: no rule is simulated yet; each module owner adds its own section bel
 | Entity attitude `EntityInfo::attitude` | MISSING | Field only (wiki Diplomacy); set by `diplomacy`. |
 | Hauling route stop item filter `HaulStop::filter` | MISSING | Stored and editable through the API; minecarts do not apply it yet (wiki Hauling route: stop conditions and desired items). |
 | Moon phase (`Sim::moon_phase`) | MISSING | Stub returns 0; wiki Werebeast (full moon). |
+
+## [prefs15] Preferences, item quality and item value
+
+Spec: [docs/mechanics/prefs15.md](mechanics/prefs15.md). Code: `rf-sim/src/prefs.rs`,
+`item_value.rs`, `mood_prefs.rs`, `prefs15_api.rs`; UI `rf-app/src/ui/prefs15.rs`. A/B switch
+`Sim::set_prefs_enabled(false)` restores the old preference-free rules (item values stay v50).
+
+| Rule | Source | Class | Notes |
+|---|---|---|---|
+| Unit preferences from the export (`units.jsonl: preferences`, round 15) | w:Preferences | OK | `rf_core::Unit::preferences`; exporter reads `soul.preferences` read-only. |
+| Derived preferences when the export has none: one stone, metal, gem, alcohol and hated vermin always; wood 1/5, glass 1/7, leather 1/3, ..., color 1/2, shape 1/5, item groups 1/3 (clothing 1/7), domestic / wild creature 1/2, tree 1/50, plant 1/10, forms 1/2, foods (meat 1/2, cheese 1/10, plant 1/7, powder 1/5, seed 1/7) | w:Preferences | ESTIMATE | Wiki chances; seeded by unit id + facets (not the sim seed). Stone/metal/gem/wood drawn over the world counts of the vanilla raws (86/26/127/trees) so a liked material is often "not found here"; facets only seed the RNG (wiki ties none). Fish, extracts, growths, pearl not drawn. Only dwarves. |
+| Quality roll dice `rand(0..N)` inclusive | w:Skill (item quality formula) | OK | Was exclusive (F2): every roll 1-3 points low. |
+| +10 points per matching item preference and per matching material preference | w:Skill | OK | Workshop products (`skills_job_done`). Item match: DF item type + subtype ("" = any); material: exact palette index. |
+| Engraving quality | w:Engraving | ESTIMATE | Keeps the old estimate roll, no preference bonus (the wiki does not name engravings among the formula's skills). |
+| Item value `floor(base x mat x {1, 1.1, 1.2, 4/3, 1.5, 2, 20}) + {0, 3, 6, 10, 15, 30, 300}`, x stack | w:Item value, w:Item quality/Table | OK | Was the pre-v50 x1..x120 table (F3). Used for new products, caravan goods, created wealth, trade fallback, artifacts. Changes created wealth and therefore siege/migrant triggers. |
+| Base values (log/boulder 3, bar/block/tanned hide/shoes/gloves 5, thread/rough 6, cloth 7, cut gem/traction bench 20, window/statue 25, mechanism 30, cauldron/minecart/wheelbarrow/stepladder 50, rest 10) | w:Item value | OK | Checked against the reference export (spec 4.1). Millstone 25: ESTIMATE. |
+| Engravings and room tiles keep the old multipliers | w:Engraving, w:Zone | OK | `trade::quality_mult`. |
+| Prepared meal value `(1 x mult + bonus) + 2` per unit | w:Item value | ESTIMATE | Rustfort tracks no ingredient list. |
+| Decoration value: base 20 (cut gem) / 10 at the decoration's quality | w:Decoration | OK | Only mood artifacts carry decorations so far. |
+| Artifact value `floor(base x mat x 20) + 300` + each decoration at artifact quality | w:Item value, export | OK | Measured on the export's artifacts. |
+| Admiring furniture: no quality gate; pleasure from the value in the dwarf's eyes, `value x (1 + matches)` (item type, material) | w:Preferences, w:Item quality | OK / ESTIMATE | Severity = perceived value as in the export. Chance 1/7 per daily think near furniture, 1 day cooldown: ESTIMATE (calibration target 2.5 per citizen per 28 days). Caption tiers 50/250/1000: ESTIMATE. Image shapes, decorations, maker race, dye: MISSING. Sculpture garden ("arranged"): MISSING. |
+| AdmireArt need met by admiring | w:Personality need | OK | Engravings near the dwarf: MISSING. |
+| Satisfied at work only with a liked material, item or creature; never with CHEER_PROPENSITY <= 24 | w:Thought, w:Personality facet | OK | Hooks: workshop products, digging/felling/gathering (tile material), engraving. Once a day per dwarf: ESTIMATE. Animal jobs, construction, cooking: MISSING. |
+| GoodDrink only for a liked booze; GoodMeal if liked or worth >= 20; level by value 5/25/100/200/400; EatGoodMeal likewise; SameFood/SameBooze never for liked food | w:Thought, w:Personality need, w:Kitchen | OK / ESTIMATE | A meal counts as its main material (no ingredients). Liked food gets at least level 1. "4 in a row" kept at Rustfort's 3: ESTIMATE. |
+| AcquireObject met by storing a trade good in a stockpile or bin; AcquiredItem thought if the need was unmet | w:Personality need | ESTIMATE | Depot hauling: MISSING. Thought only when the need was below 0: ESTIMATE. |
+| BeExtravagant met by putting on a worn item of quality >= 1 | w:Personality need | OK | |
+| Mood skill names `BONECARVE`, `CUTGEM`, `ENCRUSTGEM` | w:Strange mood, export | OK | Were misspelt (F6): bone carvers and jewelers never got their own mood. |
+| Mood artifact type from the wiki list of the skill; a liked item type on the list always wins | w:Strange mood | OK | Picked at mood start (DF: at the end, unless forced): ESTIMATE-equivalent. "Any weapon/trap component" resolve to one subtype; † entries weigh 0.1. Perfect gems: MISSING. |
+| Bone carvers use shells iff they like a shell | w:Strange mood | OK | Was a 1/3 estimate. |
+| Metalworkers demand a liked metal the fort has smelted (not melted) | w:Strange mood | OK | Adamantine/divine metal, cloth and glass classes from preferences: MISSING. |
+| Decorations never repeat the base type; miners, engravers, masons and stonecrafters never ask for blocks | w:Strange mood | OK | Glass only if produced, macabre bones, jeweler single gem: MISSING. |
+| Rooms in the owner's eyes, liked caged creatures, pets, noble mandates/demands from preferences, art images, ArtDefacement, item decorations | w:Preferences, w:Mandate, w:Demand, w:Pet | MISSING | Spec P4/P5; `prefs15_api::unit_likes_item` is ready for owners. |

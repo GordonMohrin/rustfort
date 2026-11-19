@@ -205,7 +205,11 @@ fn unit_sheet(g: &mut Game, id: i32, r: Rect) {
         let rows = match g.unit_tab {
             4 => super::psyche::thoughts_rows(g, &u),
             5 => super::psyche::needs_rows(g, &u),
-            6 => super::psyche::personality_rows(g, &u),
+            6 => {
+                let mut rows = super::psyche::personality_rows(g, &u); // [prefs15]
+                rows.extend(super::prefs15::preference_rows(g, &u)); // [prefs15]
+                rows // [prefs15]
+            } // [prefs15]
             7 => {
                 // [round 5] Treatment right after the status block, like DF's health screen.
                 let mut rows = super::psyche::health_rows(g, &u);

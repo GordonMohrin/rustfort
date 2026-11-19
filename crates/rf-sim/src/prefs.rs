@@ -45,7 +45,7 @@ pub(crate) fn admire_tier(v: i64) -> i32 {
 /// Admire chance per daily social think when furniture is near (ESTIMATE, calibrated to the
 /// export's ~2.5 admire thoughts per citizen per 28 days).
 pub(crate) const ADMIRE_NUM: u32 = 1;
-pub(crate) const ADMIRE_DEN: u32 = 4;
+pub(crate) const ADMIRE_DEN: u32 = 7;
 const DAY: u64 = 1200;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -338,13 +338,19 @@ fn derive_with(world: &World, u: &Unit, p: &Pools) -> Vec<UnitPreference> {
         }
     };
     // Exactly one stone, metal and gem.
-    for (pool, n) in [(&p.stone, N_STONE), (&p.metal, N_METAL), (&p.gem, N_GEM)] {
+    let class = |mut u: UnitPreference, c: &str| {
+        if u.mat == NO_MAT {
+            u.mat_token = format!("?{c}");
+        }
+        u
+    };
+    for (pool, n, c) in [(&p.stone, N_STONE, "stone"), (&p.metal, N_METAL, "metal"), (&p.gem, N_GEM, "gem")] {
         let m = world_draw(&mut r, pool, n);
-        out.push(like_mat(world, "LikeMaterial", m, ""));
+        out.push(class(like_mat(world, "LikeMaterial", m, ""), c));
     }
     if r.chance(1, 5) {
         let m = world_draw(&mut r, &p.wood, p.n_wood);
-        out.push(like_mat(world, "LikeMaterial", m, ""));
+        out.push(class(like_mat(world, "LikeMaterial", m, ""), "wood"));
     }
     for (pool, num, den) in &p.optional {
         if r.chance(*num, *den) {
