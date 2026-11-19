@@ -792,3 +792,38 @@ fn rot_and_vermin_state_round_trip_exact_save() {
     b.run_ticks(10 * 1200);
     assert_eq!(sim.state_hash(), b.state_hash());
 }
+
+// ------------------------------------------------------------------ verifier regressions
+
+/// Two sources: the union of both 2-tile reaches is miasma, even where the first source's
+/// cloud already touched the tile the second one spreads through.
+#[test]
+fn miasma_reach_is_the_union_of_all_sources() {
+    let (mut w, _) = world();
+    rotten_meat(&mut w, 10400, Pos::new(20, 22, hz()));
+    rotten_meat(&mut w, 10401, Pos::new(23, 22, hz()));
+    for (id, y) in [(953, 21), (954, 23)] {
+        w.buildings.push(Building { id, kind: "Door".into(), x1: 23, y1: y, x2: 23, y2: y, z: hz(), center: Pos::new(23, y, hz()), built: true, owner: -1, ..Default::default() });
+    }
+    let mut sim = sim_of(w, 26);
+    for a in &mut sim.ai {
+        a.pos = 0;
+    }
+    days(&mut sim, 1);
+    assert_eq!(sim.decay.miasma_src.len(), 2);
+    // (22,21) is 3 tiles from the first source but 2 from the second (via (22,22)).
+    assert!(miasma(&sim, Pos::new(22, 21, hz())), "2 tiles from the second source");
+}
+
+/// Rotten food hauled to a refuse pile keeps rotting and rots away (it is not protected
+/// like fresh food in a stockpile), so it is not a permanent miasma source.
+#[test]
+fn rotten_food_on_refuse_pile_rots_away() {
+    let (mut w, _) = world();
+    let p = Pos::new(22, 22, hz());
+    rotten_meat(&mut w, 10410, p);
+    let mut sim = sim_of(w, 27);
+    sim.create_stockpile(p, p, &["refuse"]);
+    days(&mut sim, ROT_AWAY_DAYS as u32 + 1);
+    assert!(!alive(&sim, 10410), "rotten food on a refuse pile rots away");
+}

@@ -538,8 +538,10 @@ impl Sim {
                 drop.push(id);
                 continue;
             }
+            // Once rotten, food keeps rotting wherever it lies (a refuse pile does not stop it,
+            // or rotten food would be a miasma source forever).
             let exposed = match st.class {
-                C_FOOD | C_PLANT | C_FISH_RAW => !self.decay_rot_safe(i),
+                C_FOOD | C_PLANT | C_FISH_RAW => st.stage >= 1 || !self.decay_rot_safe(i),
                 _ => true,
             };
             if exposed {
@@ -913,38 +915,39 @@ impl Sim {
         set.clear();
         reached.clear();
         let mut nb = [0u32; crate::nav::MAX_NEIGHBORS];
+        // One multi-source BFS: the cloud is the union of every source's 2-tile reach (a
+        // per-source BFS with a shared visited set cut off tiles behind another source's edge).
+        frontier.clear();
         for k in 0..self.decay.miasma_src.len() {
             let src = self.decay.miasma_src[k];
-            if !set.insert(src) {
-                continue;
+            if set.insert(src) {
+                reached.push(src);
+                frontier.push(src);
             }
-            reached.push(src);
-            frontier.clear();
-            frontier.push(src);
-            for _ in 0..MIASMA_RANGE {
-                next.clear();
-                for &t in &frontier {
-                    let (x, y, z) = self.nav.xyz(t as usize);
-                    let n = self.nav.neighbors(t as usize, &mut nb);
-                    for &q in &nb[..n] {
-                        let (qx, qy, qz) = self.nav.xyz(q as usize);
-                        let ortho = qz == z && (qx.abs_diff(x) + qy.abs_diff(y)) == 1;
-                        let vert = qx == x && qy == y && qz != z;
-                        if !ortho && !vert {
-                            continue;
-                        }
-                        let tile = &self.world.tiles[q as usize];
-                        if tile.flags & tile_flags::OUTSIDE != 0 || tile.liquid & liquid::DEPTH_MASK >= 7 || self.decay_door_closed(q) {
-                            continue;
-                        }
-                        if set.insert(q) {
-                            reached.push(q);
-                            next.push(q);
-                        }
+        }
+        for _ in 0..MIASMA_RANGE {
+            next.clear();
+            for &t in &frontier {
+                let (x, y, z) = self.nav.xyz(t as usize);
+                let n = self.nav.neighbors(t as usize, &mut nb);
+                for &q in &nb[..n] {
+                    let (qx, qy, qz) = self.nav.xyz(q as usize);
+                    let ortho = qz == z && (qx.abs_diff(x) + qy.abs_diff(y)) == 1;
+                    let vert = qx == x && qy == y && qz != z;
+                    if !ortho && !vert {
+                        continue;
+                    }
+                    let tile = &self.world.tiles[q as usize];
+                    if tile.flags & tile_flags::OUTSIDE != 0 || tile.liquid & liquid::DEPTH_MASK >= 7 || self.decay_door_closed(q) {
+                        continue;
+                    }
+                    if set.insert(q) {
+                        reached.push(q);
+                        next.push(q);
                     }
                 }
-                std::mem::swap(&mut frontier, &mut next);
             }
+            std::mem::swap(&mut frontier, &mut next);
         }
         reached.sort_unstable();
         let cloud = &mut self.decay.cloud;
