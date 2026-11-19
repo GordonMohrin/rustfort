@@ -1371,6 +1371,7 @@ impl Sim {
                 let n = &mut self.world.nobles[k];
                 n.token = "MAYOR".into();
                 n.name = "mayor".into();
+                crate::nobles15::adopt_raws(n); // [nobles15] the EL's exported numbers are not the mayor's
                 // The position is new: announce even if the expedition leader wins.
                 n.holder = -1;
                 self.elect(k, now);

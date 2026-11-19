@@ -659,3 +659,90 @@ fn runs_are_deterministic_and_save_cleanly() {
     let parts = a.exact_parts();
     assert!(parts.iter().any(|(k, v)| *k == "nobles15" && !v.is_empty()));
 }
+
+// ---------------------------------------------------------------- verifier regressions
+
+/// Workshop products are created by `create_item`, not `push_item`: a mason's thrones must
+/// still count towards a "Make 2 chairs" mandate.
+#[test]
+fn workshop_products_fulfil_mandates() {
+    let mut w = World::synthetic(48, 48, 20);
+    let (cx, cy) = (24i16, 24i16);
+    w.buildings.push(Building {
+        id: 600,
+        kind: "Workshop".into(),
+        subtype: "Masons".into(),
+        x1: cx + 4,
+        y1: cy + 2,
+        x2: cx + 6,
+        y2: cy + 4,
+        z: HZ,
+        center: Pos::new(cx + 5, cy + 3, HZ),
+        built: true,
+        owner: -1,
+        jobs: vec![rf_core::BuildingJob { job: "ConstructThrone".into(), repeat: true, order_id: -1, ..Default::default() }],
+        ..Default::default()
+    });
+    for k in 0..6 {
+        w.items.push(Item { id: 7100 + k, kind: "BOULDER".into(), mat: 0, stack: 1, pos: Pos::new(cx + 2, cy - 4 + k as i16, HZ), container: -1, holder: -1, building: -1, flags: rf_core::ItemFlags { on_ground: true, ..Default::default() }, ..Default::default() });
+    }
+    w.nobles = vec![noble("MAYOR", 1)];
+    let mut sim = ready(w, 31);
+    sim.set_standing_orders(false);
+    sim.n15.mandates.push(mandate(1, false, "CHAIR", "", 2, 20 * MONTH));
+    sim.run_ticks(12 * DAY as u32);
+    let made = sim.world.items.iter().filter(|i| i.kind == "CHAIR").count();
+    assert!(made >= 2, "the mason made {made} thrones");
+    assert_eq!(sim.n15.rep.mandates_met, 1, "workshop products fulfil the mandate");
+}
+
+/// The expedition leader's entry renamed to MAYOR must not keep the EL's exported zeros.
+#[test]
+fn mayor_from_renamed_expedition_leader_gets_mayor_numbers() {
+    let mut el = noble("EXPEDITION_LEADER", 1);
+    el.flags = vec!["IS_LEADER".into(), "DUTY_BOUND".into()];
+    el.responsibilities = vec!["MEET_WORKERS".into()];
+    el.precedence = 110;
+    assert_eq!(pos_req(&el).mandate_max, 0);
+    el.token = "MAYOR".into();
+    adopt_raws(&mut el);
+    let r = pos_req(&el);
+    assert_eq!((r.mandate_max, r.demand_max, r.bedroom, r.office, r.precedence), (1, 2, 500, 500, 60));
+    assert!(r.meets_workers);
+}
+
+/// DF 53.16 gave ~2 complaints a year at ~150 citizens (OBSERVED): the daily chance must say so.
+#[test]
+fn complaint_rate_matches_the_observation() {
+    let per_year = 150.0 * (TICKS_PER_YEAR / TICKS_PER_DAY) as f64 / COMPLAINT_BASE as f64;
+    assert!((1.8..=2.2).contains(&per_year), "{per_year} complaints a year at 150 citizens");
+}
+
+/// A mayor who is also baron keeps his baron mandates when voted out as mayor.
+#[test]
+fn lost_election_keeps_other_positions_mandates() {
+    let mut w = World::synthetic(48, 48, 20);
+    w.nobles = vec![noble("MAYOR", 1), noble("BARON", 1)];
+    let mut sim = ready(w, 32);
+    sim.n15.mandates.push(mandate(1, false, "CHAIR", "", 1, 10 * DAY));
+    let mut b = mandate(1, false, "TABLE", "", 1, 10 * DAY);
+    b.position = "BARON".into();
+    sim.n15.mandates.push(b);
+    sim.world.nobles[0].holder = 3;
+    let s3 = slot(&sim, 3);
+    sim.nobles15_elected(s3, 1, true, 100);
+    assert_eq!(sim.n15.mandates.len(), 1);
+    assert_eq!(sim.n15.mandates[0].position, "BARON");
+}
+
+/// Orders queued for the manager do not stay blocked when the noble module is switched off.
+#[test]
+fn pending_orders_released_when_module_off() {
+    let mut w = World::synthetic(48, 48, 20);
+    w.nobles = vec![noble("MANAGER", 2)];
+    let mut sim = ready(w, 33);
+    sim.n15.pending.push(77);
+    assert!(sim.nobles15_order_pending(77));
+    sim.set_nobles15_enabled(false);
+    assert!(!sim.nobles15_order_pending(77));
+}

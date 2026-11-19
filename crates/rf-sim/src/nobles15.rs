@@ -9,11 +9,11 @@
 //!
 //! Hooks (every one tagged `// [nobles15]` at its call site):
 //! - `nobles15_pass` from `tick_inner` every `N15_PERIOD` ticks (phase `N15_PHASE`);
-//! - `nobles15_item_made` from `production::push_item` (mandate fulfilment);
+//! - `nobles15_job_done` from `production` job completion (mandate fulfilment);
 //! - `nobles15_items_traded` from `trade` (export bans), `nobles15_depot_hauled` (who hauled);
 //! - `nobles15_sentence` / `nobles15_exempt` from `justice::convict_impl`;
 //! - `nobles15_room_feel` from the social bedroom/dining thoughts;
-//! - `nobles15_elected` / `nobles15_drop_holder` from `population::elect`.
+//! - `nobles15_elected` from `population::elect`; `adopt_raws` when the EL becomes MAYOR.
 
 use crate::rng::Rng;
 use crate::social::Class;
@@ -42,8 +42,9 @@ pub const DEMAND_DUE: u64 = 6 * MONTH;
 pub const DEMAND_FORGET: u64 = 3 * YEAR;
 /// ESTIMATE: an overdue demand angers the noble once a week.
 pub const DEMAND_ANGER_EVERY: u64 = 7 * DAY;
-/// ESTIMATE: a complaint per day comes with chance citizens / COMPLAINT_BASE (~2 a year at 150).
-pub const COMPLAINT_BASE: u32 = 50_000;
+/// ESTIMATE: a complaint per day comes with chance citizens / COMPLAINT_BASE: 150 citizens x
+/// 336 days / 25 200 = 2 a year (OBSERVED 2 in year 279 at ~150 citizens).
+pub const COMPLAINT_BASE: u32 = 25_200;
 /// ESTIMATE: above this many citizens the manager validates work orders in his office.
 pub const MANAGER_OFFICE_POP: usize = 20;
 /// ESTIMATE: ticks of office work per validated order, divided by 1 + ORGANIZATION / 5.
@@ -618,7 +619,7 @@ impl Sim {
 
     /// [hook] `run_orders`: the order waits for validation.
     pub(crate) fn nobles15_order_pending(&self, id: i32) -> bool {
-        !self.n15.pending.is_empty() && self.n15.pending.contains(&id)
+        !self.n15.pending.is_empty() && self.n15.pending.contains(&id) && self.nobles15_active() && !self.social_is_off()
     }
 
     // ------------------------------------------------------------------ pass
@@ -946,9 +947,10 @@ impl Sim {
         None
     }
 
-    /// [hook] `production::push_item`: an item came into being. Made by the fort (value not
+    /// An item came into being outside a workshop job (tests): made by the fort (value not
     /// yet set, maker a citizen or nobody; caravan goods arrive with a value) -> fulfils
     /// matching production mandates (by type, not material: w:Mandate).
+    #[cfg(test)]
     pub(crate) fn nobles15_item_made(&mut self, it: &rf_core::Item) {
         if self.n15.mandates.is_empty() || it.value != 0 {
             return;
@@ -959,15 +961,20 @@ impl Sim {
                 return;
             }
         }
-        for m in &mut self.n15.mandates {
-            if m.export_ban || m.amount_remaining <= 0 || m.item_type != it.kind {
-                continue;
-            }
-            if !m.item_subtype.is_empty() && m.item_subtype != it.subtype {
-                continue;
-            }
-            m.amount_remaining -= it.stack.max(1);
-            break;
+        count_made(&mut self.n15.mandates, &it.kind, &it.subtype, it.stack);
+    }
+
+    /// [hook] `production` job completion: the items a workshop job just made (ids from
+    /// `first` on) fulfil matching production mandates. Workshop products are created by
+    /// `create_item`, which bypasses `push_item`, so this is the path crafted goods take.
+    pub(crate) fn nobles15_job_done(&mut self, first: i32) {
+        if self.n15.mandates.is_empty() || !self.nobles15_active() {
+            return;
+        }
+        for id in first..self.next_item_id {
+            let Some(&i) = self.item_idx.get(&id) else { continue };
+            let it = &self.world.items[i as usize];
+            count_made(&mut self.n15.mandates, &it.kind, &it.subtype, it.stack);
         }
     }
 
@@ -1101,7 +1108,7 @@ impl Sim {
             self.n15.rep.elected += 1;
             self.feel(s, "Elected", Class::Pos, 200, -1, 0, now);
             if old >= 0 {
-                self.nobles15_drop_holder(old);
+                self.n15_drop_mayor(old);
             }
         } else {
             self.n15.rep.reelected += 1;
@@ -1111,11 +1118,14 @@ impl Sim {
         }
     }
 
-    /// End all mandates and demands of `unit` (death, lost election).
-    pub(crate) fn nobles15_drop_holder(&mut self, unit: i32) {
+    /// A mayor voted out loses the mandates he made as mayor (w:Mandate); his demands end too
+    /// unless he still holds another position.
+    fn n15_drop_mayor(&mut self, unit: i32) {
         let before = self.n15.mandates.len();
-        self.n15.mandates.retain(|m| m.noble != unit);
-        self.n15.demands.retain(|d| d.noble != unit);
+        self.n15.mandates.retain(|m| !(m.noble == unit && m.position == "MAYOR"));
+        if !self.world.nobles.iter().any(|n| n.holder == unit) {
+            self.n15.demands.retain(|d| d.noble != unit);
+        }
         if before != self.n15.mandates.len() {
             self.n15_sync_texts();
         }
@@ -1523,7 +1533,7 @@ impl Sim {
 
     /// Work orders need validation by the manager above `MANAGER_OFFICE_POP` citizens.
     pub(crate) fn nobles15_order_needs_validation(&self) -> bool {
-        !self.n15.off && self.pop_counts().0 > MANAGER_OFFICE_POP
+        self.nobles15_active() && !self.social_is_off() && self.pop_counts().0 > MANAGER_OFFICE_POP
     }
 
     /// Every pass: the manager, if he has an office, validates pending orders.
@@ -1604,6 +1614,38 @@ impl Sim {
         self.n15.bk.recorded_at = now;
         self.n15.rep.records_made += 1;
     }
+}
+
+/// Count a made item towards the first matching production mandate (type, not material).
+fn count_made(mandates: &mut [MandateRt], kind: &str, subtype: &str, stack: i32) {
+    for m in mandates.iter_mut() {
+        if m.export_ban || m.amount_remaining <= 0 || m.item_type != kind {
+            continue;
+        }
+        if !m.item_subtype.is_empty() && m.item_subtype != subtype {
+            continue;
+        }
+        m.amount_remaining -= stack.max(1);
+        break;
+    }
+}
+
+/// A position renamed in place (the expedition leader's entry becoming MAYOR at 50
+/// citizens) keeps the old position's exported numbers; give it the new token's raws values.
+pub(crate) fn adopt_raws(n: &mut NoblePosition) {
+    let Some(&(_, v, prec, _)) = VANILLA.iter().find(|v| v.0 == canon_token(&n.token)) else { return };
+    n.required_office = v[0];
+    n.required_bedroom = v[1];
+    n.required_dining = v[2];
+    n.required_tomb = v[3];
+    n.required_boxes = v[4];
+    n.required_cabinets = v[5];
+    n.required_racks = v[6];
+    n.required_stands = v[7];
+    n.demand_max = v[8];
+    n.mandate_max = v[9];
+    n.precedence = prec;
+    n.flags.retain(|f| f != "HAS_BEEN_REPLACED");
 }
 
 fn is_furniture(kind: &str) -> bool {

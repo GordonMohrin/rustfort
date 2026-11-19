@@ -2329,7 +2329,6 @@ impl Sim {
 
     /// Append an item with its sim metadata (no pile/haul bookkeeping).
     pub(crate) fn push_item(&mut self, mut it: Item) -> usize {
-        self.nobles15_item_made(&it); // [nobles15] mandate fulfilment (before the value is set)
         self.war_item_made(&mut it); // [war9] created wealth
         let (pcl, plant) = self.classify(&it);
         let id = it.id;
@@ -2417,6 +2416,7 @@ impl Sim {
                     }
                 }
                 self.skills_job_done(s, rec.skill, first_new, now); // [skills9] quality roll, 30 (+30 quality) XP
+                self.nobles15_job_done(first_new); // [nobles15] mandate fulfilment by workshop products
                 self.prod.done[recipe as usize] += 1;
                 // Remove the queue entry (repeat jobs stay), count the order.
                 if let Some(si) = self.prod.shops.iter().position(|sh| sh.bid == bid) {
