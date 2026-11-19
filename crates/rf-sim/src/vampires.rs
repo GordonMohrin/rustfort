@@ -17,7 +17,8 @@
 //! - **Werebeasts**: the curse (`Unit::curse == "WEREBEAST"`, `curse_race` the were-form)
 //!   makes a unit turn into its were-form on the full-moon day (moon phase 14 of 0..=27) and
 //!   back the day after. In were-form it drops its gear and attacks everyone (combat runs it as
-//!   a hostile). Werebeasts from the wilds may attack at a full moon (`WERE_ATTACK_CHANCE`); after
+//!   a hostile). Werebeasts from the wilds may attack at a full moon (`WERE_ATTACK_CHANCE`, only with
+//!   invasions on and at least `WERE_ATTACK_MIN_POP` citizens); after
 //!   the full moon they leave the map. Visitors may carry the curse hidden
 //!   (`WERE_VISITOR_CHANCE`). A creature wounded by a were-form's attack that survives is
 //!   infected and turns at the next full moon.
@@ -52,6 +53,9 @@ pub(crate) const WITNESS_SEE: (u32, u32) = (1, 2);
 pub(crate) const WITNESS_RANGE: i32 = 6;
 /// Estimate: a werebeast from the wilds attacks at a full moon.
 pub(crate) const WERE_ATTACK_CHANCE: (u32, u32) = (1, 36);
+/// Estimate: wild attacks need invasions on and the first invasion tier's population (20,
+/// wiki Difficulty "Hamlet"); a tiny new fort is not hunted by night creatures.
+pub(crate) const WERE_ATTACK_MIN_POP: usize = 20;
 /// Estimate: a new visitor secretly carries the werebeast curse.
 pub(crate) const WERE_VISITOR_CHANCE: (u32, u32) = (1, 60);
 /// Moon phase of the full moon (contract: 0..=27, 14 = full).
@@ -377,7 +381,7 @@ impl Sim {
         let full = self.moon_now() == FULL_MOON;
         if full {
             let mut r = Rng::for_unit(self.seed, 0, self.abs_day() as u64, 0x7A3B_0005);
-            if r.chance(WERE_ATTACK_CHANCE.0, WERE_ATTACK_CHANCE.1) && self.ai.iter().any(|a| a.kind == Kind::Worker) {
+            if r.chance(WERE_ATTACK_CHANCE.0, WERE_ATTACK_CHANCE.1) && self.invasions_enabled() && self.world.citizens().count() >= WERE_ATTACK_MIN_POP {
                 self.spawn_were_attacker(now);
             }
             for k in 0..self.vamp.weres.len() {
