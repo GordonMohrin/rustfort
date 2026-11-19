@@ -86,8 +86,11 @@ pub(crate) mod wf {
     pub const TORN: u16 = 16;
     pub const BLEEDING: u16 = 32;
     pub const ARTERY: u16 = 64;
-    pub const NAMES: [(u16, &str); 7] =
-        [(CUT, "CUT"), (BRUISED, "BRUISED"), (BROKEN, "BROKEN"), (SEVERED, "SEVERED"), (TORN, "TORN"), (BLEEDING, "BLEEDING"), (ARTERY, "ARTERY")];
+    /// [fire15] Burned / melted tissue (bits above `health::hf`, which uses 128..8192).
+    pub const BURN: u16 = 1 << 14; // [fire15]
+    pub const MELTED: u16 = 1 << 15; // [fire15]
+    pub const NAMES: [(u16, &str); 9] = // [fire15] + BURN, MELTED
+        [(CUT, "CUT"), (BRUISED, "BRUISED"), (BROKEN, "BROKEN"), (SEVERED, "SEVERED"), (TORN, "TORN"), (BLEEDING, "BLEEDING"), (ARTERY, "ARTERY"), (BURN, "BURNED"), (MELTED, "MELTED")]; // [fire15]
 }
 
 /// Armor zones a body part belongs to.
@@ -2039,7 +2042,7 @@ impl Sim {
         part.children.iter().chain(part.internal_children.iter()).any(|&c| self.subtree_has(b, c, flag))
     }
 
-    fn add_wound(&mut self, d: usize, part: u16, layer: u16, flags: u16, sev: i32, pvol: f32, lt: &LayerT, _now: u64) {
+    pub(crate) fn add_wound(&mut self, d: usize, part: u16, layer: u16, flags: u16, sev: i32, pvol: f32, lt: &LayerT, _now: u64) { // [fire15] pub(crate)
         self.combat.stats.wounds += 1;
         let mut bleed = 0;
         let mut fl = flags;

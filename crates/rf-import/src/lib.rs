@@ -1864,6 +1864,7 @@ mod tests {
         assert_eq!(b.into_burrow().tiles[1], Pos::new(104, 99, 101));
         let m: MaterialInfo = serde_json::from_str(r#"{"mat_type":0,"mat_index":0,"token":"INORGANIC:IRON","name":"iron","density":7850,"shear_yield":155000,"shear_fracture":310000,"shear_strain_at_yield":189,"impact_yield":542500,"impact_fracture":1085000,"impact_strain_at_yield":319,"max_edge":10000,"value":10,"strength":{"SHEAR":[155000,310000,189]},"heat":{"melting_point":12768}}"#).unwrap();
         assert_eq!((m.density, m.impact_fracture, m.max_edge), (7850, 1_085_000, 10_000));
+        assert_eq!(m.heat.melting_point, 12_768, "material heat is imported"); // [fire15]
         let man: Manifest = serde_json::from_str(r#"{"stress_cutoffs":[50000,25000,10000,-10000,-25000,-50000,-100000],"max_slice_by_phase":{"units":32}}"#).unwrap();
         assert_eq!(man.stress_category(98_940), Some(0));
         assert_eq!(man.stress_category(-2_850), Some(3));

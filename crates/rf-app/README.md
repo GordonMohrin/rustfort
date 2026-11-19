@@ -789,3 +789,13 @@ rule 3).
 - `load.rs` also fills squads, burrows, creature/weapon/armor raws and (round 4) entities,
   nobles, settings and historical figure names from the export's side files when the importer
   left them empty.
+
+## Fire overlay ([fire15])
+
+- Burning tiles flicker orange, smoke is a grey veil, burning creatures flash red and yellow
+  (w:Fire), and a status line shows burning tiles, burning creatures and hot items while
+  anything burns (`ui/fire15.rs`). Nothing is drawn while there is no fire.
+- `--ui` states: `temperature:on|off` (player override of the world's temperature setting),
+  `ignite:x/y/z` (set a tile on fire and center on it), `burn-unit:<id>`, `fire-run:<ticks>`
+  (run the sim before the first frame), e.g.
+  `rustfort play --synthetic --screenshot target/shots/fire.png --frames 8 --ui "temperature:on,ignite:20/20/42,fire-run:400"`.

@@ -80,6 +80,8 @@ mod machinery; // [machines14] machine details: gear disengaging, ports, pump ru
 pub mod linkage; // [machines14] mechanism links: signals, device delays, pressure plates, link jobs
 pub mod machines14_api; // [machines14] public API (link picker, plate settings, device state, power nets)
 pub use linkage::{DevKind, LinkStats}; // [machines14]
+pub mod fire15; // [fire15] temperature, fire and magma
+pub mod fire15_api; // [fire15] public API: temperature, fire, magma
 pub use round8_api::AnimalInfo;
 pub mod construct; // [construct]
 pub use construct::ConstructReport; // [construct]
@@ -715,6 +717,7 @@ pub struct Sim {
     link: linkage::Linkage, // [machines14]
     #[serde(skip)] // [audio14]
     pub(crate) audio_cues: audio14_api::CueBuf, // [audio14] off by default, not saved, not hashed
+    fire: fire15::Fire15, // [fire15] temperature, fire and magma
 }
 
 /// [perf9] Debug: A* searches with at least this many nodes are printed (`RF_PATH_LOG`, set
@@ -873,6 +876,7 @@ impl Sim {
             diplo: diplomacy::Diplo::default(), // [contract13]
             link: linkage::Linkage::default(), // [machines14]
             audio_cues: audio14_api::CueBuf::default(), // [audio14]
+            fire: fire15::Fire15::default(), // [fire15]
         };
         sim.restore_core(&saved); // [saves10] tick count first: the init passes below use it
         sim.init_plants();
@@ -1324,6 +1328,7 @@ impl Sim {
         self.megabeasts_hash(&mut mix); // [contract13] owner [mega13]
         self.diplomacy_hash(&mut mix); // [contract13] owner [diplo13]
         self.link_hash(&mut mix); // [machines14]
+        self.fire15_hash(&mut mix); // [fire15]
         h
     }
 
@@ -1434,6 +1439,7 @@ impl Sim {
         self.fluids_tick(now); // [fluids]
         self.power_tick(now); // [gaps10] pumps and power
         self.carts_tick(now); // [carts12] minecarts and wheelbarrows
+        self.fire_tick(now); // [fire15] temperature, fire, magma contact, obsidian casting
         let tp = Instant::now(); // [perf]
         self.phase[7] += (tp - tq).as_secs_f64(); // [perf]
         if now % population::POP_PERIOD == population::POP_PHASE {

@@ -227,7 +227,7 @@ fn dwarves_drown_in_deep_water_unless_they_swim() {
 fn magma_burns_units_and_items() {
     let (mut w, ids) = cells_world();
     let wood = w.materials.iter().position(|m| m.is_wood).unwrap() as u16;
-    let stone = w.materials.iter().position(|m| m.is_stone && !m.is_ore).unwrap() as u16;
+    let stone = w.materials.iter().position(|m| m.token == "INORGANIC:MAGNETITE").unwrap() as u16; // [fire15] granite melts at 11440 < 12000
     let mut log = w.items[0].clone();
     log.id = 9001;
     log.kind = "WOOD".into();
