@@ -147,3 +147,40 @@ fn pump_run_on_order_obsidian_and_clean_water() {
     assert!(sim.liquid_at(Pos::new(21, 27, z)).0 > 0);
     assert_eq!(sim.world.tiles[d].flags & (tile_flags::SALT | tile_flags::STAGNANT), 0, "pumped water is clean");
 }
+
+#[test]
+fn ui_built_machines_get_constructed() {
+    let mut w = World::synthetic(48, 48, 20);
+    for u in &mut w.units {
+        u.thirst_timer = 0;
+        u.hunger_timer = 0;
+        u.sleepiness_timer = 0;
+    }
+    w.units[0].labors.push("MECHANIC".into());
+    let z = w.units[0].pos.z;
+    let mut sim = Sim::new(w, 61);
+    sim.set_invasions(false);
+    sim.set_moods_enabled(false);
+    let opts = sim.build_options();
+    let find = |k: &str, sub: &str| opts.iter().position(|o| o.kind == k && o.subtype == sub).unwrap();
+    for (k, sub) in [("Trap", "Lever"), ("Trap", "PressurePlate"), ("Bridge", ""), ("Floodgate", ""), ("Hatch", ""), ("GrateWall", ""), ("Support", "")] {
+        assert!(opts.iter().any(|o| o.kind == k && o.subtype == sub), "build option {k}/{sub}");
+    }
+    let t = sim.world.idx(Pos::new(20, 21, z)).unwrap();
+    for _ in 0..2 {
+        sim.create_item("TRAPPARTS", 0, t, "granite mechanism".into());
+    }
+    let gear = sim.place_building_dir(find("GearAssembly", ""), Pos::new(21, 23, z), Pos::new(21, 23, z), "").unwrap();
+    let lever = sim.place_building_dir(find("Trap", "Lever"), Pos::new(19, 23, z), Pos::new(19, 23, z), "").unwrap();
+    for _ in 0..80 {
+        sim.run_ticks(100);
+        if sim.world.building(gear).unwrap().built && sim.world.building(lever).unwrap().built {
+            break;
+        }
+    }
+    assert!(sim.world.building(gear).unwrap().built, "a mechanic built the gear assembly (F9)");
+    assert!(sim.world.building(lever).unwrap().built, "and the lever");
+    sim.run_ticks(2);
+    assert!(sim.machine_net(gear).is_some(), "the built gear is a machine");
+    assert!(sim.mechanisms().iter().any(|m| m.0 == lever), "the built lever is a mechanism");
+}

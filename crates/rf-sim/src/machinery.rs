@@ -110,6 +110,45 @@ pub(crate) fn intake_open(sim: &Sim, intake: u32) -> bool {
     !(sh.has_floor() || sh.is_solid())
 }
 
+/// Construction needs of machines and mechanism devices (wiki infoboxes; production
+/// classes, at most 4 needs): (needs, labor). None = not a machine or device.
+pub(crate) fn mech_cons(b: &Building) -> Option<(Vec<(u8, &'static str)>, u64)> {
+    use crate::labor;
+    use crate::production::{pc, ANY_MAT};
+    let len = ((b.x2 - b.x1).abs().max((b.y2 - b.y1).abs()) + 1) as usize;
+    Some(match (b.kind.as_str(), b.subtype.as_str()) {
+        ("Trap", "Lever") | ("GearAssembly", _) => (vec![(pc::MECHANISM, "")], labor::MECHANIC),
+        ("Trap", "PressurePlate") => {
+            let f = |x: &str| b.flags.iter().any(|y| y == x);
+            let n = [f("PLATE_UNITS"), f("PLATE_WATER"), f("PLATE_MAGMA"), f("PLATE_TRACK")].iter().filter(|&&x| x).count().max(1);
+            (vec![(pc::MECHANISM, ""); n], labor::MECHANIC)
+        }
+        ("Trap", "TrackStop") => (vec![(ANY_MAT, ""), (pc::MECHANISM, "")], labor::MECHANIC | labor::MASON | labor::CARPENTER),
+        ("AxleHorizontal", _) => (vec![(pc::LOG, ""); if len <= 3 { 1 } else if len <= 7 { 2 } else { 3 }], labor::CARPENTER),
+        ("AxleVertical", _) => (vec![(pc::LOG, "")], labor::CARPENTER),
+        ("Rollers", _) => {
+            let mut v = vec![(pc::MECHANISM, ""); (len / 4 + 1).min(3)];
+            v.push((pc::CHAIN, ""));
+            (v, labor::MECHANIC)
+        }
+        // ESTIMATE: the enormous corkscrew (a trap component) is not required.
+        ("ScrewPump", _) => (vec![(pc::BLOCKS, ""), (pc::FURNITURE, "PIPE_SECTION")], labor::MASON | labor::CARPENTER),
+        ("WaterWheel", _) => (vec![(pc::LOG, ""); 3], labor::CARPENTER),
+        ("Windmill", _) => (vec![(pc::LOG, ""); 4], labor::CARPENTER),
+        ("Bridge", _) => {
+            let tiles = (((b.x2 - b.x1).abs() + 1) as usize) * (((b.y2 - b.y1).abs() + 1) as usize);
+            (vec![(ANY_MAT, ""); (tiles / 4 + 1).min(4)], labor::MASON | labor::CARPENTER) // ESTIMATE: at most 4 items
+        }
+        ("Floodgate", _) => (vec![(pc::FURNITURE, "FLOODGATE")], labor::MECHANIC),
+        ("Hatch", _) => (vec![(pc::FURNITURE, "HATCH_COVER")], labor::HAUL_FURNITURE),
+        ("GrateWall", _) | ("GrateFloor", _) => (vec![(pc::FURNITURE, "GRATE")], labor::HAUL_FURNITURE),
+        ("BarsVertical", _) | ("BarsFloor", _) => (vec![(pc::BAR, "")], labor::HAUL_FURNITURE),
+        ("Support", _) => (vec![(ANY_MAT, "")], labor::MASON | labor::CARPENTER),
+        ("Chain", _) => (vec![(pc::CHAIN, "")], labor::HAUL_FURNITURE),
+        _ => return None,
+    })
+}
+
 impl Sim {
     /// After a balance: pumps of powered networks may run until the next balance plus 49.
     pub(crate) fn pump_run_on(&mut self, nets: &[crate::power::PowerNet], now: u64) {

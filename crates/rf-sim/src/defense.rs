@@ -614,6 +614,11 @@ impl Sim {
         }
     }
 
+    /// [machines14] A building finished construction: rescan the mechanisms next tick.
+    pub(crate) fn defense_dirty(&mut self) { // [machines14]
+        self.def.nbuildings = usize::MAX; // [machines14]
+    } // [machines14]
+
     /// [machines14] `on` of a mechanism building (None if it is not one).
     pub(crate) fn def_on(&self, id: i32) -> Option<bool> { // [machines14]
         self.def.by_id.get(&id).map(|&mi| self.def.mechs[mi].on) // [machines14]
