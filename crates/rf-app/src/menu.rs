@@ -37,6 +37,7 @@ pub enum Page {
     Loading,
     /// [app10] Announcement settings (DF announcements.txt), from the Settings page.
     Announcements,
+    Audio, // [audio14] Settings > Audio
 }
 
 enum ImportState {
@@ -196,6 +197,7 @@ impl Menu {
             }
             Some("settings") => m.page = Page::Settings,
             Some("announcements") => m.page = Page::Announcements, // [app10]
+            Some("audio") => m.page = Page::Audio, // [audio14]
             _ => {}
         }
         m
@@ -276,6 +278,7 @@ impl Menu {
                     self.page = Page::Settings;
                 }
             }
+            Page::Audio => { if crate::ui::audio14::draw_audio_page(&mut self.ui, &self.font, &mut self.settings).0 { self.store_settings(); self.page = Page::Settings; } } // [audio14]
         }
         if let Some((t, p)) = self.ui.tooltip.take() {
             let w = self.font.width(&t, s) + 14.0 * s;
@@ -321,6 +324,7 @@ impl Menu {
                     self.store_settings(); // [app10]
                     self.page = Page::Settings;
                 }
+                Page::Audio => { self.store_settings(); self.page = Page::Settings; } // [audio14]
                 _ => self.back_to_title(),
             }
         }
@@ -923,6 +927,10 @@ impl Menu {
         }
         let note = if changed == 0 { "as in your DF announcements.txt".to_string() } else { format!("{changed} changed from DF") };
         self.font.draw(&note, vx + 18.0 * GW * s + 10.0 * s, y + 5.0 * s, s, col::TEXT_DIM);
+        y += bh + 8.0 * s; // [audio14]
+        self.font.draw("Audio", lx, y + 5.0 * s, s, col::TEXT); // [audio14]
+        if text_button(&mut self.ui, &self.font, Rect::new(vx, y, 18.0 * GW * s, bh), "Audio...", BtnState::Normal) { self.page = Page::Audio; } // [audio14]
+        self.font.draw(&crate::ui::clip(&crate::audio::status().line, 40), vx + 18.0 * GW * s + 10.0 * s, y + 5.0 * s, s, col::TEXT_DIM); // [audio14]
         let _ = y;
         let path = crate::importer::plain(&std::fs::canonicalize(crate::settings::path()).unwrap_or_else(|_| crate::settings::path())).display().to_string();
         let note = clip(&format!("Saved in {path}"), ((c.w - 130.0 * s) / (GW * s)) as usize);
@@ -1087,6 +1095,7 @@ pub async fn run_menu(args: &Args, settings: Settings, start_frame: u32) -> (Opt
             sc.apply(frame + 1, &mut m.input);
         }
         let picked = m.frame(args);
+        crate::audio::menu_frame(); // [audio14]
         frame += 1;
         if let Some(l) = picked {
             return (Some((l, frame)), m.settings);

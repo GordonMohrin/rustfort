@@ -903,3 +903,13 @@ Trussroads r7: 29 735 leaves (12 232 meats, 1 056 creatures in each of the 10 cr
 ### manifest.json: round-9 keys
 
 New `counts`: `stockpile_options` (leaves), `invasions`, `offsite_units` (inactive units off the map), `caged_units`, `chained_units`. New phase `pile_options` in `max_slice_by_phase`.
+
+## Additions for v0.14 audio (`[audio14]`, still format v1)
+
+### manifest.json: `founded_year`, `founded_tick`
+
+The founding date of the fort, for DF's FIRST_YEAR / SECOND_YEAR_PLUS music contexts. Read-only,
+from the active site: `site.created_year` and `site.created_tick` (field names not verified
+against df-structures; wrapped in `pcall`). Both are `-1` when the fields are absent. The
+importer maps them to `Meta::founded` (`None` when the year is missing or negative); older
+exports without the keys import as unknown.

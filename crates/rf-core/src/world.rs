@@ -36,6 +36,9 @@ pub struct Meta {
     pub source: String,
     /// Active mods of the save in load order (DF mod ids with version, e.g. `perspective_walls:25`).
     pub mods: Vec<String>,
+    /// [audio14] When the fort was founded (DF site creation date), `None` = unknown.
+    #[serde(default)] // [audio14]
+    pub founded: Option<Calendar>, // [audio14]
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

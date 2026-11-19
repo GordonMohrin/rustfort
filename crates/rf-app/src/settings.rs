@@ -43,6 +43,8 @@ pub struct Settings {
     /// [app9] Announcement types changed in the game (DF `announcements.txt` flags); types not
     /// listed use the DF files' values.
     pub announcements: Vec<AnnSetting>,
+    /// [audio14] Volumes, mute, song gap (Settings > Audio).
+    pub audio: crate::audio::AudioSettings, // [audio14]
 }
 
 /// [app9] One changed announcement type (`ui::round9::ANN_TYPES` id and its flags).
@@ -75,6 +77,7 @@ impl Default for Settings {
             hints_off: false,
             minimap: false,
             announcements: Vec::new(),
+            audio: Default::default(), // [audio14]
         }
     }
 }

@@ -395,6 +395,9 @@ pub struct Manifest {
     pub stress_cutoffs: Vec<i32>,
     /// Round 3: longest frame slice per exporter phase (ms).
     pub max_slice_by_phase: BTreeMap<String, u32>,
+    /// [audio14] Fort founding date (site creation year and tick); absent or -1 = unknown.
+    pub founded_year: Option<i32>, // [audio14]
+    pub founded_tick: Option<i32>, // [audio14]
 }
 
 impl Manifest {
@@ -812,6 +815,7 @@ pub fn load_export(dir: &Path) -> Result<(World, ImportReport), ImportError> {
             region_z: manifest.region_z,
             source: format!("export:{}", dir.display()),
             mods: manifest.mods.clone(),
+            founded: match (manifest.founded_year, manifest.founded_tick) { (Some(y), t) if y >= 0 => Some(rf_core::Calendar { year: y, year_tick: t.unwrap_or(0).clamp(0, rf_core::TICKS_PER_YEAR - 1) }), _ => None }, // [audio14]
         },
         // Entities were exported last, so the end tick is the state they describe.
         calendar: if manifest.year_end > 0 {

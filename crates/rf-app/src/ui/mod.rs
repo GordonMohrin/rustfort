@@ -33,6 +33,7 @@ pub mod toolbar;
 pub mod topbar;
 pub mod trade; // [round 4]
 pub mod workdetails; // [app8]
+pub mod audio14; // [audio14] Settings > Audio
 
 use crate::font::{Font, GH, GW};
 use crate::render::MapRenderer;

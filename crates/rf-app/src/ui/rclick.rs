@@ -47,6 +47,7 @@ fn modal(g: &mut Game) -> bool {
         match g.menu.page {
             MenuPage::Main => g.menu_open = false,
             MenuPage::Announcements => g.menu.page = MenuPage::Settings,
+            MenuPage::Audio => g.menu.page = MenuPage::Settings, // [audio14]
             _ => g.menu.page = MenuPage::Main,
         }
     } else if !matches!(g.tool, Tool::PileLink(..)) && crate::ui::round8::escape(g) {

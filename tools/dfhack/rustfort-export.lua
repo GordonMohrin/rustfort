@@ -185,6 +185,11 @@ local site = df.global.world.world_data.active_site[0]
 local FORT_NATIVE = dfhack.translation.translateName(site.name, false)
 local FORT_EN = dfhack.translation.translateName(site.name, true)
 local SITE_ID = site.id
+-- [audio14] founding date of the fort (site creation), -1 when the fields are absent
+local FOUNDED_YEAR, FOUNDED_TICK = -1, -1
+pcall(function() -- [audio14]
+  if site.created_year ~= nil then FOUNDED_YEAR = site.created_year; FOUNDED_TICK = site.created_tick or 0 end -- [audio14]
+end) -- [audio14]
 if opt.expect and FORT_NATIVE ~= opt.expect then
   print(('{"ok":false,"error":"loaded fort is %s (%s), expected %s - not exporting"}'):format(
     utf(FORT_NATIVE), utf(FORT_EN), utf(opt.expect)))
@@ -3535,6 +3540,7 @@ local function finish()
     'civ_id', ji(try(function() return df.global.plotinfo.civ_id end) or -1),
     'group_id', ji(try(function() return df.global.plotinfo.group_id end) or -1),
     'region_x', ji(mpz[1] or 0), 'region_y', ji(mpz[2] or 0), 'region_z', ji(mpz[3] or 0),
+    'founded_year', ji(FOUNDED_YEAR), 'founded_tick', ji(FOUNDED_TICK), -- [audio14]
     'dims', jobj({ 'x', ji(XC), 'y', ji(YC), 'z', ji(ZC) }),
     'year', ji(START_YEAR), 'year_tick_start', ji(START_TICK), 'year_end', ji(df.global.cur_year),
     'year_tick_end', ji(df.global.cur_year_tick),

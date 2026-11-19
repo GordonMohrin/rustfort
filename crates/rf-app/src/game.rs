@@ -245,6 +245,7 @@ pub enum MenuPage {
     Settings,
     /// [app9] Announcement settings (DF announcements.txt).
     Announcements,
+    Audio, // [audio14] Settings > Audio
 }
 
 /// Esc menu state.
@@ -1118,6 +1119,7 @@ impl Game {
         let fresh = self.sim.drain_announcements();
         crate::ui::round4::on_announcements(self, &fresh); // [round 4]
         let show = crate::ui::round9::on_announcements(self, &fresh); // [app9] boxes, pause, recenter
+        crate::audio::game_frame(self, &fresh); // [audio14] music events, stingers, ambience
         for (a, sh) in fresh.into_iter().zip(show) {
             let mut l = LogLine::new(a.text, a.pos, a.kind, now, date.clone());
             l.quiet = !sh;
@@ -1388,6 +1390,7 @@ impl Game {
                 let seed = if info.header.seed != 0 { info.header.seed } else { self.seed };
                 self.seed = seed;
                 *self.sim = Sim::new(world, seed);
+                crate::audio::fort_changed(); // [audio14] new baseline for the music events
                 self.r4 = Default::default();
                 self.r5 = Default::default();
                 let minimap = self.r8.minimap;

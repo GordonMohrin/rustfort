@@ -353,6 +353,8 @@ pub fn draw_settings(g: &mut Game) {
     if text_button(&mut g.ui, &g.font, ab, "Announcements...", BtnState::Normal) {
         g.menu.page = MenuPage::Announcements;
     }
+    let aub = Rect::new(ab.x + ab.w + 8.0 * s, ab.y, 12.0 * 8.0 * s, bh2); // [audio14]
+    if text_button(&mut g.ui, &g.font, aub, "Audio...", BtnState::Normal) { g.menu.page = MenuPage::Audio; } // [audio14]
 }
 
 #[cfg(test)]

@@ -12,6 +12,7 @@
 //! (Continue, Load game, Import from Dwarf Fortress, ...). `--export`, `--load`,
 //! `--synthetic`/`--size` and `--screenshot` start the game directly, unless `--menu` is given.
 
+mod audio; // [audio14] DF music, ambience and sounds
 mod bench;
 mod crash; // [app10]
 mod desktop; // screenshot/test windows open on virtual desktop 1
@@ -79,6 +80,8 @@ pub struct Args {
     pub gfps_cli: bool,
     /// [round 6] Extra screenshots at these frames (`<shot>-f<N>.png`), e.g. an import's progress.
     pub shots_at: Vec<u32>,
+    /// [audio14] `--mute`: no audio device at all.
+    pub mute: bool, // [audio14]
 }
 
 const USAGE: &str = "usage:
@@ -87,7 +90,7 @@ const USAGE: &str = "usage:
                  [--screenshot out.png --frames N] [--view x,y,z,zoom] [--ui citizens,unit,build,orders,labor-screen,..]
                  [--mouse x,y] [--script \"frame:cmd; ...\"] [--ui-scale 2] [--gfps 60] [--size x,y,z] [--sim-inline]
                  [--menu] [--menu-page load|exports|import|settings] [--autosave-days N]
-                 [--desktop N] [--shots-at a,b]
+                 [--desktop N] [--shots-at a,b] [--mute]
   rustfort bench [--export DIR] [--synthetic] [--ticks N] [--seed N] [--no-invasions] [--standdown]
   rustfort savebench [--export DIR]
   --load FILE.rfsave   start from a save game (play, bench)
@@ -95,6 +98,7 @@ const USAGE: &str = "usage:
                        else the built-in synthetic test fort
   --desktop N          move the window to virtual desktop N (Windows; 0 = stay; screenshot runs
                        default to desktop 1, also RUSTFORT_DESKTOP)
+  --mute               no sound (also RUSTFORT_MUTE=1; screenshot and script runs are always silent)
 environment: RUSTFORT_DF_DIR = Dwarf Fortress folder (else Settings, then Steam auto-detection)";
 
 fn parse_args() -> Result<Args, String> {
@@ -156,6 +160,7 @@ fn parse_args() -> Result<Args, String> {
                 a.gfps_cli = true;
             }
             "--menu" => a.menu = true,
+            "--mute" => a.mute = true, // [audio14]
             "--desktop" => a.desktop = Some(val("--desktop")?.parse().map_err(|e| format!("--desktop: {e}"))?),
             "--shots-at" => a.shots_at = val("--shots-at")?.split(',').filter_map(|s| s.trim().parse().ok()).collect(),
             "--menu-page" => {
@@ -206,6 +211,7 @@ fn main() {
                 (None, _) => eprintln!("rustfort: {} Without it there are no DF graphics, DF font, DF keys or import.", load::DF_NOT_FOUND_HINT),
             }
             let mut args = args;
+            audio::init(&args, &settings.audio); // [audio14] title screen and game share it
             if !args.ui_scale_cli {
                 args.ui_scale = settings.ui_scale;
             }

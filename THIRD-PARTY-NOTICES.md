@@ -94,3 +94,10 @@ accompany the binary. Ship them next to `rustfort.exe` together with `LICENSE-MI
 scripts) are not linked into the binary. The current list follows from `Cargo.lock`, for
 example with `cargo metadata` or a tool such as cargo-about. Do not put DF files, fort exports
 or saves into a binary distribution: they contain DF data.
+
+[audio14] With the default `audio` feature the binary also links the sound crates `rodio`
+(MIT OR Apache-2.0), `cpal` (Apache-2.0), `lewton` (MIT OR Apache-2.0), `ogg` (BSD-3-Clause),
+`dasp_sample` (MIT OR Apache-2.0) and, on Windows, `windows`/`windows-core` (MIT OR
+Apache-2.0); their notices go with the binary like the others. DF's music and sound files are
+read from the player's DF install at runtime; they are never part of the repository or of a
+binary distribution.
