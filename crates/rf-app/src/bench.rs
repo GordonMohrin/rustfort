@@ -25,6 +25,9 @@ pub fn run(args: &crate::Args) {
     if args.no_invasions {
         sim.set_invasions(false);
     }
+    if std::env::var("RUSTFORT_DECAY").as_deref() == Ok("0") { // [decay15]
+        sim.set_decay_enabled(false); // [decay15] dev check: decay off must give the round-13 hash
+    } // [decay15]
     // Warm-up (caches, lazy init).
     sim.run_ticks(10);
     let mut calm_since: Option<u64> = None;
@@ -129,5 +132,11 @@ pub fn run(args: &crate::Args) {
             println!("  {n:>6}  {k}");
         }
     }
+    if std::env::var("RF_DECAY_REPORT").is_ok() { // [decay15]
+        let d = sim.decay_report(); // [decay15]
+        let l = sim.lifestyle_report(); // [decay15]
+        println!("decay: {d:?}"); // [decay15]
+        println!("miasma thoughts: {}", l.miasma_events); // [decay15]
+    } // [decay15]
     println!("state hash: {:016x}", sim.state_hash());
 }

@@ -1775,6 +1775,7 @@ impl Sim {
         };
         if let Some(si) = stopped_by.or(if m < 0.5 && armor_hit { armor.first().map(|x| x.0) } else { None }) {
             self.combat.stats.deflected += 1;
+            self.decay_armor_hit(si, if atk.edge { wmech.sf } else { wmech.iy }, atk.edge, a, now); // [decay15] combat wear (own RNG stream)
             let it = &self.world.items[si];
             let mat = self.world.material(it.mat).map(|x| x.name.clone()).unwrap_or_default();
             let what = if it.desc.is_empty() { format!("{mat} {}", it.subtype.trim_start_matches("ITEM_").to_ascii_lowercase()) } else { it.desc.clone() };

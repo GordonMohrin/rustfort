@@ -86,6 +86,9 @@ mod prefs; // [prefs15] unit preferences: quality bonus, admiring, work, food, n
 pub mod item_value; // [prefs15] DF v50 item value (quality multipliers + flat bonus)
 mod mood_prefs; // [prefs15] strange mood artifacts and demands from preferences
 pub mod prefs15_api; // [prefs15] public API for preferences and item value
+pub mod decay15; // [decay15] rot, miasma sources, refuse, vermin, wear
+pub mod decay15_api; // [decay15]
+pub use decay15_api::{CorpseStage, DecayReport, RefuseOrders, VerminInfo}; // [decay15]
 pub use round8_api::AnimalInfo;
 pub mod construct; // [construct]
 pub use construct::ConstructReport; // [construct]
@@ -723,6 +726,7 @@ pub struct Sim {
     pub(crate) audio_cues: audio14_api::CueBuf, // [audio14] off by default, not saved, not hashed
     fire: fire15::Fire15, // [fire15] temperature, fire and magma
     prefs: prefs::Prefs, // [prefs15]
+    decay: decay15::Decay, // [decay15]
 }
 
 /// [perf9] Debug: A* searches with at least this many nodes are printed (`RF_PATH_LOG`, set
@@ -876,6 +880,7 @@ impl Sim {
             carts: minecarts::Carts::default(), // [carts12]
             weather: weather::Weather::default(), // [contract13]
             undead: undead::Undead::default(), // [contract13]
+            decay: decay15::Decay::default(), // [decay15]
             vamp: vampires::Vamp::default(), // [contract13]
             mega: megabeasts::Mega::default(), // [contract13]
             diplo: diplomacy::Diplo::default(), // [contract13]
@@ -1337,6 +1342,7 @@ impl Sim {
         self.link_hash(&mut mix); // [machines14]
         self.fire15_hash(&mut mix); // [fire15]
         self.prefs_hash(&mut mix); // [prefs15]
+        self.decay_hash(&mut mix); // [decay15]
         h
     }
 
@@ -1489,6 +1495,12 @@ impl Sim {
         } // [mega13]
         if now % rf_core::TICKS_PER_DAY as u64 == diplomacy::DIPLO_DAY_PHASE {
             self.diplomacy_day(now); // [contract13] owner [diplo13]
+        }
+        if now % rf_core::TICKS_PER_DAY as u64 == decay15::DECAY_DAY_PHASE {
+            self.decay_day(now); // [decay15]
+        }
+        if now % decay15::DECAY_PERIOD == decay15::DECAY_PHASE {
+            self.decay_pass(now); // [decay15]
         }
         if now % locations::S2_PERIOD == locations::S2_PHASE {
             let _p = perf::prof::Guard::new(perf::prof::X0 + 5); // [perf13]
@@ -3111,6 +3123,9 @@ impl Sim {
         let cat = self.imeta[idx].cat;
         if self.pile_cats & cat.bit() == 0 || self.haul_pos.contains_key(&id) {
             return;
+        }
+        if !self.decay_haul_ok(idx) {
+            return; // [decay15] refuse standing orders
         }
         self.haul_pos.insert(id, self.haul.len() as u32);
         self.haul.push(id);

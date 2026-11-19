@@ -398,6 +398,7 @@ impl Sim {
         } // [perf13]
         if now % (rf_core::TICKS_PER_DAY as u64) < STORE_PERIOD {
             let _p = crate::perf::prof::Guard::new(crate::perf::prof::Y0 + 5); // [perf13]
+        if now % (rf_core::TICKS_PER_DAY as u64) < STORE_PERIOD && !self.decay_on() { // [decay15] decay15 owns rot when on
             self.rot_pass();
         }
     }

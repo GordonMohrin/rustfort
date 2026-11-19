@@ -32,6 +32,7 @@ pub mod round9; // [app9]
 pub mod round10; // [app10]
 pub mod round12; // [app12] hauling editor, machines, siege engines
 pub mod round13; // [ui13] diplomacy, threats, weather, curse markers
+pub mod decay15; // [decay15] refuse standing orders, decay statistics
 pub mod stockpile_ed; // [app8]
 pub mod toolbar;
 pub mod topbar;

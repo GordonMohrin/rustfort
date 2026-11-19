@@ -297,6 +297,7 @@ fn hen_lays_in_nest_box_eggs_are_collected_or_hatch_when_forbidden() {
         w.units.push(hen);
         w.units.push(rooster);
         let mut sim = Sim::new(w, 13);
+        sim.set_decay_enabled(false); // [decay15] the loose food would rot (12 days) and hungry dwarves take the eggs; the test is about eggs
         // Forbid new eggs at once (the player clicking them), before a hauler takes them.
         for _ in 0..(8 * 3360) {
             sim.run_ticks(10);
@@ -448,6 +449,7 @@ fn cat_adopts_a_dwarf_and_hunts_vermin() {
     let mut w = world();
     w.units.push(animal(500, "CAT", "FEMALE", Pos::new(cx - 2, cy - 2, hz), 0));
     let mut sim = Sim::new(w, 31);
+    sim.set_decay_enabled(false); // [decay15] the old 1/14 cat roll; real vermin hunting is tested in decay15/tests.rs
     sim.run_ticks((6 * rf_core::TICKS_PER_MONTH) as u32);
     let cat = sim.world.unit(500).unwrap();
     assert!(cat.pet_owner > 0, "the cat chose an owner");
