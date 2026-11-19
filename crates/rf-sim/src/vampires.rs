@@ -300,6 +300,9 @@ impl Sim {
         }
         if kill {
             self.combat_sync_units();
+            // The corpse is found bloodless (wiki Vampire: victims are "drained of blood").
+            self.combat.f[t].blood = 0;
+            self.combat.f[t].bleed = 0;
             self.combat_kill(t, now, "has been drained of blood");
             self.vamp.rep.drained += 1;
             self.vamp.vamps[k].kills += 1;

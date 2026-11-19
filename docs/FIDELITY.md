@@ -627,7 +627,7 @@ Seams only: no rule is simulated yet; each module owner adds its own section bel
 | Unit curse markers `Unit::undead`, `curse`, `curse_race`, `true_name` | MISSING | Fields only (wiki Undead, Vampire, Werebeast, Necromancer); set by `undead` / `vampires`. |
 | Entity attitude `EntityInfo::attitude` | MISSING | Field only (wiki Diplomacy); set by `diplomacy`. |
 | Hauling route stop item filter `HaulStop::filter` | MISSING | Stored and editable through the API; minecarts do not apply it yet (wiki Hauling route: stop conditions and desired items). |
-| Moon phase (`Sim::moon_phase`) | MISSING | Stub returns 0; wiki Werebeast (full moon). |
+| Moon phase (`Sim::moon_phase`) | ESTIMATE | Implemented by `[vampire13]` (see its section below): 28-day cycle per month, full moon on the 15th. |
 
 ## Vampires and werebeasts (`[vampire13]`)
 
@@ -640,7 +640,7 @@ Module `crates/rf-sim/src/vampires.rs` (tests in `vampires_tests.rs`); one hook 
 | False identity: assumed name in `Unit::name`, real name in `Unit::true_name`; the true name returns when unmasked | OK | wiki Vampire (a revealed vampire's corpse bears its original name). The cover identity's memorial/coffin split: MISSING. |
 | No eating, drinking or sleeping; no aging; sterile | OK | wiki Vampire. Need timers are held at zero every 100 ticks, apparent age frozen, pregnancy cleared. Alcohol withdrawal (a DF bug) and the "can't remember the last time" blood thought: MISSING. |
 | More and higher skills | ESTIMATE | wiki Vampire ("4-5+ social skills", many Novice+ skills). Existing skills +2..5, 4-6 social skills at 2..7. |
-| Feeds on sleeping citizens, usually killing them; survivors remember nothing | OK / ESTIMATE | wiki Vampire. Interval 28-55 days, kill chance 2/3, a survivor loses 30 % of its blood (all ESTIMATE). Feeding on unconscious creatures and animals: MISSING. |
+| Feeds on sleeping citizens, usually killing them; survivors remember nothing | OK / ESTIMATE | wiki Vampire. A drained victim dies with no blood left ("has been drained of blood"). Interval 28-55 days, kill chance 2/3, a survivor loses 30 % of its blood (all ESTIMATE). Feeding on unconscious creatures and animals: MISSING. |
 | Victim choice and approach | ESTIMATE | The least observed sleeper in the vampire's walk area, then the nearest. The walk is not simulated: the vampire appears beside the sleeper. |
 | Witnesses unmask the vampire | OK / ESTIMATE | wiki Vampire ("a witness to an attack uncovers them permanently"). Each awake citizen within 6 tiles on the same level sees it with chance 1/2 (ESTIMATE). Unmasked: true name, announcement, the crime stands accused. |
 | A death without a witness is an unsolved Murder; interrogation may name the vampire (suspect) | OK | wiki Justice ("a corpse with no suspects"), through the existing `justice` investigation. A witnessed feeding that does not kill is an AttemptedMurder (ESTIMATE). |
