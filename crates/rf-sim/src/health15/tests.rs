@@ -286,6 +286,12 @@ fn compound_fracture_needs_surgery_before_setting() {
         w.flags |= hf::DIAGNOSED;
     }
     sim.health_refresh_daily();
+    // The skin cut is sutured first (bleeding before bones); then surgery, never setting first.
+    assert_ne!(sim.next_treat(s, false), Some(Treat::SetBone));
+    for w in sim.combat.f[s].wounds.iter_mut().filter(|w| w.flags & wf::BROKEN == 0) {
+        w.flags |= hf::SUTURED | hf::DRESSED | hf::CLEANED;
+    }
+    sim.health_refresh_daily();
     assert_eq!(sim.next_treat(s, false), Some(Treat::Surgery));
     let w = sim.combat.f[s].wounds.iter().find(|w| w.flags & wf::BROKEN != 0).copied().unwrap();
     assert!(!settable_now(&w));
@@ -315,8 +321,9 @@ fn set_bone_uses_no_splint_immobilize_does() {
 
 #[test]
 fn unimmobilized_fracture_does_not_heal() {
-    let sim = sim_of(base_world(), 15);
+    let mut sim = sim_of(base_world(), 15);
     let s = slot(&sim, 1);
+    sim.ensure_body(s);
     let (part, bone) = layer_of(&sim, s, "LUA", "BONE");
     let layers = &sim.combat.bodies[sim.combat.f[s].body as usize].layers;
     let mut w = WoundS { part, layer: bone, flags: wf::BROKEN, sev: 6000, mx: mx::SEEN | mx::NEEDS_SET, ..Default::default() };
@@ -417,8 +424,9 @@ fn break_overlap(sim: &mut Sim, uid: i32) {
 
 #[test]
 fn overlap_without_bench_never_heals() {
-    let sim = sim_of(base_world(), 19);
+    let mut sim = sim_of(base_world(), 19);
     let s = slot(&sim, 1);
+    sim.ensure_body(s);
     let (part, bone) = layer_of(&sim, s, "RLL", "BONE");
     let layers = &sim.combat.bodies[sim.combat.f[s].body as usize].layers;
     let mut w = WoundS { part, layer: bone, flags: wf::BROKEN | hf::SET, sev: 4000, mx: mx::SEEN | mx::OVERLAP | mx::SPLINT, ..Default::default() };
@@ -490,8 +498,9 @@ fn one_patient_per_bench() {
 
 #[test]
 fn bone_heals_ten_times_slower_than_muscle() {
-    let sim = sim_of(base_world(), 23);
+    let mut sim = sim_of(base_world(), 23);
     let s = slot(&sim, 1);
+    sim.ensure_body(s);
     let (part, bone) = layer_of(&sim, s, "LUA", "BONE");
     let (_, muscle) = layer_of(&sim, s, "LUA", "MUSCLE");
     let layers = &sim.combat.bodies[sim.combat.f[s].body as usize].layers;
@@ -580,7 +589,7 @@ fn lost_foot_gets_crutch_and_walks_slow() {
             break;
         }
     }
-    assert!(got, "{:?}", sim.health15_report());
+    assert!(got, "{:?} | {:?} | jobs {:?} | dis {:?} | crutches {} any_med {} wounded {:?} kind {:?} task {:?} walk {:?}", sim.health15_report(), sim.health_report(), sim.health.jobs.iter().map(|j| (j.patient, j.treat, j.doctor, j.item)).collect::<Vec<_>>(), sim.h15.dis.iter().map(|d| (d.slot, d.crutch)).collect::<Vec<_>>(), sim.h15.cnt.crutches, sim.health.any_med, sim.combat.wounded, sim.ai[s].kind, sim.ai[s].task, sim.h15_walk(s));
     pass(&mut sim);
     assert!(matches!(sim.h15_walk(s), Some((Walk::Crutch, true, true))));
     assert_eq!(sim.ai[s].speed, 1800);
@@ -719,6 +728,7 @@ fn surgery_in_hospital_without_table_uses_half_skill() {
 fn surgery_clears_infection_on_success() {
     let mut sim = sim_of(base_world(), 36);
     let s = slot(&sim, 1);
+    sim.ensure_body(s);
     let (part, skin) = layer_of(&sim, s, "UB", "SKIN");
     sim.combat.f[s].wounds.push(WoundS { part, layer: skin, flags: wf::CUT | hf::INFECTED, sev: 4000, age: 10 * rf_core::TICKS_PER_DAY, mx: mx::SEEN, ..Default::default() });
     let w = sim.combat.f[s].wounds[0];

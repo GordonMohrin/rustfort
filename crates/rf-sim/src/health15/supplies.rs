@@ -195,6 +195,15 @@ impl Sim {
         for h in self.h15.hosp.iter_mut() {
             h.have = [0; NSUP];
         }
+        // Items on their way to a chest count as stocked, or the next pass would send another.
+        for e in 0..self.h15.stock.len() {
+            let (id, key, _) = self.h15.stock[e];
+            let Some(&idx) = self.item_idx.get(&id) else { continue };
+            let Some(k) = sup_of_kind(&self.world.items[idx as usize].kind) else { continue };
+            if let Some(h) = self.h15.hosp.iter_mut().find(|h| h.key == key) {
+                h.have[k as usize] += 1;
+            }
+        }
     }
 
     /// Daily count of one free supply item (from `health_refresh_daily`'s item loop).

@@ -293,7 +293,7 @@ impl Sim {
                 self.health_refresh_daily();
                 self.infection_daily(now);
             }
-            if !self.combat.wounded.is_empty() || !self.health.jobs.is_empty() {
+            if !self.combat.wounded.is_empty() || !self.health.jobs.is_empty() || (!self.h15.off && !self.h15.dis.is_empty()) { // [health15] crutches for healed disabled units
                 self.health_pass(now);
             }
         }
@@ -1264,7 +1264,7 @@ mod tests {
             assert!(info.diagnosed, "{info:?}");
         }
         // Thread, cloth and the splint were used up.
-        assert!(!sim.world.items.iter().any(|i| i.id == 5005 && i.stack > 0 && !i.flags.in_job) || sim.world.item(5005).is_none());
+        assert!(sim.world.item(5005).is_some()); // [health15] setting uses no splint; immobilizing straps it on later (it is never destroyed)
         // The sutured cut stopped bleeding.
         let (blood, bmax, _) = sim.unit_condition(uid).unwrap();
         assert!(blood > bmax / 2);
@@ -1370,7 +1370,7 @@ mod tests {
         let s = sim.unit_slot[&1];
         sim.run_ticks(300);
         assert!(sim.combat.f[s].crawl, "crawling");
-        assert_eq!(sim.ai[s].speed, 900 * CRAWL_FACTOR);
+        assert_eq!(sim.ai[s].speed, crate::health15::crawl_delay(900)); // [health15] raws gait ratio 2990/900
         assert!(sim.combat.stats.crawlers >= 1);
         assert_eq!(sim.combat.stats.rescues, 0);
         // Healed: walks again.

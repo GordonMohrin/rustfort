@@ -34,6 +34,8 @@ pub(crate) use ortho::{heal_of_tissue, immobilized, layer_from_raw, mx_of_flags,
 #[allow(unused_imports)]
 pub(crate) use outcome::success_pct;
 pub use disab::Walk;
+#[allow(unused_imports)]
+pub(crate) use disab::crawl_delay; // [health15] for health.rs tests
 
 use crate::{Kind, Sim};
 use serde::{Deserialize, Serialize};
