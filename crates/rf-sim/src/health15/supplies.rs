@@ -259,12 +259,21 @@ impl Sim {
             if total >= CHEST_CAP * self.h15.hosp[h].chests.len() as i32 {
                 continue;
             }
+            let hp = &self.h15.hosp[h]; // [perf15]
+            let mut need = [false; NSUP]; // [perf15] kinds below their wanted count
+            for &k in super::SUPS.iter() { // [perf15]
+                need[k as usize] = hp.have[k as usize] < hp.want[k as usize]; // [perf15]
+            } // [perf15]
+            if !need.iter().any(|&b| b) { // [perf15]
+                continue; // [perf15]
+            } // [perf15]
+            self.h15_refresh_sup_ids(); // [perf15]
+            let best = self.h15_find_stock_items(&need, h, now); // [perf15] one scan of the supply items
             for &k in super::SUPS.iter() {
-                let hp = &self.h15.hosp[h];
-                if hp.have[k as usize] >= hp.want[k as usize] {
+                if !need[k as usize] { // [perf15]
                     continue;
                 }
-                if let Some(id) = self.h15_find_stock_item(k, h, now) {
+                if let Some(id) = best[k as usize] { // [perf15]
                     self.h15.hosp[h].have[k as usize] += 1;
                     self.h15.stock.push((id, key, NONE));
                     break; // one per hospital and pass
@@ -273,30 +282,80 @@ impl Sim {
         }
     }
 
-    /// Free item of supply kind `k` outside every hospital (best material first for thread
-    /// and cloth: wiki "doctors prefer the most expensive").
-    fn h15_find_stock_item(&self, k: Sup, h: usize, now: u64) -> Option<i32> {
-        let mut best: Option<(i32, i32)> = None;
+    /// [perf15] Bring `h15.sup_ids` up to date: a full scan once, then only the items created
+    /// since (new items always get ids from `next_item_id`); ids of removed items are dropped.
+    fn h15_refresh_sup_ids(&mut self) {
+        while self.h15.soap_mat.len() < self.world.materials.len() {
+            let m = &self.world.materials[self.h15.soap_mat.len()];
+            let soap = m.name.contains("soap") || m.token.contains("SOAP"); // as `h15_is_soap`
+            self.h15.soap_mat.push(soap);
+        }
+        if self.h15.sup_to == self.next_item_id {
+            return;
+        }
+        if self.h15.sup_to == 0 {
+            for it in &self.world.items {
+                if let Some(k) = sup_of_kind(&it.kind) {
+                    self.h15.sup_ids[k as usize].push(it.id);
+                }
+            }
+        } else {
+            for id in self.h15.sup_to..self.next_item_id {
+                if let Some(&ix) = self.item_idx.get(&id) {
+                    if let Some(k) = sup_of_kind(&self.world.items[ix as usize].kind) {
+                        self.h15.sup_ids[k as usize].push(id);
+                    }
+                }
+            }
+        }
+        self.h15.sup_to = self.next_item_id;
+        let idx = &self.item_idx;
+        for v in self.h15.sup_ids.iter_mut() {
+            v.retain(|id| idx.contains_key(id));
+        }
+    }
+
+    /// Free item of each needed supply kind outside every hospital (best material first for
+    /// thread and cloth: wiki "doctors prefer the most expensive").
+    /// [perf15] One scan of the items for all kinds (was one scan per kind): the pass takes at
+    /// most one item per hospital and changes nothing between the kinds, so the result is the same.
+    fn h15_find_stock_items(&self, need: &[bool; NSUP], h: usize, now: u64) -> [Option<i32>; NSUP] {
+        let mut best: [Option<(i32, i32)>; NSUP] = [None; NSUP]; // [perf15]
         let chest = self.h15.hosp[h].chests[0] as usize;
         let cc = self.nav.comp_near(chest);
         if cc == 0 {
-            return None;
+            return [None; NSUP]; // [perf15]
         }
-        for idx in 0..self.world.items.len() {
-            let it = &self.world.items[idx];
-            if sup_of_kind(&it.kind) != Some(k) || !self.item_free(idx, now) || self.h15_sup_of(idx) != Some(k) {
-                continue;
-            }
-            if self.h15_hosp_at(it.pos).is_some() || self.h15.stock.iter().any(|e| e.0 == it.id) || self.world.idx(it.pos).map(|t| self.nav.comp_near(t) != cc).unwrap_or(true) {
-                continue; // inside a hospital already, planned, or out of reach of the chest
-            }
-            let v = if matches!(k, Sup::Thread | Sup::Cloth) { self.world.material(it.mat).map(|m| m.value).unwrap_or(0) } else { 0 };
-            let key = (-v, it.id);
-            if best.map(|b| key < b).unwrap_or(true) {
-                best = Some(key);
-            }
+        for &k in super::SUPS.iter() { // [perf15] only the cached items of the needed kinds
+            if !need[k as usize] { // [perf15]
+                continue; // [perf15]
+            } // [perf15]
+            for &id in &self.h15.sup_ids[k as usize] { // [perf15]
+                let Some(&ix) = self.item_idx.get(&id) else { continue }; // [perf15]
+                let idx = ix as usize; // [perf15]
+                if self.world.items[idx].id != id { // [perf15]
+                    continue; // [perf15]
+                } // [perf15]
+                let it = &self.world.items[idx];
+                if !self.item_free(idx, now) { // [perf15]
+                    continue; // [perf15]
+                } // [perf15]
+                let sup_ok = if k == Sup::Soap { self.h15.soap_mat.get(it.mat as usize).copied().unwrap_or(false) } else { self.h15_sup_of(idx) == Some(k) }; // [perf15] cached soap materials
+                if !sup_ok { // [perf15]
+                    continue;
+                }
+                if self.h15_hosp_at(it.pos).is_some() || self.h15.stock.iter().any(|e| e.0 == it.id) || self.world.idx(it.pos).map(|t| self.nav.comp_near(t) != cc).unwrap_or(true) {
+                    continue; // inside a hospital already, planned, or out of reach of the chest
+                }
+                let v = if matches!(k, Sup::Thread | Sup::Cloth) { self.world.material(it.mat).map(|m| m.value).unwrap_or(0) } else { 0 };
+                let key = (-v, it.id);
+                let b = &mut best[k as usize]; // [perf15]
+                if b.map(|b| key < b).unwrap_or(true) {
+                    *b = Some(key); // [perf15]
+                }
+            } // [perf15]
         }
-        best.map(|b| b.1)
+        best.map(|b| b.map(|b| b.1)) // [perf15]
     }
 
     /// M2 hook in `decide`: an idle hauler takes an open stocking haul.

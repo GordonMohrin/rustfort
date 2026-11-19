@@ -225,6 +225,16 @@ pub(crate) struct Health15 {
     /// Scratch for part walks (no allocation in the 100-tick pass).
     #[serde(skip)]
     pub scratch: Vec<u16>,
+    /// [perf15] Ids of the items whose kind is a supply kind, by kind (a cache for the stocking
+    /// pass; item kinds never change). Rebuilt after loading.
+    #[serde(skip)]
+    pub sup_ids: [Vec<i32>; NSUP],
+    /// [perf15] `sup_ids` covers the item ids below this (0: not built yet).
+    #[serde(skip)]
+    pub sup_to: i32,
+    /// [perf15] Soap material flags by material index (`h15_is_soap`; materials are only appended).
+    #[serde(skip)]
+    pub soap_mat: Vec<bool>,
 }
 
 impl Sim {
