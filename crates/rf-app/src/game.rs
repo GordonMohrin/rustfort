@@ -959,6 +959,7 @@ impl Game {
                 _ if crate::ui::round9::ui_arg(self, k, v) => {} // [app9]
                 _ if crate::ui::round12::ui_arg(self, k, v) => {} // [app12]
                 _ if crate::ui::round13::ui_arg(self, k, v) => {} // [ui13]
+                _ if crate::ui::machines14::ui_arg(self, k, v) => {} // [machines14]
                 _ if crate::ui::round10::ui_arg(self, k, v) => {} // [app10]
                 _ if crate::ui::military::ui_arg(self, k, v) => {} // [mil-ui]
                 _ => eprintln!("unknown --ui state {u}"),

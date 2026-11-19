@@ -767,3 +767,36 @@ player's answers back. The rules themselves are the module owners' sections.
 | World event toggles (weather, reanimation, megabeasts, vampires, werebeasts, diplomats) | ESTIMATE | DF sets these per world (worldgen) or in d_init; Rustfort lets them change in game. |
 | Unit sheet curse markers; accusing a suspected vampire | ESTIMATE | wiki Vampire (drained corpses, interrogation and conviction unmask them; the true name shows after), Undead, Necromancer, Husk, Thrall, Werebeast. DF has no "suspected" marker; Rustfort shows the module's suspicion and the accusation goes to `Sim::accuse_vampire` instead of DF's interrogation in the justice screen. |
 | Alerts: demand box (pauses), Demands / Threats badges, status lines | ESTIMATE | DF pauses and shows a box when a diplomat or liaison wants to meet (wiki Diplomat); the badges are Rustfort's. |
+## Machines and mechanisms (round 14, `[machines14]`, `linkage.rs`, `machinery.rs`)
+
+Spec: `docs/mechanics/machines14.md`. Wiki pages (v50): Lever, Pressure plate, Machine component, Mechanism, Door, Hatch cover, Floodgate, Bridge, Grate, Bars, Gear assembly, Power, Water wheel, Windmill, Screw pump, Roller, Minecart, Cage, Restraint, Support.
+
+| Rule | Class | Notes |
+|---|---|---|
+| Lever sends its new state; plates send "on" at once and "off" 99 ticks after the condition ends (no repeat "on") | OK | w:Lever "On/Off states", w:Pressure plate "Operation". |
+| "On" opens doors, hatches, floodgates, grates, bars; raises/retracts bridges; retracts spikes; disables track stops | OK | Fixes the inverted doors/hatches/spikes of round 4 (F1, F2). Linked doors and hatches are shut until "on". |
+| Gear assemblies toggle on every signal; a disengaged gear transmits nothing; gears do not block movement | OK | w:Gear assembly. Two signals in one tick = two toggles = no change (ESTIMATE). |
+| Reaction times: doors, hatches, gears, cages, chains, supports 0; spikes 40; bridges, floodgates, grates, bars 100; track stop off 0 / back on 40 | OK | w:Lever "Activation of the devices", plate timing table. |
+| Refractory: delayed devices ignore signals until the change took effect | OK | w:Lever. Spikes treated like the other delayed devices (ESTIMATE); track stops not refractory (ESTIMATE). |
+| "On" and "off" in the same tick toggle the device | OK | w:Lever. |
+| Plate-before-device one-tick build-order offset | MISSING | Every device acts as if built after the plate (ESTIMATE, matches levers). |
+| Plate creature trigger: weight sum in [min, max], citizens/tame only with the setting, merchants, diplomats and TRAPAVOID never, unconscious always | OK | Weight = body size; worn equipment not added (ESTIMATE). Visitors do not trigger (ESTIMATE). Webbed creatures: MISSING (no web state). |
+| Plate water / magma depth range, minecart gross weight range on track | OK | Cart weight = cart + load + rider body size / 1000 (ESTIMATE). Fast carts trigger in every tile they enter. |
+| One-use plates fire once, deconstruct and destroy their mechanisms | OK | Plates without exported trigger flags count as creature plates that reset (ESTIMATE, old exports). Default range 10 000-2 000 000 (ESTIMATE: DF's dialog defaults are undocumented). |
+| Plates re-scanned every 100 ticks for creatures that arrived without walking | ESTIMATE | Safety net for flung, fallen and spawned creatures. |
+| Link job: a Mechanic carries 2 mechanisms (oldest first), installs the 1st in the target, the 2nd in the trigger | OK | w:Lever "Linking". `LINK_WORK` 100 ticks per end, scaled by Mechanics skill (ESTIMATE); XP per end (ESTIMATE). Waiting jobs whose trigger or target is gone are dropped. Stand tile: on doors/hatches (locked ones cannot be linked), else the target or a neighbour. No signal on completion. |
+| Linkable: doors, hatches, floodgates, bridges, spikes, grates, bars, gears, track stops, cages, chains, supports | OK | Cages release their occupants and come apart, chains release, supports come down (cave-in check) and free their tile. Grates and bars take their nav state from their `OPEN` flag (imported open grates are passable, closed floor grates/bars are floors, player-built ones block once built, removed ones free their tiles). The chained creature's chain item and lever ownership: MISSING. |
+| Items jam doors and floodgates; floodgates close by themselves once clear (checked every 10 ticks, ESTIMATE), doors need a new signal | OK | w:Door, w:Floodgate. An "on" to a jammed floodgate cancels the pending close. Creatures holding a door open: MISSING. |
+| Closing doors/floodgates and lowering bridges destroy the liquid on their tiles | OK | w:Door, w:Bridge. Raising bridges do not move items yet (MISSING). |
+| A creature of size 1 200 000+ stops a bridge; lowering onto it deconstructs the bridge | OK | w:Bridge. |
+| Track stops are `Trap`/`TrackStop` for the cart physics, with the exported friction | OK | Fix of a round-12 bug (stops never braked). |
+| Carts stopped by closed doors, raised bridges; lowered bridges as crossings | MISSING | Needs `cart_next` (owner of the cart physics). |
+| Power ports: pumps also below (stacks), windmill 12-tile ring, wheel beside its centre, long rollers across only, floors block vertical links | OK | w:Power, w:Screw pump, w:Windmill, w:Water wheel, w:Roller. Wheel ends and above the centre kept (ESTIMATE). Gears on stairs: MISSING. |
+| Water wheel needs 4/7 flowing water | OK | Flow = water moved there in the last 200 ticks (ESTIMATE). Persistent edge-drain flow mark and rivers: MISSING. |
+| Screw pump: 49-tick run-on, newest first, obsidian into the other liquid, pumped water clean, open intake column | OK | Run-on counted from the last powered balance (balances every 100 ticks, ESTIMATE), capped at 49 ticks after an off-cadence power loss (gear disengaged). Output tile blocking, pressurised output, operator on the input tile: MISSING. |
+| Hanging machines collapse when their support is removed or a gear disengages | MISSING | |
+| Windmill wind per fort (not per day) | MISSING | Waits for `[weather13]` climate. |
+| Millstone job cancel on power loss, lever owner and repeat, frozen machines | MISSING | |
+| Machines and devices built from the UI (`new_cons` recipes) and the missing build options (lever, plate, bridge, floodgate, hatch, grates, bars, support, chain) | OK | Recipes from the wiki infoboxes (`machinery::mech_cons`). ESTIMATE: screw pumps need no enormous corkscrew, bridges at most 4 items, track stops 1 material + 1 mechanism. Built cages and placement rules (floodgate on unflooded floor, bridge perimeter, orthogonal support): MISSING. |
+| Exporter: gear disengaged, roller speed/direction, pump direction, machine power, flowing-water tiles | MISSING | Spec section 11; DFHack field names to be checked first. |
+| UI: link target picker (filters, badges, hover outline, mechanism count), link jobs, plate settings and live state, pending/jammed device states, power network overlay (colour per net, port links, +P/-U, disengaged gears, pump arrows, "no flow" wheels), route view polish (stop friction, rollers, track plates, cart-blocking devices, cart speed arrows), lever and plate sprites | OK | `ui/machines14.rs`; `--ui m14-link,m14-plate,m14-power,m14-routes`. |

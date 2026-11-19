@@ -110,7 +110,7 @@ const PART_OTHER: u8 = 6;
 pub const NO_PLANT: u16 = u16::MAX;
 /// Construction need: any building material the worker's labors allow (boulder/block = Masonry,
 /// log = Carpentry).
-const ANY_MAT: u8 = 200;
+pub(crate) const ANY_MAT: u8 = 200; // [machines14] pub(crate): machinery recipes
 
 /// What the simulation knows about a plant species.
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)] // [saves11]
@@ -595,6 +595,7 @@ fn part_of(part: &str) -> u8 {
 fn furniture_kind(kind: &str) -> bool {
     matches!(kind, "BED" | "TABLE" | "CHAIR" | "DOOR" | "CABINET" | "BOX" | "COFFIN" | "ARMORSTAND" | "WEAPONRACK" | "STATUE" | "SLAB")
         || matches!(kind, "BALLISTAPARTS" | "CATAPULTPARTS" | "BOLT_THROWER_PARTS") // [siege12] siege engine parts
+        || matches!(kind, "FLOODGATE" | "HATCH_COVER" | "GRATE" | "PIPE_SECTION") // [machines14] device parts
 }
 
 /// Building kind -> furniture item kind it is built from.
@@ -1171,7 +1172,7 @@ impl Sim {
             },
             k => match furniture_item_for(k) {
                 Some(item) => (vec![(pc::FURNITURE, item)], labor::HAUL_FURNITURE),
-                None => return None,
+                None => crate::machinery::mech_cons(b)?, // [machines14] machines and mechanism devices
             },
         };
         Some(Cons { bid: b.id, bi, site, claimed: false, blocked_until: 0, needs, labor })
@@ -2120,7 +2121,7 @@ impl Sim {
                     let taken = wj.items; // [siege12] several parts of one kind (3 ballista parts)
                     self.find_items(site, c, now, 1, &mut found, |sim, i| sim.imeta[i].pc == pc::FURNITURE && sim.world.items[i].kind == kind && !taken[..k].contains(&sim.world.items[i].id))
                 }
-                cl => self.find_items(site, c, now, 1, &mut found, |sim, i| sim.imeta[i].pc == cl),
+                cl => { let taken = wj.items; self.find_items(site, c, now, 1, &mut found, |sim, i| sim.imeta[i].pc == cl && !taken[..k].contains(&sim.world.items[i].id)) } // [machines14] several items of one class
             }
             match found.first() {
                 Some(&id) if !wj.items[..k].contains(&id) => {
@@ -2597,6 +2598,8 @@ impl Sim {
         let b = &mut self.world.buildings[bi];
         b.built = true;
         b.stage = 1;
+        if crate::machinery::mech_cons(b).is_some() { self.defense_dirty(); self.link.nb = usize::MAX; } // [machines14] new levers, plates, devices
+        let b = &mut self.world.buildings[bi]; // [machines14]
         b.mat = mat;
         b.items.extend(ids);
         let kind = b.kind.clone();

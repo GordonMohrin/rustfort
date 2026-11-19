@@ -410,6 +410,7 @@ pub fn draw_map(g: &mut Game) {
     crate::ui::round9::draw_map_overlay(g); // [app9] patrol routes
     crate::ui::round12::draw_map_overlay(g); // [app12] route stops, carts, power overlay, aim
     crate::ui::round13::draw_map_overlay(g); // [ui13] rain, snow, fog, evil clouds, snow cover
+    crate::ui::machines14::draw_map_overlay(g); // [machines14] power networks, route view polish, picker hover
     draw_selection_and_cursor(g);
 }
 

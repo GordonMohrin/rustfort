@@ -453,6 +453,17 @@ const APP12_OPTIONS: &[BuildOption] = &[
     BuildOption { kind: "SiegeEngine", subtype: "Ballista", label: "Ballista", category: "Siege engines", size: (3, 3), needs: "1 ballista parts", dragged: false },
     BuildOption { kind: "SiegeEngine", subtype: "Catapult", label: "Catapult", category: "Siege engines", size: (3, 3), needs: "1 catapult parts", dragged: false },
     BuildOption { kind: "SiegeEngine", subtype: "BoltThrower", label: "Bolt thrower", category: "Siege engines", size: (1, 1), needs: "1 bolt thrower parts", dragged: false },
+    BuildOption { kind: "Trap", subtype: "Lever", label: "Lever", category: "Mechanisms", size: (1, 1), needs: "1 mechanism", dragged: false }, // [machines14]
+    BuildOption { kind: "Trap", subtype: "PressurePlate", label: "Pressure plate", category: "Mechanisms", size: (1, 1), needs: "1 mechanism per trigger type", dragged: false }, // [machines14]
+    BuildOption { kind: "Bridge", subtype: "", label: "Bridge", category: "Mechanisms", size: (1, 1), needs: "1 stone, log or block per 4 tiles (+1); drag up to 31x31", dragged: true }, // [machines14]
+    BuildOption { kind: "Floodgate", subtype: "", label: "Floodgate", category: "Mechanisms", size: (1, 1), needs: "1 floodgate", dragged: false }, // [machines14]
+    BuildOption { kind: "Hatch", subtype: "", label: "Hatch cover", category: "Mechanisms", size: (1, 1), needs: "1 hatch cover", dragged: false }, // [machines14]
+    BuildOption { kind: "GrateWall", subtype: "", label: "Wall grate", category: "Mechanisms", size: (1, 1), needs: "1 grate", dragged: false }, // [machines14]
+    BuildOption { kind: "GrateFloor", subtype: "", label: "Floor grate", category: "Mechanisms", size: (1, 1), needs: "1 grate", dragged: false }, // [machines14]
+    BuildOption { kind: "BarsVertical", subtype: "", label: "Vertical bars", category: "Mechanisms", size: (1, 1), needs: "1 metal bar", dragged: false }, // [machines14]
+    BuildOption { kind: "BarsFloor", subtype: "", label: "Floor bars", category: "Mechanisms", size: (1, 1), needs: "1 metal bar", dragged: false }, // [machines14]
+    BuildOption { kind: "Support", subtype: "", label: "Support", category: "Mechanisms", size: (1, 1), needs: "1 stone, log, block or bar", dragged: false }, // [machines14]
+    BuildOption { kind: "Chain", subtype: "", label: "Chain", category: "Mechanisms", size: (1, 1), needs: "1 chain or rope", dragged: false }, // [machines14]
 ];
 
 /// [app12] Pump directions (DF "pump from north" ...): the input end.
@@ -485,6 +496,7 @@ impl Sim {
             Some(("Rollers", _)) => ROLLER_DIRECTIONS,
             Some(("Trap", "TrackStop")) => DUMP_DIRECTIONS,
             Some(("SiegeEngine", _)) => FACINGS,
+            Some(("Bridge", _)) => &["N", "E", "S", "W", "Retracting"], // [machines14] raise direction
             _ => &[],
         }
     }
@@ -516,7 +528,9 @@ impl Sim {
             return self.can_place(opt, a, if o.dragged { Pos::new(x2, y2, lo.z) } else { a });
         }
         let (w, h) = (x2 - x1 + 1, y2 - y1 + 1);
-        if o.dragged {
+        if o.kind == "Bridge" && (w > 31 || h > 31) { // [machines14] wiki Bridge: at most 31x31
+            return Err("at most 31x31".into()); // [machines14]
+        } else if o.dragged && o.kind != "Bridge" { // [machines14] bridges are rectangles
             if w > 1 && h > 1 {
                 return Err("one tile wide (a straight line)".into());
             }
@@ -529,7 +543,7 @@ impl Sim {
         } else if (w, h) != self.build_size(opt, dir) {
             return Err("wrong size".into());
         }
-        let hanging = matches!(o.kind, "ScrewPump" | "WaterWheel" | "Windmill" | "GearAssembly" | "AxleHorizontal" | "AxleVertical");
+        let hanging = matches!(o.kind, "ScrewPump" | "WaterWheel" | "Windmill" | "GearAssembly" | "AxleHorizontal" | "AxleVertical" | "Bridge" | "Hatch" | "GrateFloor" | "BarsFloor"); // [machines14] bridges, hatches, floor grates/bars span gaps
         for y in y1..=y2 {
             for x in x1..=x2 {
                 let p = Pos::new(x, y, lo.z);
