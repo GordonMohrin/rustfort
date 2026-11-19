@@ -1666,6 +1666,7 @@ impl Sim {
         self.cx.engr_at.insert(i as u32, (self.world.engravings.len() - 1) as u32);
         self.world.tiles[i].flags &= !tile_flags::DESIG_ENGRAVE;
         self.cx.stats.engraved += 1;
+        self.prefs_work(s, t.mat, "", "", "", now); // [prefs15] satisfied at work: liked stone
         true
     }
 

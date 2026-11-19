@@ -218,6 +218,7 @@ impl Sim {
             needs: a.needs,
             art,
             record: a.record.min(self.moods.records.len().saturating_sub(1)),
+            want_mat: rf_core::NO_MAT, // [prefs15]
         });
         self.ai[s_].task = Task::Mood;
         self.ai[s_].wake = self.ticks + 1;

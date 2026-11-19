@@ -188,9 +188,8 @@ impl Sim {
             let q = crate::skills::quality_roll(rating, &mut r).min(5); // [skills9] same roll as crafts (DF meals average ~1.3)
             let it = &mut self.world.items[i];
             it.quality = q;
-            // Ingredient value 2 per unit (estimate for unrecorded values) x quality multiplier.
-            let base = if it.value > 0 { it.value } else { 2 * it.stack.max(1) };
-            it.value = base * crate::trade::quality_mult(q) as i32;
+            // [prefs15] v50 meal value: (1 x mult + bonus) + ingredients 2 per unit (ESTIMATE).
+            it.value = crate::item_value::item_value_v50("FOOD", "", 1, q, it.stack).min(i32::MAX as i64) as i32; // [prefs15]
             self.life.rep.meal_quality[q as usize] += 1;
             if q == 5 {
                 masterworks.push(id); // [calib11-social]
@@ -332,6 +331,7 @@ impl Sim {
                 if q >= 1 {
                     self.feel(s, "WearItem", Class::PosMild, 50 + 10 * q as i32, -1, q as i32, now);
                 }
+                self.prefs_wore(s, q); // [prefs15] BeExtravagant: wearing a quality item
             }
             self.ai[s].wake = now + 1;
             return false;

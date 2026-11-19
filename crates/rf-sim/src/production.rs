@@ -2413,6 +2413,9 @@ impl Sim {
                     }
                 }
                 self.skills_job_done(s, rec.skill, first_new, now); // [skills9] quality roll, 30 (+30 quality) XP
+                if rec.skill == "SMELT" && rec.job != "MeltMetalObject" {
+                    self.prefs_smelted_from(first_new); // [prefs15] metals the fort smelted (mood demands)
+                }
                 self.prod.done[recipe as usize] += 1;
                 // Remove the queue entry (repeat jobs stay), count the order.
                 if let Some(si) = self.prod.shops.iter().position(|sh| sh.bid == bid) {

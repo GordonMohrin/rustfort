@@ -75,6 +75,10 @@ pub mod undead; // [contract13] owner [undead13]: reanimation, undead, necromanc
 pub mod vampires; // [contract13] owner [vampire13]: vampires, werebeasts
 pub mod megabeasts; // [contract13] owner [mega13]: megabeasts, semi-megabeasts, titans
 pub mod diplomacy; // [contract13] owner [diplo13]: liaisons, diplomats, relations, war/peace
+mod prefs; // [prefs15] unit preferences: quality bonus, admiring, work, food, needs
+pub mod item_value; // [prefs15] DF v50 item value (quality multipliers + flat bonus)
+mod mood_prefs; // [prefs15] strange mood artifacts and demands from preferences
+pub mod prefs15_api; // [prefs15] public API for preferences and item value
 pub use round8_api::AnimalInfo;
 pub mod construct; // [construct]
 pub use construct::ConstructReport; // [construct]
@@ -705,6 +709,7 @@ pub struct Sim {
     vamp: vampires::Vamp, // [contract13] owner [vampire13]
     mega: megabeasts::Mega, // [contract13] owner [mega13]
     diplo: diplomacy::Diplo, // [contract13] owner [diplo13]
+    prefs: prefs::Prefs, // [prefs15]
 }
 
 /// [perf9] Debug: A* searches with at least this many nodes are printed (`RF_PATH_LOG`, set
@@ -861,6 +866,7 @@ impl Sim {
             vamp: vampires::Vamp::default(), // [contract13]
             mega: megabeasts::Mega::default(), // [contract13]
             diplo: diplomacy::Diplo::default(), // [contract13]
+            prefs: prefs::Prefs::default(), // [prefs15]
         };
         sim.restore_core(&saved); // [saves10] tick count first: the init passes below use it
         sim.init_plants();
@@ -939,6 +945,7 @@ impl Sim {
                 no_food_until: 0,
             });
         }
+        self.prefs_init_units(); // [prefs15]
     }
 
     fn init_items(&mut self) {
@@ -1310,6 +1317,7 @@ impl Sim {
         self.vampires_hash(&mut mix); // [contract13] owner [vampire13]
         self.megabeasts_hash(&mut mix); // [contract13] owner [mega13]
         self.diplomacy_hash(&mut mix); // [contract13] owner [diplo13]
+        self.prefs_hash(&mut mix); // [prefs15]
         h
     }
 
@@ -2122,6 +2130,8 @@ impl Sim {
                 let kind = self.jobs[j as usize].kind;
                 let tile = self.jobs[j as usize].tile as usize;
                 if self.jobs[j as usize].live {
+                    let wmat = self.world.tiles[tile].mat; // [prefs15]
+                    self.prefs_work(s, wmat, "", "", "", now); // [prefs15] satisfied at work: liked stone/wood
                     match kind {
                         JobKind::Dig(d) => self.dig_tile(s, tile, d, now),
                         JobKind::Chop => self.fell_tree(s, tile, now),
@@ -3217,6 +3227,7 @@ impl Sim {
 
     fn drop_item(&mut self, s: usize, id: i32, tile: u32) {
         if self.store_drop(s, id, tile) {
+            self.prefs_hauled(s, id, self.ticks); // [prefs15] AcquireObject: stored in a bin
             return; // [industry] stored into a bin/barrel
         }
         let uidx = self.ai[s].uidx;
@@ -3242,6 +3253,7 @@ impl Sim {
                 if !self.is_stored(idx) {
                     self.haul_add(id);
                 }
+                self.prefs_hauled(s, id, self.ticks); // [prefs15] AcquireObject: stored in a stockpile
                 return;
             }
         }

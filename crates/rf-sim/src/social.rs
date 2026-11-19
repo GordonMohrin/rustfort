@@ -482,6 +482,11 @@ struct Furn {
     room: u32,
     #[serde(with = "crate::saves11::interned")] // [saves11]
     kind: crate::saves11::SStr,
+    /// [prefs15] Main item id + 1 (0 = none) and the furniture value (admiring by value).
+    #[serde(default)] // [prefs15]
+    item1: i32, // [prefs15]
+    #[serde(default)] // [prefs15]
+    value: i32, // [prefs15]
 }
 
 /// Per-unit social state that is not part of `rf_core::Unit` (rebuilt on load).
@@ -755,7 +760,8 @@ impl Sim {
                     }
                 }
             }
-            sc.furn.push(Furn { pos: b.center, bid: b.id, quality: q, room, kind });
+            let item1 = b.items.first().map(|&id| id + 1).unwrap_or(0); // [prefs15]
+            sc.furn.push(Furn { pos: b.center, bid: b.id, quality: q, room, kind, item1, value: v }); // [prefs15]
         }
         self.social_revalue_rooms();
         let sc = &mut self.social;
@@ -1018,7 +1024,7 @@ impl Sim {
         e.1 += 1;
     }
 
-    fn satisfy(&mut self, s: usize, need: &str) -> i32 {
+    pub(crate) fn satisfy(&mut self, s: usize, need: &str) -> i32 { // [prefs15] pub(crate)
         let u = &mut self.world.units[self.ai[s].uidx];
         let mut before = i32::MAX;
         for n in u.needs.iter_mut().filter(|n| n.id == need) {
@@ -1057,7 +1063,9 @@ impl Sim {
         let p = &mut self.social.psy[s];
         let same = p.drinks[0] == mat && p.drinks[1] == mat;
         p.drinks = [p.drinks[1], mat];
-        if q >= 1 {
+        let vpu = { let it = &self.world.items[i as usize]; (it.value / it.stack.max(1)) as i64 }; // [prefs15]
+        if self.prefs_drank(s, mat, vpu, same, now) { // [prefs15] GoodDrink only for a liked booze
+        } else if q >= 1 { // [prefs15]
             let class = if q >= 4 { Class::Pos } else { Class::PosMild };
             self.feel(s, "GoodDrink", class, 60 + 20 * q, -1, q, now);
         } else if same {
@@ -1083,6 +1091,7 @@ impl Sim {
             p.meals = [p.meals[1], mat];
             if rotten {
                 self.feel(s, "AteRotten", Class::Neg, 120, -1, 0, now);
+            } else if self.prefs_ate(s, mat, value as i64, meal, same, now) { // [prefs15] GoodMeal by preference / value
             } else if meal {
                 let class = match q {
                     0..=1 => Class::PosMild,
@@ -1241,7 +1250,8 @@ impl Sim {
         let mut r = Rng::for_unit(self.seed, s, now, 0x5a71);
         let rating = self.world.units[self.ai[s].uidx].skill(skill);
         // "Satisfied at work": more likely the better the dwarf is at it (estimate).
-        if r.chance(2 + rating.clamp(0, 15) as u32, 60) {
+        // [prefs15] With preferences on, only work with liked things counts (`prefs_work`).
+        if r.chance(2 + rating.clamp(0, 15) as u32, 60) && !self.prefs_on() { // [prefs15]
             self.feel(s, "SatisfiedAtWork", Class::PosMild, 60, -1, 0, now);
         }
         if leveled {
@@ -1319,7 +1329,35 @@ impl Sim {
         }
     }
 
-    fn is_citizen_slot(&self, s: usize) -> bool {
+    /// [prefs15] Admire the most valuable furniture within 2 tiles (same z) in this dwarf's
+    /// eyes (wiki Preferences, Item quality: quality does not change how often).
+    fn prefs_admire(&mut self, s: usize, pos: Pos, uid: i32, r: &mut Rng, now: u64) { // [prefs15]
+        let mut best: Option<(i64, i32, usize)> = None; // [prefs15]
+        for k in 0..self.social.furn.len() { // [prefs15]
+            let fu = self.social.furn[k]; // [prefs15]
+            if fu.pos.z != pos.z || fu.pos.dist(pos) > 2 { // [prefs15]
+                continue; // [prefs15]
+            } // [prefs15]
+            let v = self.prefs_perceived_value(s, fu.item1 - 1, fu.value.max(10) as i64); // [prefs15]
+            if best.map(|b| (v, fu.bid) > (b.0, b.1)).unwrap_or(true) { // [prefs15]
+                best = Some((v, fu.bid, k)); // [prefs15]
+            } // [prefs15]
+        } // [prefs15]
+        let Some((v, _, k)) = best else { return }; // [prefs15]
+        if !r.chance(crate::prefs::ADMIRE_NUM, crate::prefs::ADMIRE_DEN) { // [prefs15]
+            return; // [prefs15]
+        } // [prefs15]
+        let fu = self.social.furn[k]; // [prefs15]
+        let own = fu.room != NONE && self.social.rooms[fu.room as usize].owner == uid; // [prefs15]
+        let tier = crate::prefs::admire_tier(v); // [prefs15]
+        let class = match tier { 0 | 1 => Class::PosMild, 2 => Class::Pos, _ => Class::PosStrong }; // [prefs15]
+        self.feel(s, if own { "AdmireOwnBuilding" } else { "AdmireBuilding" }, class, 50 + 25 * tier, fu.bid, v.min(i32::MAX as i64) as i32, now); // [prefs15]
+        self.satisfy(s, "AdmireArt"); // [prefs15]
+        self.prefs.rep.admired += 1; // [prefs15]
+        self.social.psy[s].next_admire = now + DAY as u64; // [prefs15]
+    } // [prefs15]
+
+    pub(crate) fn is_citizen_slot(&self, s: usize) -> bool { // [prefs15] pub(crate)
         let ai = &self.ai[s];
         let u = &self.world.units[ai.uidx];
         u.flags.citizen && !u.flags.dead && !u.flags.animal && (ai.kind == Kind::Worker || u.flags.caged)
@@ -1448,7 +1486,9 @@ impl Sim {
             seen.push(id);
             self.feel(s, "SawDeadBody", Class::Horror, 120, id, 0, now);
         }
-        if now >= self.social.psy[s].next_admire {
+        if now >= self.social.psy[s].next_admire && self.prefs_on() {
+            self.prefs_admire(s, pos, uid, &mut r, now); // [prefs15] admire by value in the dwarf's eyes
+        } else if now >= self.social.psy[s].next_admire { // [prefs15]
             let min_q = if f.art >= 70 { 2 } else { 3 };
             let best = self
                 .social
@@ -1953,7 +1993,7 @@ impl Sim {
             "AdmireBuilding" | "AdmireOwnBuilding" => {
                 let kind = self.world.building(e.subthought).and_then(|b| furniture_kind(&b.kind)).unwrap_or("building");
                 let own = if e.thought == "AdmireOwnBuilding" { "their own " } else { "" };
-                let w = QUALITY_WORD[q.min(6)];
+                let w = if e.severity >= 7 { ["very fine", "splendid", "wonderful", "completely sublime"][crate::prefs::admire_tier(e.severity as i64) as usize] } else { QUALITY_WORD[q.min(6)] }; // [prefs15] severity = value
                 if own.is_empty() {
                     format!("near {} {kind}", article(w))
                 } else {
