@@ -638,3 +638,11 @@ Seams only: no rule is simulated yet; each module owner adds its own section bel
 | Cart hits cart | ESTIMATE | wiki Minecart (collisions happen; no formula published). 1-D elastic collision by load weight when a cart enters a tile with another cart on the ground and is faster along the line of travel; the hitter stays on its tile; a hit idle/stopped cart starts rolling. |
 | Cart hits creature | ESTIMATE | wiki Minecart (fast carts knock creatures down and hurt them). From 25 000 speed: creatures on the entered tile are unconscious for momentum/50 ticks (10..1 000); the cart loses momentum as if hitting 60Γ. Injuries are MISSING. |
 | Checkpoint effect, cart-on-cart derailing | MISSING | |
+
+Speed work in round 13 (`[perf13]`, no rule change, the state hash stays the same):
+
+| Change | Class | Notes |
+|---|---|---|
+| Cavern detection (`detect_caverns`) on a bitset | OK | One linear pass marks open cavern tiles (tiletype shape looked up per tiletype, not per tile); the flood fill clears bits instead of a `Vec<bool>`. Same regions in the same order; about 4.5x faster (450 -> 90 Mcyc per season on r5). |
+| Item scans prefiltered by production class | OK | Container scans (`rebuild_containers`, `bring_containers`) and the reaction census only compare kind strings for items whose class can match; the food census asks the brew/cook tests only for food classes. |
+| Profile counters | OK | `--features prof`: production pass and per-tick pass sub-steps; coarse counters use the thread's own cycles on Windows (rdtsc counts wall time, which a busy machine inflates). |

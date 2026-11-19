@@ -12,7 +12,7 @@ use std::collections::HashMap;
 /// is an empty inline function. Counts are inclusive (a nested counter is also in its caller).
 #[allow(dead_code)] // the names and the table size are only read with the `prof` feature
 pub(crate) mod prof {
-    pub const N: usize = 68; // [perf12] +16 decide sub-calls; [perf13] +13 pass sub-calls
+    pub const N: usize = 76; // [perf12] +16 decide sub-calls; [perf13] +13 pass sub-calls
     pub const NAMES: [&str; N] = [
         "think worker", "think other", "combat_think", "fighter_think", "soldier_think", "civilian_think", "find_target", "attack",
         "strike", "threat_scan", "request_path", "decide", "sync_wounds", "solve_paths", "commit_paths", "pursue",
@@ -26,10 +26,12 @@ pub(crate) mod prof {
         "p census", "p ind_census", "p orders", "p shops", "p farm_work", "p storage",
         "x defense", "x moods", "x health", "x caverns", "x animals", "x society2", "x growth",
         "c detect", "c beasts_daily", "i rx_items", "s containers", "s bring", "s rot",
+        "tmp0", "tmp1", "tmp2", "tmp3", "tmp4", "tmp5", "tmp6", "tmp7",
     ];
     pub const P0: usize = 49; // [perf13] first production sub-call counter
     pub const X0: usize = 55; // [perf13] first per-tick pass counter
     pub const Y0: usize = 62; // [perf13] finer counters
+    pub const TMP: usize = 68; // [perf13] scratch counters for ad-hoc profiling (rdtsc)
     pub const D0: usize = 33; // [perf12] first decide sub-call counter (order of NAMES)
     pub const HAUL_NO_ITEM: usize = 30;
     pub const HAUL_NO_DEST: usize = 31;
@@ -77,9 +79,39 @@ pub(crate) mod prof {
             // SAFETY: rdtsc has no preconditions on x86_64.
             unsafe { core::arch::x86_64::_rdtsc() }
         }
+        /// [perf13] The calling thread's own CPU cycles on Windows (`QueryThreadCycleTime`):
+        /// rdtsc counts wall time, which other busy programs inflate by 2x and more. The call
+        /// costs about 1.5 kcyc, so only the coarse pass counters (from `P0` on) use it.
+        #[cfg(windows)]
+        #[inline(always)]
+        pub fn tc() -> u64 {
+            extern "system" {
+                fn GetCurrentThread() -> isize;
+                fn QueryThreadCycleTime(thread: isize, cycles: *mut u64) -> i32;
+            }
+            let mut c = 0u64;
+            // SAFETY: plain Win32 calls with a valid out pointer; the pseudo handle needs no closing.
+            unsafe {
+                QueryThreadCycleTime(GetCurrentThread(), &mut c);
+            }
+            c
+        }
+        #[cfg(not(windows))]
+        #[inline(always)]
+        pub fn tc() -> u64 {
+            t()
+        }
+        #[inline(always)]
+        pub fn t_for(k: usize) -> u64 {
+            if (super::P0..super::TMP).contains(&k) {
+                tc()
+            } else {
+                t()
+            }
+        }
         #[inline(always)]
         pub fn add(k: usize, t0: u64) {
-            CYC[k].fetch_add(t().wrapping_sub(t0), Relaxed);
+            CYC[k].fetch_add(t_for(k).wrapping_sub(t0), Relaxed); // [perf13] t_for
             CNT[k].fetch_add(1, Relaxed);
         }
         pub fn report() -> Vec<(&'static str, u64, u64)> {
@@ -93,19 +125,23 @@ pub(crate) mod prof {
             0
         }
         #[inline(always)]
+        pub fn t_for(_k: usize) -> u64 {
+            0
+        }
+        #[inline(always)]
         pub fn add(_k: usize, _t0: u64) {}
         pub fn report() -> Vec<(&'static str, u64, u64)> {
             Vec::new()
         }
     }
-    pub use imp::{add, report, t};
+    pub use imp::{add, report, t, t_for}; // [perf13] t_for
 
     /// Counts the cycles until it is dropped (`let _p = prof::Guard::new(prof::STRIKE);`).
     pub struct Guard(#[allow(dead_code)] usize, #[allow(dead_code)] u64);
     impl Guard {
         #[inline(always)]
         pub fn new(k: usize) -> Guard {
-            Guard(k, t())
+            Guard(k, t_for(k)) // [perf13]
         }
     }
     #[cfg(feature = "prof")]
