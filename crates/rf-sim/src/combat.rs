@@ -1665,6 +1665,9 @@ impl Sim {
     pub(crate) fn strike(&mut self, a: usize, d: usize, now: u64, r: &mut Rng, b: Blow) -> bool {
         let _p = crate::perf::prof::Guard::new(crate::perf::prof::STRIKE); // [perf11]
         let Blow { atk, armed, wmech, wsize, wquality, wdesc, skill: a_skill, an, dn, momentum } = b; // [ranged]
+        if !self.mega.slots.is_empty() { // [mega13]
+            self.mega_blow(a, d, false); // [mega13] who last hit a megabeast
+        } // [mega13]
         // --- hit location
         let db = self.combat.f[d].body as usize;
         let mut part = u16::MAX;
@@ -1981,6 +1984,9 @@ impl Sim {
             };
             self.combat_kill(d, now, text);
             self.combat.stats.kills += 1;
+            if !self.mega.slots.is_empty() { // [mega13]
+                self.mega_blow(a, d, true); // [mega13] a megabeast's kill
+            } // [mega13]
             return true;
         }
         self.check_pain(d, now);
@@ -2825,6 +2831,9 @@ impl Sim {
         if !self.caverns.powers.is_empty() && self.syndrome_breath(s, now) {
             return; // [audit-combat] forgotten beast breath and webs
         }
+        if !self.mega.fire.is_empty() && self.mega_breath(s, now) { // [mega13]
+            return; // [mega13] dragonfire
+        } // [mega13]
         let p0 = prof::t();
         let wrecking = self.war_wreck_think(s, now);
         prof::add(prof::WRECK, p0);

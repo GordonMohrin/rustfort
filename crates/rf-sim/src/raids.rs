@@ -275,7 +275,7 @@ impl Sim {
                 .iter()
                 .find(|e| e.race == race && (e.relation == "War" || kind == RaidKind::Thief))
                 .map(|e| e.id)
-                .or_else(|| self.world.units.iter().filter(|u| u.flags.hostile && u.invader_civ >= 0).map(|u| u.invader_civ).next())
+                .or_else(|| self.world.units.iter().filter(|u| u.flags.hostile && u.invader_civ >= 0 && u.invader_civ != crate::megabeasts::MEGA_CIV).map(|u| u.invader_civ).next()) // [mega13] a megabeast is no civilization
                 .unwrap_or(9_999)
         });
         let mount_race = if mounts > 0 { self.war_mount_race() } else { String::new() };

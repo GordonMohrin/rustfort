@@ -1446,6 +1446,9 @@ impl Sim {
         if now % rf_core::TICKS_PER_DAY as u64 == megabeasts::MEGA_DAY_PHASE {
             self.megabeasts_day(now); // [contract13] owner [mega13]
         }
+        if now % megabeasts::BURN_PERIOD == megabeasts::BURN_PHASE && !self.mega.burning.is_empty() { // [mega13]
+            self.mega_burn_tick(now); // [mega13] dragonfire burns
+        } // [mega13]
         if now % rf_core::TICKS_PER_DAY as u64 == diplomacy::DIPLO_DAY_PHASE {
             self.diplomacy_day(now); // [contract13] owner [diplo13]
         }

@@ -268,6 +268,8 @@ pub struct MegabeastInfo {
     pub kills: u32,
     /// Unit that dealt the killing blow, -1 if alive or unknown.
     pub slain_by: i32,
+    /// Caught in a cage trap (still alive, no longer a threat). // [mega13]
+    pub caught: bool, // [mega13]
 }
 
 /// [mega13] Counters for tests and the bench.
