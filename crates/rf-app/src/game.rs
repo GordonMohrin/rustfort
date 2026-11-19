@@ -878,6 +878,10 @@ impl Game {
                     self.r4.depot_filter = v.to_string();
                 }
                 "nobles" => self.screen = Screen::Nobles,
+                "nobles15" => {
+                    self.screen = Screen::Nobles; // [nobles15]
+                    crate::ui::nobles15::open(); // [nobles15]
+                }
                 "appoint" => {
                     self.screen = Screen::Nobles;
                     let tok = if v.is_empty() { self.sim.world.nobles.iter().find(|n| crate::ui::nobles::filled_by(&n.token) == crate::ui::nobles::Filled::ByFort).map(|n| n.token.clone()) } else { Some(v.to_string()) };
