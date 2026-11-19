@@ -646,7 +646,7 @@ Module `crates/rf-sim/src/decay15.rs` (spec: `docs/mechanics/decay15.md`). On by
 | Remains | rot at 14 days and vanish 14 later for species with hair; other species keep | w:Remains; export (only bat remains rotted) | ESTIMATE |
 | Reserved items | a rotten item reserved by a job or an undead claim is not destroyed until freed | spec M2.4 | OK |
 | Miasma sources | rotten GENERATES_MIASMA items (flesh, organs, meals, cheese, raw fish; not skin, plants, remains) lying loose on Subterranean tiles, not under 7/7 water | w:Miasma, raws | OK |
-| Miasma spread | 2 tiles orthogonally and up/down (stairs), never diagonally, not through closed doors/hatches (open while a creature stands in it), not onto outside tiles; lingers 1 day after the source is gone (2 days gave 93 Miasma thoughts a month on the 2-year bench, round 13 had 66, the export 30-60) | w:Miasma | OK (range, linger, "outside" ESTIMATE) |
+| Miasma spread | 2 tiles orthogonally and up/down (stairs), never diagonally, not through closed doors/hatches (open while a creature stands in it), not onto outside tiles; lingers 1 day after the source is gone. 2-year bench: about 91 "Miasma" thoughts a month (93 with a 2-day linger; round 13: 66; export: 30-60), mostly because rotting food and all corpses (also imported ones) are sources now | w:Miasma | OK (range, linger, "outside" ESTIMATE; thought rate too high: recalibrate with exported rot timers) |
 | Refuse | animal corpses and body parts, bones, skulls, shells, hides, rotten food, withered plants and unworn XX clothing/armor -> refuse category; corpses of sapients (named, "X's corpse", CAN_LEARN/CAN_SPEAK) stay corpses | w:Refuse, w:Stockpile, w:Corpse | OK (tame animal corpses count as refuse unless named: ESTIMATE) |
 | Refuse standing orders | gather refuse (on), gather outdoor refuse (off), ignore outdoor vermin remains, dump per type (corpses, skulls, bones, shells, skins, hair, other; only with a garbage dump zone) | w:Standing orders | OK |
 | Hauling priority | nearest first, no category priority | w:Hauling | OK |
@@ -663,3 +663,10 @@ Module `crates/rf-sim/src/decay15.rs` (spec: `docs/mechanics/decay15.md`). On by
 | Heat, cold, fire wear; 100-year organic wear | not simulated | w:Wear | MISSING |
 | Masterwork meal lost to rot or vermin (cook's thought) | not simulated | w:Kitchen | MISSING |
 | Exporter: rot_timer, wear_timer, material ROTS flags, refuse standing orders, vermin list | not exported yet (calibration still from item-id ages) | spec section 10 | MISSING |
+
+2-year bench (Trussroads export, `--standdown`): 648 food items rotted, 15 withered, 177 corpses
+rotted and 180 skeletons, 476 hides rotted, 1 086 items moved to refuse, 98 cavern/refuse-pile
+vermin (bat, olm, cap hopper, cave swallow; no eater species, so no food eaten), 0 kills: the
+export's 4 cats and the falcon are off the map (in cages), so the export's 35-40 remains a year
+cannot come from them. 51 refuse-pile and 2 combat wear levels. Hash with decay off equals the
+round-13 hash (`b98debc359a168d5`).
