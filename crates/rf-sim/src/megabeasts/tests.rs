@@ -85,6 +85,8 @@ fn natural_arrival_needs_tier_interval_and_the_flag() {
     assert!(!tries(&mut sim), "tier too low");
     // Third tier reached (custom triggers), but megabeasts are off by difficulty flag.
     sim.world.settings.other.push("ENEMY_POP_TRIGGER=1,2,3,4,5".into());
+    sim.world.settings.other.push("ENEMY_PROD_TRIGGER=0,0,0,0,0".into());
+    sim.world.settings.other.push("ENEMY_TRADE_TRIGGER=0,0,0,0,0".into());
     sim.world.settings.other.push("FLAG_MEGABEASTS=true".into());
     assert!(!tries(&mut sim), "flag off");
     sim.world.settings.other.retain(|s| s != "FLAG_MEGABEASTS=true");
@@ -104,6 +106,8 @@ fn interval_is_counted_in_seasons() {
     let mut sim = fort(4);
     sim.combat.inv.enabled = true;
     sim.world.settings.other.push("ENEMY_POP_TRIGGER=1,2,3,4,5".into());
+    sim.world.settings.other.push("ENEMY_PROD_TRIGGER=0,0,0,0,0".into());
+    sim.world.settings.other.push("ENEMY_TRADE_TRIGGER=0,0,0,0,0".into());
     sim.world.settings.other.push("MEGABEAST_INTERVAL=10".into());
     sim.mega.last_season = Some(9);
     sim.mega.since_attack = 0;
@@ -275,5 +279,156 @@ fn megabeast_fight_continues_bit_identically_after_save_and_load() {
         b.run_ticks(m);
         assert_eq!(a.state_hash(), b.state_hash(), "N {n} M {m}");
         assert_eq!(a.megabeast_report().fire_breaths, b.megabeast_report().fire_breaths);
+    }
+}
+
+// ---------------------------------------------------------------- verifier [mega13]
+
+#[test]
+fn vanilla_table_uses_raw_tokens_and_adult_sizes() {
+    // Vanilla raws (creature_standard): the roc is BIRD_ROC; adult BODY_SIZE values.
+    for (race, size) in [("DRAGON", 25_000_000), ("HYDRA", 8_000_000), ("BIRD_ROC", 20_000_000), ("COLOSSUS_BRONZE", 20_000_000), ("GIANT", 9_000_000), ("ETTIN", 8_000_000), ("CYCLOPS", 8_000_000), ("MINOTAUR", 220_000)] {
+        let mut sim = fort(31);
+        let id = sim.spawn_megabeast(race).unwrap_or_else(|| panic!("{race}"));
+        assert_eq!(sim.world.unit(id).unwrap().body_size, size, "{race}");
+    }
+    // Kinds: the roc is a megabeast.
+    let mut sim = fort(32);
+    sim.spawn_megabeast("BIRD_ROC").unwrap();
+    assert_eq!(sim.megabeasts()[0].kind, ThreatKind::Megabeast);
+}
+
+#[test]
+fn hydra_and_colossus_feel_no_pain() {
+    for race in ["HYDRA", "COLOSSUS_BRONZE"] {
+        let mut sim = fort(33);
+        let id = sim.spawn_megabeast(race).unwrap();
+        let s = sim.unit_slot[&id];
+        assert!(sim.combat.bodies[sim.combat.f[s].body as usize].nopain, "{race}");
+    }
+    let mut sim = fort(33);
+    let id = sim.spawn_megabeast("DRAGON").unwrap();
+    let s = sim.unit_slot[&id];
+    assert!(!sim.combat.bodies[sim.combat.f[s].body as usize].nopain);
+}
+
+#[test]
+fn population_alone_does_not_bring_megabeasts() {
+    // wiki Megabeast: population 80 AND created wealth 100 000 AND exported wealth 10 000.
+    let mut sim = fort(34);
+    sim.combat.inv.enabled = true;
+    sim.world.settings.other.push("MEGABEAST_INTERVAL=1".into());
+    sim.world.settings.other.push("ENEMY_POP_TRIGGER=1,2,3,4,5".into());
+    assert!(!sim.mega_trigger_met(), "wealth is missing");
+    sim.world.settings.other.push("ENEMY_PROD_TRIGGER=0,0,0,0,0".into());
+    assert!(!sim.mega_trigger_met(), "exported wealth is missing");
+    sim.world.settings.other.push("ENEMY_TRADE_TRIGGER=0,0,0,0,0".into());
+    assert!(sim.mega_trigger_met());
+}
+
+#[test]
+fn a_caged_megabeast_is_caught_not_slain() {
+    let mut sim = fort(35);
+    let id = sim.spawn_megabeast("HYDRA").unwrap();
+    let s = sim.unit_slot[&id];
+    let d = sim.unit_slot[&1];
+    sim.mega_blow(d, s, false);
+    sim.drain_announcements();
+    // What `defense::cage_unit` does.
+    let ui = sim.ai[s].uidx;
+    sim.world.units[ui].flags.caged = true;
+    sim.ai[s].kind = Kind::Dead;
+    let now = sim.ticks;
+    sim.megabeasts_day(now + 1);
+    let m = &sim.megabeasts()[0];
+    assert!(m.caught && m.alive, "{m:?}");
+    assert_eq!(m.slain_by, -1);
+    assert_eq!(sim.megabeast_report().slain, 0);
+    let ann = sim.drain_announcements();
+    assert!(!ann.iter().any(|a| a.text.contains("slain")), "{:?}", ann.iter().map(|a| &a.text).collect::<Vec<_>>());
+    assert!(!sim.threats().iter().any(|t| t.kind == ThreatKind::Megabeast));
+    assert!(!sim.world.units.iter().any(|u| u.emotions.iter().any(|e| e.thought == "SlewMegabeast")));
+}
+
+#[test]
+fn killing_blow_is_announced_at_once() {
+    let mut sim = fort(36);
+    let id = sim.spawn_megabeast("MINOTAUR").unwrap();
+    let s = sim.unit_slot[&id];
+    let d = sim.unit_slot[&1];
+    sim.drain_announcements();
+    let now = sim.ticks;
+    sim.combat_kill(s, now, "has been struck down");
+    sim.mega_blow(d, s, true); // the strike hook after a kill
+    assert!(!sim.megabeasts()[0].alive);
+    assert_eq!(sim.megabeasts()[0].slain_by, 1);
+    assert!(sim.drain_announcements().iter().any(|a| a.text.contains("has been slain by")));
+    assert!(sim.mega.slots.is_empty());
+}
+
+/// Run season starts until something comes (at most 40); true if it did.
+fn season_tries(sim: &mut Sim) -> bool {
+    let n0 = sim.mega.beasts.len();
+    for k in 0..40u64 {
+        let s = sim.world.calendar.month() / 3;
+        sim.mega.last_season = Some((s + 1) % 4);
+        sim.megabeasts_day(1_000 + k * 1_200);
+        if sim.mega.beasts.len() > n0 {
+            return true;
+        }
+    }
+    false
+}
+
+#[test]
+fn titans_ignore_exported_wealth() {
+    // wiki Megabeast: "Titans ignore exported wealth". Population and created wealth met,
+    // nothing exported: only a titan may come.
+    let mut sim = fort(37);
+    sim.combat.inv.enabled = true;
+    sim.world.settings.other.push("MEGABEAST_INTERVAL=1".into());
+    sim.world.settings.other.push("ENEMY_POP_TRIGGER=1,2,3,4,5".into());
+    sim.world.settings.other.push("ENEMY_PROD_TRIGGER=0,0,0,0,0".into());
+    sim.world.settings.other.push("ENEMY_TRADE_TRIGGER=0,0,1000000000,0,0".into());
+    assert_eq!(sim.mega_triggers(), (false, true));
+    assert!(season_tries(&mut sim), "a titan comes");
+    assert_eq!(sim.megabeasts()[0].kind, ThreatKind::Titan);
+    // Without the population nothing comes.
+    let mut sim = fort(38);
+    sim.combat.inv.enabled = true;
+    sim.world.settings.other.push("MEGABEAST_INTERVAL=1".into());
+    sim.world.settings.other.push("ENEMY_PROD_TRIGGER=0,0,0,0,0".into());
+    sim.world.settings.other.push("ENEMY_TRADE_TRIGGER=0,0,0,0,0".into());
+    assert_eq!(sim.mega_triggers(), (false, false));
+    assert!(!season_tries(&mut sim));
+}
+
+#[test]
+fn titans_of_the_world_list_come_by_name_once() {
+    let mut w = World::synthetic(48, 48, 20);
+    w.creature_raws.push(rf_core::CreatureRaw { token: "HFR_TITAN_7".into(), name: "titan".into(), flags: vec!["TITAN".into()], ..Default::default() });
+    w.hist_figs.push(HistFigName { id: 90, name: "Oddom Stonejaws".into(), race: "HFR_TITAN_7".into(), alive: true, unit_id: -1 });
+    let mut sim = sim_with(w, 39);
+    let mut r = Rng::new(3);
+    let id = sim.mega_spawn_with(&mut r, "", 10).expect("the titan of the world");
+    assert_eq!(sim.megabeasts()[0].kind, ThreatKind::Titan);
+    assert!(sim.world.unit(id).unwrap().name.starts_with("Oddom Stonejaws"), "{}", sim.world.unit(id).unwrap().name);
+    assert_eq!(sim.mega.came_hf, vec![90]);
+    for k in 0..10 {
+        let mut r = Rng::new(50 + k);
+        assert!(sim.mega_spawn_with(&mut r, "", 20).is_none(), "came already");
+        assert!(sim.mega_spawn_with(&mut r, "TITAN?", 20).is_none(), "came already");
+    }
+}
+
+#[test]
+fn a_megabeast_already_on_the_map_does_not_come_again() {
+    // A historical figure with a unit on the map (e.g. caged in the fort) is not in the pool.
+    let mut w = World::synthetic(48, 48, 20);
+    w.hist_figs.push(HistFigName { id: 91, name: "Caged Hydra".into(), race: "HYDRA".into(), alive: true, unit_id: 4242 });
+    let mut sim = sim_with(w, 40);
+    for k in 0..10 {
+        let mut r = Rng::new(70 + k);
+        assert!(sim.mega_spawn_with(&mut r, "", 20).is_none());
     }
 }

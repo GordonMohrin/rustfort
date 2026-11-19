@@ -11,13 +11,13 @@
 //!   Creature raws of the save with those flags are preferred over the built-in table.
 //! - **When**: checked at each season start once the fort reaches the third enemy tier (the
 //!   save's `ENEMY_POP_TRIGGER` / `ENEMY_PROD_TRIGGER` / `ENEMY_TRADE_TRIGGER`, Normal: 80
-//!   citizens or 100 000 created or 10 000 exported wealth; wiki Megabeast: "80 population and
-//!   100 000 wealth"), at most one at a time, `MEGABEAST_INTERVAL` seasons apart, never when
+//!   citizens and 100 000 created and 10 000 exported wealth, all at once; titans ignore the
+//!   exported wealth, wiki Megabeast), at most one at a time, `MEGABEAST_INTERVAL` seasons apart, never when
 //!   the save's difficulty flag `FLAG_MEGABEASTS=true` (megabeasts off) or invasions are off.
 //! - **Arrival** at a map edge connected to the fort ("The dragon X has come! ..."); they hunt
 //!   the fort like forgotten beasts (no retreat; they fight until slain).
-//! - **Building destroyers**: vanilla megabeasts and semi-megabeasts are `BUILDINGDESTROYER:2`
-//!   (see `defense::DESTROYERS`); titans are too (hook in `defense::race_info`). Wrecked
+//! - **Building destroyers**: vanilla megabeasts and semi-megabeasts except the roc are
+//!   `BUILDINGDESTROYER:2` (see `defense::DESTROYERS`); titans are too (hook in `defense::race_info`). Wrecked
 //!   buildings count in `MegabeastReport::buildings_destroyed`.
 //! - **Dragonfire**: dragons (and some titans) breathe fire at a target a few tiles away; the
 //!   target and everybody next to it catch fire. Fire-immune creatures are not hurt.
@@ -30,8 +30,8 @@
 //!   import. Chance per eligible season 1/2. Kind odds: megabeast 35 %, semi-megabeast 40 %,
 //!   titan 25 %. No megabeast while a siege is on the map (sieges and megabeasts do not stack,
 //!   and a megabeast is never counted as a siege in `World::fort_history`).
-//! - Body sizes without raws: dragon 15 M, hydra 4 M, roc 8 M, bronze colossus 10 M, giant
-//!   2.5 M, ettin 3 M, cyclops 2.5 M, minotaur 0.5 M cm³; titans 2-8 M. Natural skills 6
+//! - Body sizes without raws are the vanilla adult `BODY_SIZE`s (dragon 25 M, hydra 8 M, roc
+//!   20 M, bronze colossus 20 M, giant 9 M, ettin/cyclops 8 M, minotaur 0.22 M cm³); titans 2-8 M. Natural skills 6
 //!   (like forgotten beasts), strength/toughness 1 500-2 500.
 //! - There is no temperature or fire model yet: fire is a wound model. A burning creature
 //!   gets a burn (severity 2 500, pain 200) every 50 ticks for 200-400 ticks and dies when the
@@ -57,17 +57,19 @@ pub(crate) const BURN_PHASE: u64 = 17;
 pub(crate) const MEGA_CIV: i32 = 999_002;
 
 /// Built-in vanilla pool (used when the save's raws do not list megabeasts):
-/// token, name, kind, body size (ESTIMATE), quadruped, fire breath, outer material.
+/// token, name, kind, adult body size (vanilla raws), quadruped, fire breath, outer material.
 const VANILLA: &[(&str, &str, ThreatKind, i32, bool, bool, &str)] = &[
-    ("DRAGON", "dragon", ThreatKind::Megabeast, 15_000_000, true, true, ""),
-    ("HYDRA", "hydra", ThreatKind::Megabeast, 4_000_000, true, false, ""),
-    ("ROC", "roc", ThreatKind::Megabeast, 8_000_000, true, false, ""),
-    ("COLOSSUS_BRONZE", "bronze colossus", ThreatKind::Megabeast, 10_000_000, false, false, "BRONZE"),
-    ("GIANT", "giant", ThreatKind::SemiMegabeast, 2_500_000, false, false, ""),
-    ("ETTIN", "ettin", ThreatKind::SemiMegabeast, 3_000_000, false, false, ""),
-    ("CYCLOPS", "cyclops", ThreatKind::SemiMegabeast, 2_500_000, false, false, ""),
-    ("MINOTAUR", "minotaur", ThreatKind::SemiMegabeast, 500_000, false, false, ""),
+    ("DRAGON", "dragon", ThreatKind::Megabeast, 25_000_000, true, true, ""),
+    ("HYDRA", "hydra", ThreatKind::Megabeast, 8_000_000, true, false, ""),
+    ("BIRD_ROC", "roc", ThreatKind::Megabeast, 20_000_000, true, false, ""),
+    ("COLOSSUS_BRONZE", "bronze colossus", ThreatKind::Megabeast, 20_000_000, false, false, "BRONZE"),
+    ("GIANT", "giant", ThreatKind::SemiMegabeast, 9_000_000, false, false, ""),
+    ("ETTIN", "ettin", ThreatKind::SemiMegabeast, 8_000_000, false, false, ""),
+    ("CYCLOPS", "cyclops", ThreatKind::SemiMegabeast, 8_000_000, false, false, ""),
+    ("MINOTAUR", "minotaur", ThreatKind::SemiMegabeast, 220_000, false, false, ""),
 ];
+/// Vanilla megabeasts with `NOPAIN` (used when the save's raws do not list them).
+const NOPAIN: &[&str] = &["HYDRA", "COLOSSUS_BRONZE"];
 
 /// A creature that is on fire.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -145,7 +147,8 @@ impl Sim {
         if self.mega.since_attack < interval || !self.mega.slots.is_empty() {
             return;
         }
-        if self.invasion_tier_now() < 3 {
+        let (full, titan_ok) = self.mega_triggers();
+        if !full && !titan_ok {
             return;
         }
         // Sieges and megabeasts do not stack.
@@ -156,7 +159,22 @@ impl Sim {
         if !r.chance(1, 2) {
             return;
         }
-        self.mega_spawn_with(&mut r, "", now);
+        self.mega_spawn_with(&mut r, if full { "" } else { "TITAN?" }, now);
+    }
+
+    /// wiki Megabeast: population 80 and created wealth 100 000 and exported wealth 10 000
+    /// (Normal), i.e. all three third-tier triggers of the save at once.
+    #[cfg(test)]
+    pub(crate) fn mega_trigger_met(&self) -> bool {
+        self.mega_triggers().0
+    }
+
+    /// (all three triggers met, titan triggers met). wiki Megabeast: "Titans ignore exported
+    /// wealth".
+    pub(crate) fn mega_triggers(&self) -> (bool, bool) {
+        let (p, c, e) = self.war_triggers();
+        let titan = self.world.citizens().count() >= p[2] && self.created_wealth() >= c[2];
+        (titan && self.exported_wealth() >= e[2], titan)
     }
 
     fn mega_allowed(&self) -> bool {
@@ -173,7 +191,7 @@ impl Sim {
         }
         mix(self.mega.beasts.len() as u64);
         for b in &self.mega.beasts {
-            mix(b.unit_id as u64 ^ (b.alive as u64) << 40 ^ (b.kills as u64) << 48);
+            mix(b.unit_id as u64 ^ (b.alive as u64) << 40 ^ (b.caught as u64) << 41 ^ (b.kills as u64) << 48);
         }
         let r = &self.mega.rep;
         mix(r.attacks ^ r.slain << 16 ^ r.fire_breaths << 32 ^ r.buildings_destroyed << 48);
@@ -182,7 +200,7 @@ impl Sim {
 
     pub(crate) fn megabeast_threats(&self, out: &mut Vec<Threat>) {
         // Megabeasts, semi-megabeasts, titans.
-        for b in self.mega.beasts.iter().filter(|b| b.alive) {
+        for b in self.mega.beasts.iter().filter(|b| b.alive && !b.caught) {
             let pos = self.unit_slot.get(&b.unit_id).map(|&s| self.upos(s));
             out.push(Threat { kind: b.kind, name: b.name.clone(), race: b.race.clone(), units: vec![b.unit_id], pos, since: b.arrived, entity_id: -1 });
         }
@@ -278,30 +296,46 @@ impl Sim {
     }
 
     /// The world's pool: living historical figures of megabeast races that did not come yet;
-    /// if the export lists none, the generated pool (races + a titan).
-    fn mega_pool(&mut self) -> (Vec<Cand>, bool) {
+    /// if the export lists none, the generated pool (races + a titan). Third: living titans of
+    /// the world (historical figures of `TITAN` races) that did not come yet. // [mega13] verify
+    fn mega_pool(&mut self) -> (Vec<Cand>, bool, Vec<(i32, String)>) {
         let races = self.mega_races();
         let mut hfs = Vec::new();
+        let titan_race = |race: &str| self.world.creature_raws.iter().any(|c| c.token == race && (c.flags.iter().any(|f| f == "TITAN") || c.castes.iter().any(|k| k.flags.iter().any(|f| f == "TITAN"))));
+        let mut titan_hfs = Vec::new();
+        let mut titans_listed = false;
         for h in &self.world.hist_figs {
-            if !h.alive || self.mega.came_hf.contains(&h.id) {
+            let titan = titan_race(&h.race);
+            titans_listed |= titan;
+            // Dead, already came, or already on the map (e.g. caged in the fort).
+            if !h.alive || h.unit_id >= 0 || self.mega.came_hf.contains(&h.id) {
+                continue;
+            }
+            if titan {
+                titan_hfs.push((h.id, h.name.clone()));
                 continue;
             }
             if let Some(c) = races.iter().find(|c| c.race == h.race) {
                 hfs.push(Cand { race: c.race.clone(), name: c.name.clone(), kind: c.kind, size: c.size, quad: c.quad, fire: c.fire, mat: c.mat.clone(), hf: h.id, hf_name: h.name.clone() });
             }
         }
-        let listed = self.world.hist_figs.iter().any(|h| races.iter().any(|c| c.race == h.race));
+        let listed = titans_listed || self.world.hist_figs.iter().any(|h| races.iter().any(|c| c.race == h.race));
         if listed {
-            (hfs, false)
+            (hfs, false, titan_hfs)
         } else {
-            (races, true)
+            (races, true, titan_hfs)
         }
     }
 
-    /// Pick and spawn one megabeast (`race` "" = by the odds, `TITAN` = a titan).
+    /// Pick and spawn one megabeast (`race` "" = by the odds, `TITAN` = a titan, `TITAN?` = a
+    /// titan of the world if one is left).
     fn mega_spawn_with(&mut self, r: &mut Rng, race: &str, now: u64) -> Option<i32> {
-        let (pool, titans) = self.mega_pool();
-        let want_titan = race.eq_ignore_ascii_case("TITAN") || (race.is_empty() && titans && r.below(100) < 25);
+        let (pool, titans, titan_hfs) = self.mega_pool();
+        let world_titan = titans || !titan_hfs.is_empty();
+        if race == "TITAN?" && !world_titan {
+            return None;
+        }
+        let want_titan = race.eq_ignore_ascii_case("TITAN") || race == "TITAN?" || (race.is_empty() && world_titan && (pool.is_empty() || r.below(100) < 25));
         let pick: Option<Cand> = if want_titan {
             None
         } else if !race.is_empty() {
@@ -326,7 +360,11 @@ impl Sim {
         let tile = edges[r.below(edges.len() as u32) as usize];
         match pick {
             Some(c) => self.mega_spawn_race(r, c, tile, now),
-            None => self.mega_spawn_titan(r, tile, now),
+            None => {
+                // A titan of the world's list keeps its name and comes only once.
+                let hf = if titans { None } else { titan_hfs.first().cloned() };
+                self.mega_spawn_titan(r, tile, now, hf)
+            }
         }
     }
 
@@ -343,13 +381,20 @@ impl Sim {
         if c.fire {
             self.mega.fire.push((s as u32, 0));
         }
+        let raw_nopain = self.world.creature_raws.iter().find(|x| x.token == c.race).map(|x| x.flags.iter().chain(x.castes.iter().flat_map(|k| k.flags.iter())).any(|f| f == "NOPAIN"));
+        if raw_nopain.unwrap_or_else(|| NOPAIN.contains(&c.race.as_str())) {
+            let b = self.combat.f[s].body as usize;
+            if let Some(body) = self.combat.bodies.get_mut(b) {
+                body.nopain = true; // body template of this race only
+            }
+        }
         if c.hf >= 0 {
             self.mega.came_hf.push(c.hf);
         }
         let desc = match c.race.as_str() {
             "DRAGON" => "A huge winged reptile. Beware its fiery breath!".to_string(),
             "HYDRA" => "A huge many-headed reptile.".to_string(),
-            "ROC" => "A gigantic bird of prey.".to_string(),
+            "BIRD_ROC" => "A gigantic bird of prey.".to_string(),
             "COLOSSUS_BRONZE" => "A towering statue of bronze come to life.".to_string(),
             _ if c.kind == ThreatKind::SemiMegabeast => format!("A towering {}.", c.name),
             _ => format!("A huge {}.{}", c.name, if c.fire { " Beware its fiery breath!" } else { "" }),
@@ -360,10 +405,17 @@ impl Sim {
     }
 
     /// A generated titan (like a forgotten beast, on the surface).
-    fn mega_spawn_titan(&mut self, r: &mut Rng, tile: u32, now: u64) -> Option<i32> {
+    fn mega_spawn_titan(&mut self, r: &mut Rng, tile: u32, now: u64, hf: Option<(i32, String)>) -> Option<i32> {
         self.mega.titans += 1;
         let race = format!("TITAN_{}", self.mega.titans);
         let pname = mega_name(r);
+        let pname = match hf {
+            Some((id, name)) => {
+                self.mega.came_hf.push(id);
+                if name.is_empty() { pname } else { name }
+            }
+            None => pname,
+        };
         let quad = r.chance(1, 2);
         let size = 2_000_000 + r.below(6_000_001) as i32;
         let solid: Vec<u16> = self
@@ -472,7 +524,7 @@ impl Sim {
         self.announce(now, text.clone(), Some(p), AnnouncementKind::Warning);
         self.combat.log_line(text.clone());
         self.mega.history.push((now, text));
-        self.mega.beasts.push(MegabeastInfo { unit_id: id, name, race, kind, arrived: now, alive: true, kills: 0, slain_by: -1 });
+        self.mega.beasts.push(MegabeastInfo { unit_id: id, name, race, kind, arrived: now, alive: true, kills: 0, slain_by: -1, caught: false });
         self.mega.rep.attacks += 1;
         self.mega.since_attack = 0;
     }
@@ -481,12 +533,21 @@ impl Sim {
 
     fn mega_check_dead(&mut self, now: u64) {
         for k in 0..self.mega.beasts.len() {
-            if !self.mega.beasts[k].alive {
+            if !self.mega.beasts[k].alive || self.mega.beasts[k].caught {
                 continue;
             }
             let id = self.mega.beasts[k].unit_id;
             let Some(&s) = self.unit_slot.get(&id) else { continue };
             if self.ai[s].kind != Kind::Dead {
+                continue;
+            }
+            // A caged megabeast (cage trap) is caught, not slain (it lives on in its cage).
+            if self.world.units[self.ai[s].uidx].flags.caged {
+                self.mega.beasts[k].caught = true;
+                let (race, kind, name) = (self.mega.beasts[k].race.clone(), self.mega.beasts[k].kind, self.mega.beasts[k].name.clone());
+                let text = format!("The {} {name} has been captured.", self.mega_what(&race, kind));
+                self.combat.log_line(text.clone());
+                self.mega.history.push((now, text));
                 continue;
             }
             let killer = self.mega.last_hit.iter().find(|x| x.0 == s as u32).map(|x| x.1);
@@ -506,10 +567,7 @@ impl Sim {
         b.slain_by = killer.map(|a| self.world.units[self.ai[a as usize].uidx].id).unwrap_or(-1);
         let (name, race, kind) = (b.name.clone(), b.race.clone(), b.kind);
         self.mega.rep.slain += 1;
-        let what = match kind {
-            ThreatKind::Titan => "Titan".to_string(),
-            _ => self.world.creature_raws.iter().find(|c| c.token == race).map(|c| c.name.clone()).filter(|n| !n.is_empty()).or_else(|| VANILLA.iter().find(|v| v.0 == race).map(|v| v.1.to_string())).unwrap_or_else(|| race.to_ascii_lowercase()),
-        };
+        let what = self.mega_what(&race, kind);
         let text = match killer {
             Some(a) => format!("The {what} {name} has been slain by {}!", self.uname(a as usize)),
             None => format!("The {what} {name} has been slain."),
@@ -531,6 +589,14 @@ impl Sim {
         }
     }
 
+    /// "Titan" or the creature name of a megabeast race.
+    fn mega_what(&self, race: &str, kind: ThreatKind) -> String {
+        match kind {
+            ThreatKind::Titan => "Titan".to_string(),
+            _ => self.world.creature_raws.iter().find(|c| c.token == race).map(|c| c.name.clone()).filter(|n| !n.is_empty()).or_else(|| VANILLA.iter().find(|v| v.0 == race).map(|v| v.1.to_string())).unwrap_or_else(|| race.to_ascii_lowercase()),
+        }
+    }
+
     /// [combat hook] A blow of `a` on `d` (megabeasts on the map only): remember who last hit
     /// a megabeast; `killed`: count a megabeast's kill.
     pub(crate) fn mega_blow(&mut self, a: usize, d: usize, killed: bool) {
@@ -542,6 +608,11 @@ impl Sim {
         }
         if killed && self.mega.slots.binary_search(&(a as u32)).is_ok() {
             self.mega_count_kill(a);
+        }
+        // A killing blow on a megabeast: announce the slaying at once, not at the daily check.
+        if killed && self.mega.slots.binary_search(&(d as u32)).is_ok() {
+            let now = self.ticks;
+            self.mega_check_dead(now);
         }
     }
 
