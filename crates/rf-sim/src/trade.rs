@@ -794,6 +794,7 @@ impl Sim {
             log.left = Some(now);
             self.trade.rep.caravans.push(log);
             self.announce(now, format!("Merchants from {civ} have arrived, but there is no trade depot."), None, AnnouncementKind::Warning);
+            self.diplomacy_caravan_arrived(e.id, now); // [diplo13] the envoy comes even without a usable depot
             return false;
         };
         let tiles = self.depot_tiles(depot);
@@ -804,6 +805,7 @@ impl Sim {
             log.left = Some(now);
             self.trade.rep.caravans.push(log);
             self.announce(now, format!("The merchants from {civ} cannot reach the trade depot."), None, AnnouncementKind::Warning);
+            self.diplomacy_caravan_arrived(e.id, now); // [diplo13] the envoy comes even without a usable depot
             return false;
         }
         self.combat_sync_units();

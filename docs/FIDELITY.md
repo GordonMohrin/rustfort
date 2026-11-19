@@ -636,6 +636,7 @@ Module `crates/rf-sim/src/diplomacy.rs`; hooks in `trade.rs` (caravan arrival, c
 | Rule | Class | Notes |
 |---|---|---|
 | Outpost liaison travels with the fort's own civilization's caravan and meets the host noble a few days after arrival | OK | wiki Outpost liaison. Delay 1-3 days is ESTIMATE. |
+| Envoys (liaison, diplomats) still come when the caravan finds no usable trade depot and leaves at once | ESTIMATE | wiki Outpost liaison, Trade depot; the envoy travels with the caravan but its meeting does not need the depot. |
 | Host = land holder, else mayor, else expedition leader; nobody to receive the envoy -> meeting "Missed", small attitude loss | OK / ESTIMATE | wiki Diplomat, Noble. The penalty (-5) is ESTIMATE. |
 | Liaison asks for requests; accepting makes a one-year trade agreement, requested goods come in double numbers | ESTIMATE | wiki Outpost liaison (requests raise the chance/amount of goods). DF has a per-item request screen with priorities; Rustfort matches request words against caravan goods kinds/subtypes and doubles their count. |
 | Elevation to barony / county / duchy at the liaison meeting, in order, when population AND created wealth AND exported wealth meet `LAND_HOLDER_POP/PROD/TRADE_TRIGGER` | OK | wiki Noble (land holder), Barony; difficulty settings read from the save, vanilla defaults 20/100 000/10 000 etc. otherwise (the defaults are ESTIMATE where the save carries none). |
