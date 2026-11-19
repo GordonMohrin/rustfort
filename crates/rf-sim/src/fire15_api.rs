@@ -92,17 +92,20 @@ impl Sim {
         if parts == 0 {
             return self.fire15_ignite_unit(s, super::fire15::heat::GRASS_FIRE_MAX, 0, false, now);
         }
+        // Parts already burning stay on fire; only the masked parts are added.
+        let was = self.fire.burning.binary_search_by_key(&(s as u32), |b| b.slot).ok().map(|k| self.fire.burning[k].parts);
         let ok = self.fire15_ignite_unit(s, super::fire15::heat::GRASS_FIRE_MAX, 0, false, now);
-        if ok {
-            if let Ok(k) = self.fire.burning.binary_search_by_key(&(s as u32), |b| b.slot) {
-                self.fire.burning[k].parts &= parts;
-                if self.fire.burning[k].parts == 0 {
-                    self.fire.burning.remove(k);
-                    return false;
-                }
-            }
+        if !ok {
+            return false;
         }
-        ok
+        let Ok(k) = self.fire.burning.binary_search_by_key(&(s as u32), |b| b.slot) else { return false };
+        let added = self.fire.burning[k].parts & parts & !was.unwrap_or(0);
+        self.fire.burning[k].parts = was.unwrap_or(0) | added;
+        if was.is_none() && added == 0 {
+            self.fire.burning.remove(k);
+            self.fire.rep.units_ignited -= 1;
+        }
+        added != 0
     }
 
     /// Expose everything on tile `p` to `temp` U at once (dragonfire = 50 000): items heat up

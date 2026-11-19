@@ -6,7 +6,7 @@ use super::{FireCell, FIRE_PERIOD, SALT};
 use crate::rng::Rng;
 use crate::round13_api::WeatherKind;
 use crate::Sim;
-use rf_core::{tile_flags, Shape, TtMaterial, NO_MAT};
+use rf_core::{tile_flags, Shape, TtMaterial, TtSpecial, NO_MAT};
 
 pub(crate) const K_GRASS: u8 = 0;
 pub(crate) const K_SHRUB: u8 = 1;
@@ -38,6 +38,9 @@ impl Sim {
             (Shape::Shrub, _) => K_SHRUB,
             (Shape::Sapling, _) => K_SAPLING,
             (Shape::Ramp, _) => return None,
+            // Burnt (dead) tree tiles do not burn again (ESTIMATE; otherwise two dead tree
+            // tiles would keep re-igniting each other forever).
+            (_, TtMaterial::Tree | TtMaterial::Mushroom) if matches!(info.special, TtSpecial::Dead | TtSpecial::SmoothDead) || info.name.starts_with("TreeDead") => return None,
             (_, TtMaterial::Tree | TtMaterial::Mushroom) => K_TREE,
             _ => return None,
         };

@@ -291,3 +291,9 @@ pub fn burns_at(h: &MaterialHeat, t: i32) -> bool {
 pub fn flammable(h: &MaterialHeat) -> bool {
     is_set(h.ignite_point) && !is_set(h.mat_fixed_temp)
 }
+
+/// Does heat at `t` harm this tissue/material at all (burns, heat damage or melts)? A fixed
+/// temperature protects.
+pub fn harmed_at(h: &MaterialHeat, t: i32) -> bool {
+    burns_at(h, t) || (is_set(h.melting_point) && h.melting_point <= t && !is_set(h.mat_fixed_temp))
+}

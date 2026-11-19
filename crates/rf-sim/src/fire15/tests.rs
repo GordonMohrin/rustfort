@@ -623,3 +623,55 @@ fn same_seed_same_fire() {
     };
     assert_eq!(run(), run());
 }
+
+// ------------------------------------------------------------------ verifier regressions
+
+#[test]
+fn dead_tree_tiles_do_not_burn_again() {
+    // Two adjacent tree tiles used to re-ignite each other forever once dead (TreeDead* has
+    // material TREE): the fire never went out.
+    let mut w = world();
+    let trunk = Pos::new(3, 3, SURF + 1);
+    let (tt, mat) = { let t = w.tile(trunk).unwrap(); (t.tt, t.mat) };
+    for x in 4..=5 {
+        let t = w.tile_mut(Pos::new(x, 3, SURF + 1)).unwrap();
+        t.tt = tt;
+        t.mat = mat;
+    }
+    let mut sim = Sim::new(w, 31);
+    assert!(sim.ignite_tile(trunk));
+    sim.run_ticks(40_000);
+    assert_eq!(sim.fire_report().burning_tiles, 0, "the tree fire burned out: {:?}", sim.fire_report());
+    assert!(sim.fire_report().tiles_ignited <= 3 + 10, "dead tree tiles did not re-ignite: {:?}", sim.fire_report());
+}
+
+#[test]
+fn creature_with_a_melting_shell_is_harmed_by_magma() {
+    // Outer layer has no ignite / heat-damage point but melts below 12000 (a bronze shell):
+    // not magma-proof, so it must take damage in magma instead of swimming there forever.
+    let shell = MaterialHeat { spec_heat: 435, heatdam_point: NONE_TEMP, colddam_point: NONE_TEMP, ignite_point: NONE_TEMP, melting_point: 11_000, boiling_point: NONE_TEMP, mat_fixed_temp: NONE_TEMP };
+    let mut sim = Sim::new(crab_world(shell, vec![]), 32);
+    sim.run_ticks(1);
+    let s = sim.unit_slot[&500];
+    assert!(!sim.fire15_magma_proof(s));
+    let p = sim.fire15_unit_pos(s);
+    sim.set_liquid(p, 7, true);
+    sim.run_ticks(300);
+    let dead = sim.ai[s].kind == crate::Kind::Dead;
+    assert!(dead || sim.fire_report().burn_wounds > 0, "the shell melts in magma: {:?}", sim.fire_report());
+}
+
+#[test]
+fn ignite_unit_with_a_part_mask_keeps_parts_already_burning() {
+    let mut sim = Sim::new(world(), 33);
+    sim.run_ticks(1);
+    let (s, id) = first_dwarf(&sim);
+    assert!(sim.ignite_unit(id, 0));
+    let k = sim.fire.burning.binary_search_by_key(&(s as u32), |b| b.slot).unwrap();
+    let before = sim.fire.burning[k].parts;
+    assert!(before.count_ones() > 1);
+    let low = before & before.wrapping_neg(); // lowest burning part only
+    sim.ignite_unit(id, low);
+    let k = sim.fire.burning.binary_search_by_key(&(s as u32), |b| b.slot).unwrap();
+    assert_eq!(sim.fire.burning[k].parts, before, "igniting one more part must not put out the others");
+}

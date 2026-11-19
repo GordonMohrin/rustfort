@@ -85,7 +85,7 @@ impl Sim {
             }
             any = true;
             for l in p.l0..p.l0 + p.nl {
-                if burns_at(&lh[l as usize], t) || (is_set(lh[l as usize].melting_point) && lh[l as usize].melting_point <= t && !is_set(lh[l as usize].mat_fixed_temp)) {
+                if harmed_at(&lh[l as usize], t) {
                     return false;
                 }
             }
@@ -117,7 +117,7 @@ impl Sim {
         let ps = &self.combat.f[s].part_state;
         let catches = |p: usize| {
             let pt = &body.parts[p];
-            pt.flags & bp::INTERNAL == 0 && pt.nl > 0 && ps.get(p).map_or(true, |&st| st & 5 == 0) && burns_at(&lh[pt.l0 as usize], src)
+            pt.flags & bp::INTERNAL == 0 && pt.nl > 0 && ps.get(p).map_or(true, |&st| st & 5 == 0) && harmed_at(&lh[pt.l0 as usize], src)
         };
         let mut mask = 0u64;
         if n == 0 {
@@ -289,7 +289,7 @@ impl Sim {
                 continue;
             };
             let lh = self.fire.bodies[bi][l as usize];
-            if !burns_at(&lh, src) && !(is_set(lh.melting_point) && lh.melting_point <= src) {
+            if !harmed_at(&lh, src) {
                 // This layer does not burn at this temperature: the part goes out.
                 e.parts &= !(1 << p);
                 continue;
