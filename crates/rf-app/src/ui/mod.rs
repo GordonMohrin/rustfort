@@ -22,6 +22,7 @@ pub mod overlay;
 pub mod panels;
 pub mod places; // [app8]
 pub mod psyche;
+pub mod prefs15; // [prefs15] preferences on the personality tab
 pub mod rclick; // [feel-ui] right-click backs out like DF Steam
 pub mod reports;
 pub mod round4; // [round 4]

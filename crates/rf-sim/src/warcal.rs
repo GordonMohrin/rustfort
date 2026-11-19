@@ -249,7 +249,7 @@ impl Sim {
             }
         }
         let mv = self.world.material(it.mat).map(|m| m.value).filter(|&v| v > 0).unwrap_or(1) as i64;
-        let v = crate::trade::base_value(&it.kind) * mv * crate::trade::quality_mult(it.quality) * it.stack.max(1) as i64;
+        let v = crate::item_value::item_value_v50(&it.kind, &it.subtype, mv, it.quality, it.stack); // [prefs15] v50 value
         if it.stack <= 1 {
             it.value = v.min(i32::MAX as i64) as i32;
         }
@@ -294,9 +294,9 @@ mod tests {
             sim.world.items[i].value
         };
         let v = mk(&mut sim, "FIGURINE", -1);
-        // base 10 x granite value x quality 2 (x3).
-        let mv = sim.world.materials[0].value.max(1) as i64;
-        assert_eq!(v as i64, 10 * mv * 3, "durable goods store their value");
+        // [prefs15] v50: floor(base 10 x granite value x 1.2) + 6 (finely-crafted).
+        let mv = sim.world.materials[0].value.max(1) as i64; // [prefs15]
+        assert_eq!(v as i64, 10 * mv * 6 / 5 + 6, "durable goods store their value"); // [prefs15]
         assert_eq!(sim.created_wealth(), before + v as i64);
         // Corpses and invader gear are not production.
         mk(&mut sim, "CORPSE", -1);

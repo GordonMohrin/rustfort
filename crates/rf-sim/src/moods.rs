@@ -164,7 +164,7 @@ const DECOR: [Mat; 10] = [Mat::Log, Mat::Bar, Mat::CutGem, Mat::Block, Mat::Roug
 
 /// Moodable skills (DF `job_skill` names).
 const MOODABLE: [&str; 22] = [
-    "FORGE_ARMOR", "BONE_CARVE", "BOWYER", "CARPENTRY", "CLOTHESMAKING", "ENGRAVE_STONE", "CUT_GEM", "ENCRUST_GEM", "GLASSMAKER",
+    "FORGE_ARMOR", "BONECARVE", "BOWYER", "CARPENTRY", "CLOTHESMAKING", "ENGRAVE_STONE", "CUTGEM", "ENCRUSTGEM", "GLASSMAKER", // [prefs15] DF job_skill names (F6)
     "LEATHERWORK", "MASONRY", "MECHANICS", "METALCRAFT", "FORGE_FURNITURE", "MINING", "CARVE_STONE", "STONECRAFT", "CUT_STONE",
     "TANNER", "FORGE_WEAPON", "WEAVING", "WOODCRAFT",
 ];
@@ -234,10 +234,10 @@ fn skill_spec(skill: &str) -> (&'static str, &'static str, &'static str, Mat, &'
         "CARVE_STONE" | "CUT_STONE" => ("Workshop", "Masons", "Mason's Workshop", Mat::Boulder, CRAFTS),
         "STONECRAFT" | "ENGRAVE_STONE" => ("Workshop", "Craftsdwarfs", "Craftsdwarf's Workshop", Mat::Boulder, CRAFTS),
         "WOODCRAFT" => ("Workshop", "Craftsdwarfs", "Craftsdwarf's Workshop", Mat::Log, CRAFTS),
-        "BONE_CARVE" => ("Workshop", "Craftsdwarfs", "Craftsdwarf's Workshop", Mat::Bone, CRAFTS),
+        "BONECARVE" => ("Workshop", "Craftsdwarfs", "Craftsdwarf's Workshop", Mat::Bone, CRAFTS), // [prefs15] DF job_skill names (F6)
         "CARPENTRY" => ("Workshop", "Carpenters", "Carpenter's Workshop", Mat::Log, WOOD_FURNITURE),
         "BOWYER" => ("Workshop", "Bowyers", "Bowyer's Workshop", Mat::Log, BOWS),
-        "CUT_GEM" | "ENCRUST_GEM" => ("Workshop", "Jewelers", "Jeweler's Workshop", Mat::RoughGem, GEMS),
+        "CUTGEM" | "ENCRUSTGEM" => ("Workshop", "Jewelers", "Jeweler's Workshop", Mat::RoughGem, GEMS), // [prefs15] DF job_skill names (F6)
         "FORGE_WEAPON" => ("Workshop", "MetalsmithsForge", "Metalsmith's Forge", Mat::Bar, WEAPONS),
         "FORGE_ARMOR" => ("Workshop", "MetalsmithsForge", "Metalsmith's Forge", Mat::Bar, ARMOR),
         "FORGE_FURNITURE" => ("Workshop", "MetalsmithsForge", "Metalsmith's Forge", Mat::Bar, FURNITURE),
@@ -295,6 +295,9 @@ pub(crate) struct Active {
     #[serde(with = "crate::saves11::interned")] // [saves11]
     art: ArtKind,
     record: usize,
+    /// [prefs15] Wanted base metal (a liked metal the fort smelted), NO_MAT = any.
+    #[serde(default = "crate::mood_prefs::no_mat")] // [prefs15]
+    want_mat: u16, // [prefs15]
 }
 
 /// One strange mood, for reports.
@@ -453,17 +456,17 @@ impl Sim {
         let skill: &'static str = match kind {
             MoodKind::Fell => {
                 if r.chance(1, 2) {
-                    "BONE_CARVE"
+                    "BONECARVE" // [prefs15] DF job_skill names (F6)
                 } else {
                     "LEATHERWORK"
                 }
             }
-            MoodKind::Macabre => "BONE_CARVE",
+            MoodKind::Macabre => "BONECARVE", // [prefs15] DF job_skill names (F6)
             _ => {
                 let u = &self.world.units[uidx];
                 let best = MOODABLE.iter().map(|k| u.skill(k).clamp(0, 20)).max().unwrap_or(0);
                 if best == 0 {
-                    ["STONECRAFT", "WOODCRAFT", "BONE_CARVE"][r.below(3) as usize]
+                    ["STONECRAFT", "WOODCRAFT", "BONECARVE"][r.below(3) as usize] // [prefs15] DF job_skill names (F6)
                 } else {
                     let tied: Vec<&'static str> = MOODABLE.iter().copied().filter(|k| u.skill(k).clamp(0, 20) == best).collect();
                     tied[r.below(tied.len() as u32) as usize]
@@ -476,16 +479,28 @@ impl Sim {
         match kind {
             MoodKind::Fell => {
                 demands.push(Mat::Body);
-                art = if skill == "BONE_CARVE" { CRAFTS[r.below(CRAFTS.len() as u32) as usize] } else { LEATHER_GOODS[r.below(LEATHER_GOODS.len() as u32) as usize] };
+                art = if skill == "BONECARVE" { CRAFTS[r.below(CRAFTS.len() as u32) as usize] } else { LEATHER_GOODS[r.below(LEATHER_GOODS.len() as u32) as usize] }; // [prefs15] DF job_skill names (F6)
             }
             _ => {
-                let base = if skill == "BONE_CARVE" && kind != MoodKind::Macabre && r.chance(1, 3) { Mat::Shell } else { base };
+                let base = if self.prefs_on() {
+                    // [prefs15] bone carvers use shells iff they like a shell (wiki Strange mood)
+                    if skill == "BONECARVE" && kind != MoodKind::Macabre && self.prefs_likes_shell(s) { Mat::Shell } else { base } // [prefs15]
+                } else if skill == "BONECARVE" && kind != MoodKind::Macabre && r.chance(1, 3) { Mat::Shell } else { base }; // [prefs15] DF job_skill names (F6)
                 for _ in 0..1 + r.below(3) {
                     demands.push(base);
                 }
                 for _ in 0..r.below(8) {
-                    demands.push(DECOR[r.below(DECOR.len() as u32) as usize]);
+                    let d = DECOR[r.below(DECOR.len() as u32) as usize]; // [prefs15]
+                    // [prefs15] never the base type; no blocks for miners/engravers/masons/stonecrafters
+                    if self.prefs_on() && (d == base || (d == Mat::Block && crate::mood_prefs::no_block_decor(skill))) { // [prefs15]
+                        continue; // [prefs15]
+                    } // [prefs15]
+                    demands.push(d); // [prefs15]
                 }
+                if self.prefs_on() { // [prefs15] wiki artifact list; a liked item type on it wins
+                    let list = crate::mood_prefs::artifact_list(skill, base == Mat::Shell, kind == MoodKind::Macabre); // [prefs15]
+                    art = self.prefs_mood_art(s, list, &mut r).0; // [prefs15]
+                } // [prefs15]
             }
         }
         // Mood takes over: drop the current task, no more needs.
@@ -535,6 +550,7 @@ impl Sim {
             needs,
             art,
             record,
+            want_mat: self.prefs_mood_metal(s, skill), // [prefs15]
         });
         let pos = self.world.units[uidx].pos;
         self.announce(now, format!("{name} {}", kind.start_text()), Some(pos), AnnouncementKind::Warning);
@@ -851,6 +867,9 @@ impl Sim {
             if !self.mood_matches(idx, want) || !self.item_free(idx, now) || self.world.items[idx].flags.artifact {
                 continue;
             }
+            if want == Mat::Bar && self.moods.active.as_ref().map(|a| a.want_mat != rf_core::NO_MAT && a.want_mat != self.world.items[idx].mat).unwrap_or(false) { // [prefs15]
+                continue; // [prefs15] only the liked metal
+            } // [prefs15]
             let it = &self.world.items[idx];
             let Some(t) = self.world.idx(it.pos) else { continue };
             let d = crate::manhattan(sp, self.nav.xyz(t));
@@ -1014,7 +1033,7 @@ impl Sim {
         let base_mat = base_id_mat(self, base_id);
         let fell_mat = if a.kind == MoodKind::Fell {
             // Dwarf bone or dwarf leather.
-            let tok = if a.skill == "BONE_CARVE" { "CREATURE:DWARF:BONE" } else { "CREATURE:DWARF:SKIN" };
+            let tok = if a.skill == "BONECARVE" { "CREATURE:DWARF:BONE" } else { "CREATURE:DWARF:SKIN" }; // [prefs15] DF job_skill names (F6)
             Some(self.ensure_material(tok))
         } else {
             None
@@ -1022,7 +1041,7 @@ impl Sim {
         let mat = fell_mat.unwrap_or(base_mat);
         let mut mat_name = self.world.material(mat).map(|m| m.name.clone()).unwrap_or_else(|| "strange".into());
         if a.kind == MoodKind::Fell {
-            mat_name = if a.skill == "BONE_CARVE" { "dwarf bone".into() } else { "dwarf leather".into() };
+            mat_name = if a.skill == "BONECARVE" { "dwarf bone".into() } else { "dwarf leather".into() }; // [prefs15] DF job_skill names (F6)
         }
         let mval = self.world.material(mat).map(|m| m.value).unwrap_or(1).max(1);
         let mut deco_value = 0;
@@ -1031,6 +1050,19 @@ impl Sim {
                 deco_value += self.world.items[i as usize].value.max(1);
             }
         }
+        // [prefs15] v50: decorations (collected items that are not the base type) at artifact quality.
+        let mut deco_v50 = 0i64; // [prefs15]
+        let base_kind = a.all_demands.first().copied(); // [prefs15]
+        for (k, &id) in a.collected.iter().enumerate() { // [prefs15]
+            if a.all_demands.get(k).copied() == base_kind || k == 0 { // [prefs15]
+                continue; // [prefs15]
+            } // [prefs15]
+            if let Some(&i) = self.item_idx.get(&id) { // [prefs15]
+                let it = &self.world.items[i as usize]; // [prefs15]
+                let mv = self.world.material(it.mat).map(|m| m.value).filter(|&v| v > 0).unwrap_or(1) as i64; // [prefs15]
+                deco_v50 += crate::item_value::decoration_value(it.kind == "SMALLGEM", mv, 6); // [prefs15]
+            } // [prefs15]
+        } // [prefs15]
         for &id in &a.collected {
             self.destroy_item(id);
         }
@@ -1045,7 +1077,7 @@ impl Sim {
             it.quality = 6;
             it.flags.artifact = true;
             it.name = art_name.clone();
-            it.value = 10 * mval * 120 + 2 * deco_value;
+            it.value = if self.prefs.off { 10 * mval * 120 + 2 * deco_value } else { (crate::item_value::item_value_v50(kind, subtype, mval as i64, 6, 1) + deco_v50).min(i32::MAX as i64) as i32 }; // [prefs15] v50 artifact value
         }
         let name = self.world.units[self.ai[s].uidx].name.clone();
         let p = self.world.pos_of(tile);
@@ -1331,7 +1363,7 @@ mod tests {
         let rec = &sim.mood_records()[0];
         assert!(rec.outcome.starts_with("created "), "{}", rec.outcome);
         let art = sim.world.item(rec.artifact_id).expect("artifact");
-        assert!(art.flags.artifact && art.quality == 6 && art.value > 1000);
+        assert!(art.flags.artifact && art.quality == 6 && art.value >= 500); // [prefs15] v50: base x 20 + 300 (+ decorations)
         assert!(sim.world.unit(uid).unwrap().skill("STONECRAFT") >= 15, "legendary");
         assert!(sim.world.unit(uid).unwrap().mood.is_empty());
         let ann = sim.drain_announcements();
@@ -1374,7 +1406,7 @@ mod tests {
         let n0 = sim.world.citizens().count();
         assert!(sim.force_mood(uid, "Fell"));
         if let Some(a) = sim.moods.active.as_mut() {
-            a.skill = "BONE_CARVE";
+            a.skill = "BONECARVE"; // [prefs15] DF job_skill names (F6)
             a.shop_kind = "Workshop";
             a.shop_sub = "Craftsdwarfs";
             a.shop_label = "Craftsdwarf's Workshop";

@@ -438,6 +438,7 @@ impl Sim {
     pub(crate) fn after_exact_load(&mut self) {
         self.link_after_load(); // [machines14]
         self.fire15_after_load(); // [fire15]
+        self.prefs_rebuild(); // [prefs15]
     }
 
     /// [saves11] Encoded size of each part of the snapshot (bytes, before compression).
@@ -499,6 +500,7 @@ impl Sim {
             ("diplo", enc(&self.diplo)), // [contract13]
             ("link", enc(&self.link)), // [machines14]
             ("fire15", enc(&self.fire)), // [fire15]
+            ("prefs", enc(&self.prefs)), // [prefs15]
             ("total", self.exact_snapshot()),
         ]
     }

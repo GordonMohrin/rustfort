@@ -218,6 +218,7 @@ impl Sim {
         v.push(("diplomacy", fnv(|mix| self.diplomacy_hash(mix)))); // [contract13]
         v.push(("link", fnv(|mix| self.link_hash(mix)))); // [machines14]
         v.push(("fire15", fnv(|mix| self.fire15_hash(mix)))); // [fire15]
+        v.push(("prefs", fnv(|mix| self.prefs_hash(mix)))); // [prefs15]
         v
     }
 }

@@ -143,6 +143,8 @@ pub fn base_value(kind: &str) -> i64 {
 }
 
 /// DF quality value multipliers (wiki "Quality").
+/// [prefs15] Pre-v50 table: still right for engravings and room tiles (w:Engraving, w:Zone);
+/// item values use `item_value::quality_value` (multiplier + flat bonus).
 pub fn quality_mult(q: u8) -> i64 {
     [1, 2, 3, 4, 5, 12, 120][(q as usize).min(6)]
 }
@@ -294,7 +296,7 @@ impl Sim {
             it.value as i64
         } else {
             let mv = self.world.material(it.mat).map(|m| m.value).filter(|&v| v > 0).unwrap_or(1) as i64;
-            base_value(&it.kind) * mv * quality_mult(it.quality) * it.stack.max(1) as i64
+            crate::item_value::item_value_v50(&it.kind, &it.subtype, mv, it.quality, it.stack) // [prefs15]
         };
         if let Some(c) = self.contents.get(&id) {
             for &cid in c {
@@ -996,7 +998,7 @@ impl Sim {
                 };
                 let stack = if matches!(kind, "DRINK" | "MEAT" | "PLANT" | "SEEDS") { 5 + r.below(11) as i32 } else { 1 };
                 let mv = self.world.material(mat).map(|m| m.value).filter(|&v| v > 0).unwrap_or(1) as i64;
-                let v = base_value(kind) * mv * quality_mult(q) * stack as i64;
+                let v = crate::item_value::item_value_v50(kind, sub, mv, q, stack); // [prefs15]
                 let mname = self.world.material(mat).map(|m| m.name.clone()).unwrap_or_default();
                 let noun = if sub.is_empty() { kind.to_ascii_lowercase().replace('_', " ") } else { sub.trim_start_matches("ITEM_").splitn(2, '_').nth(1).unwrap_or(sub).to_ascii_lowercase().replace('_', " ") };
                 let id = self.next_item_id;
@@ -1255,7 +1257,7 @@ mod tests {
         let i = sim.item_idx[&id] as usize;
         sim.world.materials[0].value = 3;
         sim.world.items[i].quality = 5;
-        assert_eq!(sim.item_trade_value(id), base_value("BAR") * 3 * 12);
+        assert_eq!(sim.item_trade_value(id), 5 * 3 * 2 + 30); // [prefs15] v50: x2 + 30
         sim.world.items[i].value = 77;
         assert_eq!(sim.item_trade_value(id), 77, "exported DF value wins");
         assert_eq!(quality_mult(6), 120);

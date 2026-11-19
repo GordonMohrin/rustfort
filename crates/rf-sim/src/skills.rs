@@ -141,9 +141,10 @@ pub(crate) fn quality_points_roll(level: i32, phys: [i32; 3], ment: [i32; 3], fo
     let pen = penalty_pct.clamp(0, 100);
     let lv = (level.max(0) * pen / 100) as u32;
     let half = lv * 5 / 2;
-    let mut pts = r.below(10) as i64 + r.below(half) as i64 + r.below(half) as i64;
+    // [prefs15] the wiki's rand(0..N) includes N (F2): below(N + 1).
+    let mut pts = r.below(11) as i64 + r.below(half + 1) as i64 + r.below(half + 1) as i64; // [prefs15]
     let attr = |a: [i32; 3], r: &mut Rng| -> i64 {
-        r.below(a[0].max(0) as u32) as i64 / 100 + r.below(a[1].max(0) as u32) as i64 / 250 + r.below(a[2].max(0) as u32) as i64 / 250
+        r.below(a[0].max(0) as u32 + 1) as i64 / 100 + r.below(a[1].max(0) as u32 + 1) as i64 / 250 + r.below(a[2].max(0) as u32 + 1) as i64 / 250 // [prefs15]
     };
     pts += attr(phys, r);
     pts += attr(ment, r);
@@ -235,11 +236,19 @@ impl Sim {
                     continue;
                 }
                 quality = true;
-                let q = quality_points_roll(level, phys, ment, focus, penalty, 0, &mut r); // [metal12]
+                let prefs = self.prefs_quality_bonus(s, i as usize); // [prefs15] +10 per matching preference
+                let it = &mut self.world.items[i as usize]; // [prefs15]
+                let q = quality_points_roll(level, phys, ment, focus, penalty, prefs, &mut r); // [metal12] [prefs15]
                 if it.value > 0 && q != it.quality {
-                    let old = crate::trade::quality_mult(it.quality).max(1);
-                    it.value = (it.value as i64 * crate::trade::quality_mult(q) / old) as i32;
+                    // [prefs15] v50 value from scratch (multiplier + flat bonus); the created
+                    // wealth follows the difference.
+                    let mv = self.world.materials.get(it.mat as usize).map(|m| m.value).filter(|&v| v > 0).unwrap_or(1) as i64; // [prefs15]
+                    let old = it.value as i64; // [prefs15]
+                    let new = crate::item_value::item_value_v50(&it.kind, &it.subtype, mv, q, it.stack); // [prefs15]
+                    it.value = new.min(i32::MAX as i64) as i32; // [prefs15]
+                    self.world.fort_history.created_wealth += new - old; // [prefs15]
                 }
+                let it = &mut self.world.items[i as usize]; // [prefs15]
                 it.quality = q;
                 self.skills.made[q as usize] += 1;
                 if q == 5 {
@@ -249,6 +258,7 @@ impl Sim {
             for id in masterworks {
                 self.skills_masterpiece(s, id, now); // [calib11-social]
             }
+            self.prefs_job_products(s, first, now); // [prefs15] satisfied at work with liked products
         }
         let base = if skill == "MASONRY" && (first..self.next_item_id).any(|id| self.item_idx.get(&id).map(|&i| self.world.items[i as usize].kind == "BLOCKS").unwrap_or(false)) {
             XP_STONECUT
