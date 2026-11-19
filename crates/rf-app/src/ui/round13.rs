@@ -202,7 +202,21 @@ fn unit_label(g: &Game, id: i32) -> String {
 }
 
 fn entity_name(g: &Game, id: i32) -> String {
-    g.r13.entities.iter().find(|e| e.id == id).map(|e| e.name.clone()).filter(|n| !n.is_empty()).unwrap_or_else(|| if id < 0 { "unknown".into() } else { format!("entity #{id}") })
+    let Some(e) = g.r13.entities.iter().find(|e| e.id == id) else {
+        return if id < 0 { "unknown".into() } else { format!("entity #{id}") };
+    };
+    if !e.name.is_empty() {
+        e.name.clone()
+    } else if !e.race.is_empty() {
+        format!("the {} (#{id})", super::pretty(&e.race).to_lowercase())
+    } else {
+        format!("entity #{id}")
+    }
+}
+
+/// Inside the map (units off site sit at -30000).
+fn on_map(g: &Game, p: Pos) -> bool {
+    g.sim.world.in_bounds(p)
 }
 
 // ====================================================================== polling and alerts
@@ -851,12 +865,14 @@ fn draw_threats(g: &mut Game) {
             if !a.is_empty() {
                 parts.push(format!("came {a}"));
             }
-            if let Some(p) = t.pos {
-                parts.push(format!("at {}, {}, z {}", p.x, p.y, p.z));
+            match t.pos {
+                Some(p) if on_map(g, p) => parts.push(format!("at {}, {}, z {}", p.x, p.y, p.z)),
+                Some(_) => parts.push("off the map".into()),
+                None => {}
             }
             g.font.draw(&clip(&parts.join(", "), lc.saturating_sub(8)), left.x + 2.0 * GW * s, ry + lh, s, col::TEXT_DIM);
             let bw = 5.0 * GW * s;
-            let st = if t.pos.is_some() || !t.units.is_empty() { BtnState::Normal } else { BtnState::Disabled };
+            let st = if t.pos.map(|p| on_map(g, p)).unwrap_or(false) || t.units.iter().any(|&id| g.sim.world.unit(id).map(|u| on_map(g, u.pos)).unwrap_or(false)) { BtnState::Normal } else { BtnState::Disabled };
             if text_button(&mut g.ui, &g.font, Rect::new(left.x + left.w - bw, ry, bw, GH * s + 6.0 * s), "Go", st) {
                 go = Some((t.pos, t.units.first().copied().unwrap_or(-1)));
             }
@@ -886,7 +902,9 @@ fn draw_threats(g: &mut Game) {
             };
             let kills = if b.kills > 0 { format!(", {} kills", b.kills) } else { String::new() };
             let name = if b.name.is_empty() { pretty(&b.race) } else { b.name.clone() };
-            let t = format!("{name} ({}, {}) came {}: {fate}{kills}", threat_label(b.kind).to_lowercase(), pretty(&b.race).to_lowercase(), ago(now, b.arrived));
+            let a = ago(now, b.arrived);
+            let came = if a.is_empty() { String::new() } else { format!(" came {a}") };
+            let t = format!("{name} ({}, {}){came}: {fate}{kills}", threat_label(b.kind).to_lowercase(), pretty(&b.race).to_lowercase());
             if list_row(&mut g.ui, Rect::new(left.x - 4.0 * s, ry - 1.0 * s, left.w + 4.0 * s, lh), false) && b.alive {
                 go = Some((None, b.unit_id));
             }
@@ -1196,7 +1214,7 @@ fn demo(g: &mut Game) {
     let own = ents.iter().find(|e| e.id == civ || e.relation == "Own").map(|e| e.id).unwrap_or(-1);
     let others: Vec<i32> = ents.iter().filter(|e| e.id != own).map(|e| e.id).take(3).collect();
     let other = |k: usize| others.get(k).copied().unwrap_or(own);
-    let mut pool: Vec<(i32, Pos, String)> = g.sim.world.units.iter().filter(|u| !u.flags.dead && u.civ_id != civ).map(|u| (u.id, u.pos, u.race.clone())).take(6).collect();
+    let mut pool: Vec<(i32, Pos, String)> = g.sim.world.units.iter().filter(|u| !u.flags.dead && u.civ_id != civ && on_map(g, u.pos)).map(|u| (u.id, u.pos, u.race.clone())).take(6).collect();
     if pool.is_empty() {
         pool = g.sim.world.units.iter().filter(|u| !u.flags.dead).map(|u| (u.id, u.pos, u.race.clone())).take(6).collect();
     }
