@@ -752,7 +752,7 @@ impl Sim {
                 let part = parts[r.below(parts.len() as u32) as usize];
                 let layer = body.parts[part as usize].l0;
                 let f = &mut self.combat.f[d];
-                f.wounds.push(WoundS { part, layer, flags: wf::BRUISED, sev: 2_500, bleed: 0, pain: 200, age: 0 });
+                f.wounds.push(WoundS { part, layer, flags: wf::BRUISED, sev: 2_500, bleed: 0, pain: 200, age: 0, mx: 0 /* [health15] */ });
                 self.list_wounded(d);
                 self.sync_wounds(d);
                 self.check_pain(d, now);

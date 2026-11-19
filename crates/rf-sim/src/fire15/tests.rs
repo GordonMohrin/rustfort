@@ -411,7 +411,7 @@ fn crab_world(chitin_heat: MaterialHeat, flags: Vec<String>) -> World {
         parent: -1,
         relsize: 1000,
         flags: vec!["UPPERBODY".into()],
-        layers: vec![military::TissueLayerRaw { tissue: "CHITIN".into(), material: "CREATURE:TEST_CRAB:CHITIN".into(), mat: chitin, thickness: 10, flags: vec![] }],
+        layers: vec![military::TissueLayerRaw { tissue: "CHITIN".into(), material: "CREATURE:TEST_CRAB:CHITIN".into(), mat: chitin, thickness: 10, flags: vec![], ..Default::default() }],
         ..Default::default()
     };
     w.creature_raws.push(military::CreatureRaw {
@@ -711,7 +711,7 @@ fn magma_soaks_through_a_safe_shell_into_flesh() {
     let mut w = crab_world(crab_heat(13_000), vec![]);
     let flesh = add_mat(&mut w, "CREATURE:TEST_CRAB:MUSCLE", |m| m.heat = crab_heat(10_250));
     let part = &mut w.creature_raws.last_mut().unwrap().castes[0].body_parts[0];
-    part.layers.push(military::TissueLayerRaw { tissue: "MUSCLE".into(), material: "CREATURE:TEST_CRAB:MUSCLE".into(), mat: flesh, thickness: 100, flags: vec![] });
+    part.layers.push(military::TissueLayerRaw { tissue: "MUSCLE".into(), material: "CREATURE:TEST_CRAB:MUSCLE".into(), mat: flesh, thickness: 100, flags: vec![], ..Default::default() });
     let mut sim = Sim::new(w, 36);
     sim.run_ticks(1);
     let s = sim.unit_slot[&500];

@@ -670,7 +670,7 @@ impl Sim {
                 n.name = tok.to_ascii_lowercase();
                 n.holder = holder;
             }
-            None => self.world.nobles.push(rf_core::NoblePosition { token: tok.into(), name: tok.to_ascii_lowercase(), holder, entity_id: fe, mandates: Vec::new() }),
+            None => self.world.nobles.push(rf_core::NoblePosition { token: tok.into(), name: tok.to_ascii_lowercase(), holder, entity_id: fe, mandates: Vec::new(), ..Default::default() }),
         }
         self.diplo.holders.push((lvl as u8, holder));
         let hn = self.diplo_unit_name(holder);
@@ -845,7 +845,7 @@ mod tests {
         w.meta.fort_name = "Testfort".into();
         w.entities = vec![civ(10, "DWARF", "Own", true), civ(11, "ELF", "Peace", true), civ(12, "HUMAN", "Peace", true), civ(13, "GOBLIN", "War", false), civ(14, "HUMAN", "War", false)];
         let leader = w.units.iter().find(|u| u.flags.citizen).map(|u| u.id).unwrap_or(w.units[0].id);
-        w.nobles.push(NoblePosition { token: "EXPEDITION_LEADER".into(), name: "expedition leader".into(), holder: leader, entity_id: 500, mandates: Vec::new() });
+        w.nobles.push(NoblePosition { token: "EXPEDITION_LEADER".into(), name: "expedition leader".into(), holder: leader, entity_id: 500, mandates: Vec::new(), ..Default::default() });
         let mut sim = Sim::new(w, 77);
         sim.diplomacy_day(0);
         sim
