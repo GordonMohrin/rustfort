@@ -163,7 +163,10 @@ impl Sim {
                 e.wear_pts = w as u32;
             }
             // Leave the set when cooled back to an ordinary environment.
-            if !e.burning && pts == 0 && env <= ambient.max(UNDERGROUND_TEMP) + 1 && (t - env).abs() <= 1 {
+            // Items whose temperature cannot change (fixed temperature such as nether-cap, or
+            // SPEC_HEAT NONE) never reach the environment's value: they leave as well.
+            let pinned = is_set(h.mat_fixed_temp) || !is_set(h.spec_heat);
+            if !e.burning && pts == 0 && env <= ambient.max(UNDERGROUND_TEMP) + 1 && ((t - env).abs() <= 1 || pinned) {
                 e.idle += 1;
                 if e.idle >= 100 {
                     self.fire.hot[k].idle = u16::MAX;
@@ -183,7 +186,11 @@ impl Sim {
     /// Fire pass, items: loose items on burning tiles heat up; burning loose items set their
     /// tile on fire (chance 1/2 per pass, ESTIMATE).
     pub(crate) fn fire15_items_pass(&mut self, now: u64) {
-        if !self.fire.cells.is_empty() || !self.fire.burn_tiles.is_empty() {
+        // The scan walks every item: with real fire every pass, with only heat emitters (fire
+        // men, which can live on a map for years) once per scan period.
+        let real_fire = !self.fire.cells.is_empty() || !self.fire.burning.is_empty() || self.fire.hot.iter().any(|e| e.burning);
+        let emitters_only = !real_fire && !self.fire.burn_tiles.is_empty();
+        if real_fire || (emitters_only && now % super::SCAN_PERIOD == super::FIRE_PHASE) {
             let mut add = Vec::new();
             for (ix, it) in self.world.items.iter().enumerate() {
                 if self.imeta[ix].dead || it.container >= 0 {

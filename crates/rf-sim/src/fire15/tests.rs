@@ -128,9 +128,11 @@ fn fixed_temp_material_never_changes() {
     item(&mut w, 9001, "WOOD", nether, p);
     let mut sim = Sim::new(w, 1);
     sim.set_liquid(p, 7, true);
-    sim.run_ticks(600);
-    assert!(alive(&sim, 9001), "nether-cap log survives magma");
+    sim.run_ticks(300);
     assert_eq!(sim.item_temperature(9001), Some(10_000));
+    sim.run_ticks(300);
+    assert!(alive(&sim, 9001), "nether-cap log survives magma");
+    assert!(matches!(sim.item_temperature(9001), Some(10_000) | None), "fixed, or back to ambient once the magma spread away");
     assert!(!sim.is_burning_item(9001));
 }
 
@@ -659,6 +661,88 @@ fn creature_with_a_melting_shell_is_harmed_by_magma() {
     sim.run_ticks(300);
     let dead = sim.ai[s].kind == crate::Kind::Dead;
     assert!(dead || sim.fire_report().burn_wounds > 0, "the shell melts in magma: {:?}", sim.fire_report());
+}
+
+#[test]
+fn fixed_temp_item_leaves_the_hot_set_after_the_magma_is_gone() {
+    // A nether-cap log (fixed 10000) never reaches the 10015 underground ambient: it used to
+    // stay in the hot set (stepped every tick) forever after any magma or fire contact.
+    let mut w = world();
+    let nether = add_mat(&mut w, "PLANT:NETHER_CAP:WOOD", |m| m.is_wood = true);
+    let p = Pos::new(13, 16, HALL);
+    item(&mut w, 9001, "WOOD", nether, p);
+    let mut sim = Sim::new(w, 34);
+    sim.set_liquid(p, 7, true);
+    sim.run_ticks(300);
+    assert_eq!(sim.item_temperature(9001), Some(10_000));
+    for y in 0..DY as i16 {
+        for x in 0..DX as i16 {
+            sim.set_liquid(Pos::new(x, y, HALL), 0, false);
+        }
+    }
+    sim.run_ticks(300);
+    assert!(!sim.fire15_magma(sim.world.idx(p).unwrap()), "magma drained");
+    assert!(alive(&sim, 9001));
+    assert_eq!(sim.fire_report().hot_items, 0, "the pinned item left the hot set");
+}
+
+#[test]
+fn dragonfire_ignites_nether_cap_ordinary_heat_does_not() {
+    // w:Dragonfire "ignites organics including nether-cap"; the fixed 10000 used to block it.
+    let mut w = world();
+    let nether = add_mat(&mut w, "PLANT:NETHER_CAP:WOOD", |m| m.is_wood = true);
+    let (a, b) = (Pos::new(12, 16, HALL), Pos::new(20, 16, HALL));
+    item(&mut w, 9001, "WOOD", nether, a);
+    item(&mut w, 9002, "WOOD", nether, b);
+    let mut sim = Sim::new(w, 35);
+    sim.run_ticks(1);
+    sim.heat_blast(a, DRAGONFIRE_TEMP);
+    sim.heat_blast(b, 11_000);
+    sim.run_ticks(20);
+    assert!(sim.is_burning_item(9001), "dragonfire sets nether-cap alight");
+    assert_eq!(sim.item_temperature(9001), Some(10_000), "it burns at its normal temperature");
+    assert!(!sim.is_burning_item(9002), "ordinary heat does not");
+}
+
+#[test]
+fn magma_soaks_through_a_safe_shell_into_flesh() {
+    // Outer chitin is magma-safe, the muscle under it is not: the creature is not magma-proof,
+    // so magma must hurt it (it used to swim in magma forever: no part "caught").
+    let mut w = crab_world(crab_heat(13_000), vec![]);
+    let flesh = add_mat(&mut w, "CREATURE:TEST_CRAB:MUSCLE", |m| m.heat = crab_heat(10_250));
+    let part = &mut w.creature_raws.last_mut().unwrap().castes[0].body_parts[0];
+    part.layers.push(military::TissueLayerRaw { tissue: "MUSCLE".into(), material: "CREATURE:TEST_CRAB:MUSCLE".into(), mat: flesh, thickness: 100, flags: vec![] });
+    let mut sim = Sim::new(w, 36);
+    sim.run_ticks(1);
+    let s = sim.unit_slot[&500];
+    assert!(!sim.fire15_magma_proof(s));
+    let p = sim.fire15_unit_pos(s);
+    sim.set_liquid(p, 7, true);
+    sim.run_ticks(300);
+    let dead = sim.ai[s].kind == crate::Kind::Dead;
+    assert!(dead || sim.fire_report().burn_wounds > 0, "magma reaches the flesh: {:?}", sim.fire_report());
+}
+
+#[test]
+fn smoke_thought_underground_only() {
+    // w:Smoke: "after choking on smoke underground"; at most one per unit every 2 days.
+    let mut sim = Sim::new(world(), 37);
+    sim.run_ticks(1);
+    let (s, id) = first_dwarf(&sim);
+    let i = sim.ai[s].pos as usize;
+    assert_eq!(sim.world.tiles[i].flags & tile_flags::OUTSIDE, 0, "the dwarf starts underground");
+    assert!(sim.ignite_unit(id, 0));
+    sim.run_ticks(100);
+    let n = sim.fire_report().smoke_thoughts;
+    assert!(n >= 1, "{:?}", sim.fire_report());
+    let smoky = |sim: &Sim| sim.world.units.iter().map(|u| u.emotions.iter().filter(|e| e.thought == "Smoke").count()).collect::<Vec<_>>();
+    assert_eq!(smoky(&sim).iter().sum::<usize>() as u64, n, "one Smoke thought per event");
+    let before = smoky(&sim);
+    sim.run_ticks(300);
+    let after = smoky(&sim);
+    for (a, b) in before.iter().zip(&after) {
+        assert!(*a == 0 || a == b, "not again within 2 days");
+    }
 }
 
 #[test]

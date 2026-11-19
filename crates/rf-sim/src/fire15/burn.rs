@@ -117,7 +117,10 @@ impl Sim {
         let ps = &self.combat.f[s].part_state;
         let catches = |p: usize| {
             let pt = &body.parts[p];
-            pt.flags & bp::INTERNAL == 0 && pt.nl > 0 && ps.get(p).map_or(true, |&st| st & 5 == 0) && harmed_at(&lh[pt.l0 as usize], src)
+            // In magma the heat soaks through a safe shell into what lies under it (else a
+            // unit with a magma-safe outer layer over flesh is neither proof nor ever hurt).
+            let hurt = if magma { (pt.l0..pt.l0 + pt.nl).any(|l| harmed_at(&lh[l as usize], src)) } else { harmed_at(&lh[pt.l0 as usize], src) };
+            pt.flags & bp::INTERNAL == 0 && pt.nl > 0 && ps.get(p).map_or(true, |&st| st & 5 == 0) && hurt
         };
         let mut mask = 0u64;
         if n == 0 {
@@ -274,7 +277,8 @@ impl Sim {
             };
             // Outermost layer not yet burned through.
             let f = &self.combat.f[s];
-            let target = (l0..l0 + nl).find(|&l| f.wounds.iter().find(|w| w.part == p as u16 && w.layer == l).map_or(true, |w| w.sev < 10_000));
+            let lhs = &self.fire.bodies[bi];
+            let target = (l0..l0 + nl).find(|&l| (!e.magma || harmed_at(&lhs[l as usize], src)) && f.wounds.iter().find(|w| w.part == p as u16 && w.layer == l).map_or(true, |w| w.sev < 10_000));
             let Some(l) = target else {
                 // Charred through: the part is lost (function lost); vital parts kill.
                 e.parts &= !(1 << p);
@@ -377,6 +381,17 @@ impl Sim {
         }
         for id in ids {
             self.fire15_heat_item(id, false, temp);
+            // Dragonfire sets organics alight directly, fixed-temperature ones too (nether-cap,
+            // w:Dragonfire); they then burn at their normal temperature.
+            if temp >= DRAGONFIRE_TEMP {
+                if let (Ok(k), Some(&ix)) = (self.fire.hot.binary_search_by_key(&id, |e| e.id), self.item_idx.get(&id)) {
+                    let h = self.fire15_heat(self.world.items[ix as usize].mat);
+                    if is_set(h.ignite_point) && !self.fire.hot[k].burning {
+                        self.fire.hot[k].burning = true;
+                        self.fire.rep.items_ignited += 1;
+                    }
+                }
+            }
         }
         if self.fire15_try_ignite_tile(i, temp) {
             self.fire15_merge_ignitions(now);

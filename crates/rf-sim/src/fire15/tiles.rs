@@ -57,7 +57,9 @@ impl Sim {
         let m = self.world.tiles[i].mat;
         if m != NO_MAT {
             let h = self.fire15_heat(m);
-            if !burns_at(&h, src) && (is_set(h.ignite_point) || is_set(h.mat_fixed_temp)) {
+            // Dragonfire ignites organics even nether-cap (w:Dragonfire, w:Nether cap).
+            let dragon = src >= DRAGONFIRE_TEMP && is_set(h.ignite_point);
+            if !burns_at(&h, src) && !dragon && (is_set(h.ignite_point) || is_set(h.mat_fixed_temp)) {
                 return false; // nether-cap: fixed 10000, never ignites from ordinary fire
             }
         }
