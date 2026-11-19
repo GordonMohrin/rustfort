@@ -6,6 +6,31 @@ DFHack exports in date order (table in [docs/VALIDATION.md](docs/VALIDATION.md))
 87 citizens) is the main one. These exports are not distributed. Speeds are headless ticks per
 second on a 6-core desktop CPU, often measured while other builds were running.
 
+## v0.14.0 (2026-11-19): levers and pressure plates like DF, machine construction, DF music and sounds
+
+Every topic was first analyzed as a DF mechanics spec (`docs/mechanics/<topic>.md`, from the wiki and the raws), then implemented and adversarially reviewed.
+
+- **Linkage** (`linkage.rs`, `docs/mechanics/machines14.md`):
+  - Signals as in DF: "on" opens doors, hatches, floodgates, grates and bars, raises bridges and retracts spikes. Gears toggle on every signal.
+  - Device delays: 40 ticks for spikes, 100 for gates. A device ignores signals while it switches. Blocked doors and floodgates jam.
+  - Pressure plates are level sensors that close 99 ticks after being cleared. Settings: creature weight, citizens, water and magma depth, minecart weight, one use only.
+  - Link jobs: a mechanic links a lever or plate to its target using 2 mechanisms.
+- **Power:**
+  - Disengaged gears cut power; floors block power between levels.
+  - Windmills connect through their ring, and water wheels need 4/7 water.
+  - Pumps keep running for 49 ticks and make obsidian where water meets magma.
+- **Construction** (F9 "Mechanisms"): every machine and device can be built, from levers and plates to pumps, windmills, bridges (up to 31x31) and supports.
+- **UI:** link picker (lever -> targets), plate settings, power network overlay, route view polish.
+- **DF audio** (`rf-app/src/audio`, `docs/mechanics/audio14.md`):
+  - Music, ambience and sound effects are read at runtime from the DF install (`data/sound`), with DF's own selection rules from its sound raws: title song, seasonal and event music, tavern music, mining and combat sounds.
+  - Settings: master, music and effects volume, and mute. `--mute` or `RUSTFORT_MUTE=1` mute everything.
+  - Headless runs, the bench and the tests never open an audio device.
+  - DF's sound files are never copied.
+- **Result:**
+  - 2-year bench on r5: the state hash is unchanged from v0.13 (35113c9f8acec036, 1 and N threads), since the reference fort's levers keep their state.
+  - Speed is the same as v0.13 (about 95-100k ticks/s, measured alternating).
+  - Save/load IDENTICAL; chaos harness 8 seeds, 0 panics.
+
 ## v0.13.0 (2026-11-19): undead, vampires and werebeasts, megabeasts, diplomacy, weather
 
 - **Weather and climate** (`weather.rs`, w:Weather, w:Ice):
