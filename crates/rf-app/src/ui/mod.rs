@@ -12,6 +12,7 @@ pub mod burrows;
 pub mod devices; // [round 4]
 pub mod machines14; // [machines14] link picker, plate settings, power network overlay
 pub mod fire15; // [fire15] flames, smoke, burning units
+pub mod health15; // [health15] fort health overview, medical rows of the unit sheet
 pub mod help; // [round 6]
 pub mod labor;
 pub mod military;

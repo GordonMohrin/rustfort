@@ -1626,6 +1626,7 @@ mod tests {
             mat,
             thickness: th,
             flags: vec!["CONNECTS".into()],
+            healing_rate: 0, // [health15]
         };
         let caste = CasteRaw {
             token: "FEMALE".into(),

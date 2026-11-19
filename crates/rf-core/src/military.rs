@@ -59,6 +59,10 @@ pub struct TissueLayerRaw {
     pub thickness: i32,
     /// e.g. `CONNECTS`, `VASCULAR`, `STRUCTURAL`, `FUNCTIONAL`, `SETTABLE`, `SPLINTABLE`.
     pub flags: Vec<String>,
+    /// [health15] DF `HEALING_RATE` of the layer (ticks between healing steps; lower heals
+    /// faster; 0 = the tissue does not heal, or an export without the field).
+    #[serde(default)] // [health15]
+    pub healing_rate: i32, // [health15]
 }
 
 /// One body part of a caste (expanded DF body).

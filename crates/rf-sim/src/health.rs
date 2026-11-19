@@ -55,7 +55,7 @@ pub mod hf {
 }
 
 /// Medical labor bits.
-mod ml {
+pub(crate) mod ml { // [health15] pub(crate)
     pub const DIAG: u8 = 1;
     pub const SUTURE: u8 = 2;
     pub const DRESS: u8 = 4;
@@ -79,6 +79,14 @@ pub enum Treat {
     Food,
     /// [military2] Recover wounded: carry an immobile patient to a bed.
     Carry,
+    /// [health15] Immobilize a set fracture with a splint (or a cloth sling).
+    Immobilize,
+    /// [health15] Apply a plaster cast (plaster powder, bucket of water, cloth).
+    Cast,
+    /// [health15] Carry a patient with an overlapping fracture to a traction bench.
+    Traction,
+    /// [health15] Bring a crutch to a patient who cannot use a leg.
+    Crutch,
 }
 
 impl Treat {
@@ -91,8 +99,13 @@ impl Treat {
             Treat::Surgery => ml::SURGERY,
             Treat::Water | Treat::Food => ml::FEED,
             Treat::Carry => ml::RESCUE,
+            Treat::Immobilize | Treat::Cast | Treat::Traction | Treat::Crutch => ml::BONE, // [health15]
         }
     }
+    /// [health15] Skill of the treatment (for outcome rolls).
+    pub(crate) fn skill_pub(self) -> &'static str { // [health15]
+        self.skill() // [health15]
+    } // [health15]
     fn skill(self) -> &'static str {
         match self {
             Treat::Diagnose => "DIAGNOSE",
@@ -100,6 +113,7 @@ impl Treat {
             Treat::Dress => "DRESS_WOUNDS",
             Treat::SetBone => "SET_BONE",
             Treat::Surgery => "SURGERY",
+            Treat::Immobilize | Treat::Cast | Treat::Traction => "SET_BONE", // [health15]
             _ => "",
         }
     }
@@ -112,6 +126,10 @@ impl Treat {
             Treat::Surgery => 600,
             Treat::Water | Treat::Food => 60,
             Treat::Carry => 20,
+            Treat::Immobilize => 200, // [health15] estimate
+            Treat::Cast => 400,       // [health15] estimate
+            Treat::Traction => 300,   // [health15] estimate
+            Treat::Crutch => 20,      // [health15] estimate
         }
     }
     /// DF job caption.
@@ -125,6 +143,10 @@ impl Treat {
             Treat::Water => "Give Water",
             Treat::Food => "Give Food",
             Treat::Carry => "Recover Wounded",
+            Treat::Immobilize => "Immobilize Break", // [health15]
+            Treat::Cast => "Apply Cast",             // [health15]
+            Treat::Traction => "Place in Traction",  // [health15]
+            Treat::Crutch => "Bring Crutch",         // [health15]
         }
     }
     /// Item kind the treatment uses up.
@@ -132,14 +154,17 @@ impl Treat {
         match self {
             Treat::Suture => Some("THREAD"),
             Treat::Dress => Some("CLOTH"),
-            Treat::SetBone => Some(if splints { "SPLINT" } else { "CLOTH" }),
+            Treat::SetBone => None, // [health15] setting uses no item; immobilizing does
+            Treat::Immobilize => Some(if splints { "SPLINT" } else { "CLOTH" }), // [health15]
+            Treat::Cast => Some("POWDER_MISC"), // [health15] plaster powder
+            Treat::Crutch => Some("CRUTCH"),    // [health15]
             _ => None,
         }
     }
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)] // [saves11]
-enum CStep {
+pub(crate) enum CStep { // [health15] pub(crate)
     Open,
     GoItem,
     GoPatient,
@@ -150,12 +175,12 @@ enum CStep {
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug)] // [saves11]
 pub(crate) struct CareJob {
-    patient: u32,
-    treat: Treat,
-    doctor: u32,
+    pub(crate) patient: u32, // [health15] pub(crate)
+    pub(crate) treat: Treat, // [health15] pub(crate)
+    pub(crate) doctor: u32, // [health15] pub(crate)
     /// Supply item being fetched/carried (-1 none; -2 water from a source).
-    item: i32,
-    step: CStep,
+    pub(crate) item: i32, // [health15] pub(crate)
+    pub(crate) step: CStep, // [health15] pub(crate)
 }
 
 /// [military2] Crawling is this many times slower than walking (estimate).
@@ -200,14 +225,14 @@ pub struct HealthInfo {
 pub(crate) struct Health {
     pub off: bool,
     inited: bool,
-    med: Vec<u8>,
-    any_med: u8,
+    pub(crate) med: Vec<u8>, // [health15] pub(crate)
+    pub(crate) any_med: u8, // [health15] pub(crate)
     pub jobs: Vec<CareJob>,
     open: usize,
-    soap: bool,
-    threads: i32,
-    cloths: i32,
-    splints: i32,
+    pub(crate) soap: bool, // [health15] pub(crate)
+    pub(crate) threads: i32, // [health15] pub(crate)
+    pub(crate) cloths: i32, // [health15] pub(crate)
+    pub(crate) splints: i32, // [health15] pub(crate)
     pub stats: HealthReport,
 }
 
@@ -248,6 +273,7 @@ impl Sim {
                 }
                 if let Some(ws) = self.combat.f[s].wounds.iter_mut().find(|x| x.part == pi as u16 && x.layer == layer) {
                     ws.flags |= bits;
+                    ws.mx |= crate::health15::mx_of_flags(&w.flags); // [health15] fracture classes, nerves
                 }
             }
         }
@@ -267,13 +293,13 @@ impl Sim {
                 self.health_refresh_daily();
                 self.infection_daily(now);
             }
-            if !self.combat.wounded.is_empty() || !self.health.jobs.is_empty() {
+            if !self.combat.wounded.is_empty() || !self.health.jobs.is_empty() || (!self.h15.off && !self.h15.dis.is_empty()) { // [health15] crutches for healed disabled units
                 self.health_pass(now);
             }
         }
     }
 
-    fn health_refresh_daily(&mut self) {
+    pub(crate) fn health_refresh_daily(&mut self) { // [health15] pub(crate)
         let n = self.ai.len();
         self.health.med.resize(n, 0);
         let mut any = 0;
@@ -297,14 +323,21 @@ impl Sim {
             any |= b;
         }
         self.health.any_med = any;
+        self.h15_count_reset(); // [health15]
         let (mut th, mut cl, mut sp, mut soap) = (0, 0, 0, false);
         let now = self.ticks;
         for idx in 0..self.world.items.len() {
             let k = self.world.items[idx].kind.as_str();
-            let interesting = matches!(k, "THREAD" | "CLOTH" | "SPLINT" | "BAR" | "GLOB" | "LIQUID_MISC");
+            let interesting = matches!(k, "THREAD" | "CLOTH" | "SPLINT" | "BAR" | "GLOB" | "LIQUID_MISC" | "CRUTCH" | "POWDER_MISC" | "BUCKET"); // [health15] crutches, plaster, buckets
             if !interesting || !self.item_free(idx, now) {
                 continue;
             }
+            let h15_only = matches!(k, "CRUTCH" | "POWDER_MISC" | "BUCKET"); // [health15]
+            self.h15_count_supply(idx); // [health15] crutches, plaster, buckets; hospital stock
+            if h15_only {
+                continue; // [health15]
+            }
+            let k = self.world.items[idx].kind.as_str(); // [health15]
             match k {
                 "THREAD" => th += 1,
                 "CLOTH" => cl += 1,
@@ -339,12 +372,15 @@ impl Sim {
     /// Cannot walk: a broken bone in a leg or foot, or unconscious.
     pub(crate) fn health_bedridden(&self, s: usize) -> bool {
         let Some(f) = self.combat.f.get(s) else { return false };
-        f.uncon_until > self.ticks || self.cannot_stand(s)
+        f.uncon_until > self.ticks || self.cannot_stand(s) || self.h15_in_traction(s) // [health15]
     }
 
     /// [military2] Cannot stand: an unset broken bone in a limb that carries weight (STANCE),
     /// or a lost foot (no crutches yet). Such a unit crawls (wiki Health care / Crutch).
     pub(crate) fn cannot_stand(&self, s: usize) -> bool {
+        if let Some(v) = self.h15_cannot_stand(s) {
+            return v; // [health15] crutches, nerve damage, immobilized fractures
+        }
         let Some(f) = self.combat.f.get(s) else { return false };
         if f.body == u16::MAX || f.wounds.is_empty() {
             return false;
@@ -372,7 +408,7 @@ impl Sim {
     }
 
     /// Next treatment a patient needs (None = nothing the fort can do right now).
-    fn next_treat(&self, s: usize, with_feed: bool) -> Option<Treat> {
+    pub(crate) fn next_treat(&self, s: usize, with_feed: bool) -> Option<Treat> { // [health15] pub(crate)
         let f = self.combat.f.get(s)?;
         if f.wounds.is_empty() {
             return None;
@@ -395,7 +431,10 @@ impl Sim {
         if have & ml::SUTURE != 0 && self.health.threads > 0 && f.wounds.iter().any(|w| w.flags & OPEN != 0 && (w.bleed > 0 || w.sev >= 2_000 || w.flags & wf::SEVERED != 0) && w.flags & hf::SUTURED == 0) {
             return Some(Treat::Suture);
         }
-        if have & ml::BONE != 0 && (self.health.splints > 0 || self.health.cloths > 0) && f.wounds.iter().any(|w| w.flags & wf::BROKEN != 0 && w.flags & hf::SET == 0) {
+        if have & ml::SURGERY != 0 && !self.h15.off && f.wounds.iter().any(|w| crate::health15::needs_surgery(w, self.ticks)) { // [health15] (not when health15 is off)
+            return Some(Treat::Surgery); // [health15] compound fracture or old infection first
+        }
+        if have & ml::BONE != 0 && f.wounds.iter().any(|w| w.flags & wf::BROKEN != 0 && w.flags & hf::SET == 0 && crate::health15::needs_setting(w)) { // [health15] no supply; only displaced fractures
             return Some(Treat::SetBone);
         }
         if have & ml::SURGERY != 0 {
@@ -410,6 +449,9 @@ impl Sim {
             if f.wounds.iter().any(|w| w.flags & OPEN != 0 && (w.flags & hf::DRESSED == 0 || (soap && w.flags & hf::INFECTED != 0 && w.flags & hf::CLEANED == 0))) {
                 return Some(Treat::Dress);
             }
+        }
+        if have & ml::BONE != 0 {
+            return self.h15_next_treat(s); // [health15] immobilize, cast, traction, crutch
         }
         None
     }
@@ -452,8 +494,8 @@ impl Sim {
                         if w.flags & (hf::SUTURED | hf::DRESSED) != 0 {
                             w.sev -= 20;
                         }
-                        if w.flags & wf::BROKEN != 0 && w.flags & hf::SET == 0 {
-                            w.sev += 30;
+                        if w.flags & wf::BROKEN != 0 && w.flags & hf::SET == 0 && !crate::health15::immobilized(w) {
+                            w.sev = (w.sev + crate::health15::UNSET_WORSEN).min(10_000); // [health15] bone-scaled
                         }
                     }
                     bleed += w.bleed;
@@ -486,7 +528,7 @@ impl Sim {
             let p = j.patient as usize;
             let still = want.iter().any(|&(s, t)| s == j.patient && t == j.treat);
             let alive = p < self.ai.len() && self.ai[p].kind != Kind::Dead;
-            let carrying = j.treat == Treat::Carry && j.doctor != NONE && matches!(j.step, CStep::Carry(_)); // [military2]
+            let carrying = matches!(j.treat, Treat::Carry | Treat::Traction) && j.doctor != NONE && matches!(j.step, CStep::Carry(_)); // [military2] [health15] traction
             if alive && (still || carrying || j.doctor != NONE && self.in_care(p)) {
                 k += 1;
                 continue;
@@ -512,6 +554,7 @@ impl Sim {
                 }
             }
         }
+        self.h15_want(&mut want); // [health15] crutches for healed disabled units
         for (s, t) in want {
             if !self.health.jobs.iter().any(|j| j.patient == s) {
                 self.health.jobs.push(CareJob { patient: s, treat: t, doctor: NONE, item: -1, step: CStep::Open });
@@ -663,20 +706,20 @@ impl Sim {
         true
     }
 
-    fn care_find_supply(&self, s: usize, kind: &str, now: u64) -> Option<i32> {
+    pub(crate) fn care_find_supply(&self, s: usize, kind: &str, now: u64) -> Option<i32> { // [health15] pub(crate)
         let c = self.nav.comp_near(self.ai[s].pos as usize);
         let up = self.nav.xyz(self.ai[s].pos as usize);
         let mut best = (i32::MAX, -1);
         for idx in 0..self.world.items.len() {
             let it = &self.world.items[idx];
-            if it.kind != kind || !self.item_free(idx, now) {
+            if it.kind != kind || !self.item_free(idx, now) || !self.h15_supply_ok(idx) { // [health15] plaster powder only
                 continue;
             }
             let Some(t) = self.world.idx(it.pos) else { continue };
             if self.alert_blocks(s, t) {
                 continue; // [military2]
             }
-            let d = crate::manhattan(up, self.nav.xyz(t));
+            let d = crate::manhattan(up, self.nav.xyz(t)) - self.h15_supply_bonus(it.pos); // [health15] hospital chests first
             if (d, it.id) < best && self.nav.comp_near(t) == c {
                 best = (d, it.id);
             }
@@ -756,12 +799,17 @@ impl Sim {
                     self.rescue_pick_up(s, k, p, now); // [military2]
                     return;
                 }
+                if j.treat == Treat::Traction {
+                    self.h15_traction_pick_up(s, k, p, now); // [health15]
+                    return;
+                }
                 let sk = j.treat.skill();
                 let rating = if sk.is_empty() { 0 } else { self.social_rating(s, self.world.units[self.ai[s].uidx].skill(sk).clamp(0, 20)) };
                 let dur = (j.treat.ticks() * 10 / (10 + 2 * rating.clamp(0, 20))).max(10) as u64;
                 self.health.jobs[k].step = CStep::Work(now + dur);
                 self.ai[s].wake = now + dur;
             }
+            CStep::Carry(b) if j.treat == Treat::Traction => self.h15_traction_arrive(s, k, b, now), // [health15]
             CStep::Carry(b) => self.rescue_arrive(s, k, b, now), // [military2]
             CStep::Work(until) => {
                 if now < until {
@@ -781,6 +829,10 @@ impl Sim {
         let dname = self.uname(d);
         let pname = self.uname(p);
         let mut used = item >= 0;
+        if !self.h15_outcome(d, p, t, now) {
+            self.h15_failed(d, p, t, item, now); // [health15] treatment failed (skill roll)
+            return;
+        }
         match t {
             Treat::Diagnose => {
                 let mut infected = false;
@@ -808,6 +860,7 @@ impl Sim {
                 self.health.stats.events.push((now, format!("{dname} sutured {pname}.")));
             }
             Treat::Dress => {
+                let soap = soap && self.h15_clean(d, p, now); // [health15] cleaning roll, soap used up
                 for w in self.combat.f[p].wounds.iter_mut() {
                     if w.flags & OPEN != 0 {
                         w.flags |= hf::DRESSED;
@@ -821,8 +874,9 @@ impl Sim {
             }
             Treat::SetBone => {
                 for w in self.combat.f[p].wounds.iter_mut() {
-                    if w.flags & wf::BROKEN != 0 {
+                    if w.flags & wf::BROKEN != 0 && crate::health15::settable_now(w) { // [health15] compound: surgery first
                         w.flags |= hf::SET;
+                        w.mx &= !crate::health15::mx::NEEDS_SET; // [health15]
                     }
                 }
                 self.health.stats.bones_set += 1;
@@ -837,6 +891,7 @@ impl Sim {
                         w.sev = w.sev * 2 / 3;
                     }
                 }
+                self.h15_surgery_done(d, p, now); // [health15] compound fractures, excision of infection
                 self.health.stats.surgeries += 1;
                 self.health.stats.events.push((now, format!("{dname} operated on {pname}.")));
             }
@@ -858,9 +913,15 @@ impl Sim {
                 self.health.stats.meals_given += 1;
             }
             Treat::Carry => {}
+            Treat::Immobilize | Treat::Cast | Treat::Traction | Treat::Crutch => {
+                self.h15_apply(d, p, t, item, now); // [health15]
+            }
         }
         if !t.skill().is_empty() {
             self.add_xp(d, t.skill(), 50);
+        }
+        if used && self.h15_keep_item(d, p, t, item) {
+            used = false; // [health15] thread sewn in, splint/cast/crutch on the patient
         }
         if used {
             let uidx = self.ai[d].uidx;
@@ -1048,7 +1109,7 @@ impl Sim {
             return false;
         }
         let Some(f) = self.combat.f.get(s) else { return false };
-        if f.carried_by != NONE || matches!(f.sub, Sub::Resting(b) | Sub::Rest(b) if b >= 0) {
+        if f.carried_by != NONE || matches!(f.sub, Sub::Resting(b) | Sub::Rest(b) if b >= 0) || self.h15_in_traction(s) { // [health15]
             return false;
         }
         (f.uncon_until > self.ticks || self.cannot_stand(s)) && self.needs_rest(s) && !self.fight_nearby(s) && self.rescue_bed_for(s).is_some()
@@ -1133,6 +1194,9 @@ impl Sim {
         if self.ai[s].kind == Kind::Dead {
             return;
         }
+        if self.h15_gait(s) {
+            return; // [health15] crutch / crawl at the raws' gait ratio
+        }
         let crawl = self.cannot_stand(s);
         if crawl == self.combat.f[s].crawl {
             return;
@@ -1200,7 +1264,7 @@ mod tests {
             assert!(info.diagnosed, "{info:?}");
         }
         // Thread, cloth and the splint were used up.
-        assert!(!sim.world.items.iter().any(|i| i.id == 5005 && i.stack > 0 && !i.flags.in_job) || sim.world.item(5005).is_none());
+        assert!(sim.world.item(5005).is_some()); // [health15] setting uses no splint; immobilizing straps it on later (it is never destroyed)
         // The sutured cut stopped bleeding.
         let (blood, bmax, _) = sim.unit_condition(uid).unwrap();
         assert!(blood > bmax / 2);
@@ -1306,7 +1370,7 @@ mod tests {
         let s = sim.unit_slot[&1];
         sim.run_ticks(300);
         assert!(sim.combat.f[s].crawl, "crawling");
-        assert_eq!(sim.ai[s].speed, 900 * CRAWL_FACTOR);
+        assert_eq!(sim.ai[s].speed, crate::health15::crawl_delay(900)); // [health15] raws gait ratio 2990/900
         assert!(sim.combat.stats.crawlers >= 1);
         assert_eq!(sim.combat.stats.rescues, 0);
         // Healed: walks again.

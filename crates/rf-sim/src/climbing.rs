@@ -181,7 +181,7 @@ impl Sim {
             return true;
         }
         let b = &self.combat.bodies[f.body as usize];
-        b.parts.iter().enumerate().any(|(i, p)| p.flags & bp::GRASP != 0 && f.part_state.get(i).map_or(true, |&st| st & 3 == 0))
+        b.parts.iter().enumerate().any(|(i, p)| p.flags & bp::GRASP != 0 && f.part_state.get(i).map_or(true, |&st| st & 7 == 0)) // [health15] motor nerve
     }
 
     /// [siege12] Climbing group of the unit or item on tile `i` (0 = none). A climber hanging on

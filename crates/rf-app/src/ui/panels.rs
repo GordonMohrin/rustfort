@@ -214,7 +214,8 @@ fn unit_sheet(g: &mut Game, id: i32, r: Rect) {
                 // [round 5] Treatment right after the status block, like DF's health screen.
                 let mut rows = super::psyche::health_rows(g, &u);
                 let at = rows.iter().position(|r| matches!(r, super::psyche::Row::Gap)).map(|i| i + 1).unwrap_or(rows.len());
-                let tr = super::round5::treatment_rows(g, &u);
+                let mut tr = super::round5::treatment_rows(g, &u);
+                tr.extend(super::health15::unit_rows(g, u.id)); // [health15]
                 rows.splice(at..at, tr);
                 rows
             }

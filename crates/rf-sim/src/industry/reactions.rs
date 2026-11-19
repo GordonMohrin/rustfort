@@ -81,6 +81,10 @@ pub(crate) enum Rg {
     Sand,
     /// An uncut rock crystal.
     Crystal,
+    /// [health15] A boulder of a stone with reaction class GYPSUM (raws MAKE_PLASTER_POWDER).
+    Gypsum,
+    /// [health15] An empty bag that receives the product (preserved).
+    EmptyBag,
 }
 
 /// The product of a reaction.
@@ -98,6 +102,8 @@ pub(crate) enum Pr {
     Lye,
     /// Raw glass of this builtin glass material.
     Glass(&'static str, &'static str),
+    /// [health15] Plaster powder (POWDER_MISC of INORGANIC:PLASTER, 150 units) into the bag.
+    Plaster,
 }
 
 pub(crate) struct Reaction {
@@ -138,6 +144,7 @@ pub(crate) const REACTIONS: &[Reaction] = &[
     Reaction { key: "RENDER_FAT", reagents: &[Fat], product: Pr::Tallow },
     Reaction { key: "MAKE_SOAP_FROM_TALLOW", reagents: &[Lye, Tallow], product: Pr::Soap },
     Reaction { key: "MAKE_PEARLASH", reagents: &[Potash], product: Pr::Pearlash },
+    Reaction { key: "MAKE_PLASTER_POWDER", reagents: &[Gypsum, EmptyBag], product: Pr::Plaster }, // [health15] reaction_other.txt
     Reaction { key: "MAKE_CLAY_JUG", reagents: &[Clay], product: Pr::Fired("TOOL", "ITEM_TOOL_JUG", "jug") },
     Reaction { key: "MAKE_CLAY_BRICKS", reagents: &[Clay], product: Pr::Fired("BLOCKS", "", "bricks") },
     Reaction { key: "MAKE_CLAY_STATUE", reagents: &[Clay], product: Pr::Fired("STATUE", "", "statue") },
@@ -187,6 +194,11 @@ pub(crate) struct RxCensus {
     pub lye: i32,
     pub buckets: i32,
     pub crystal: i32,
+    /// [health15] Gypsum-class boulders and empty bags.
+    #[serde(default)] // [health15]
+    pub gypsum: i32, // [health15]
+    #[serde(default)] // [health15]
+    pub bags: i32, // [health15]
 }
 
 fn add(v: &mut Vec<(u16, i32)>, m: u16, n: i32) {
@@ -267,6 +279,18 @@ impl Sim {
         it.kind == "ROUGH" && self.world.material(it.mat).map(|m| m.token == "INORGANIC:CRYSTAL_ROCK").unwrap_or(false)
     }
 
+    /// [health15] Empty bag (no contents, not inside a container).
+    pub(crate) fn rx_is_empty_bag(&self, idx: usize) -> bool { // [health15]
+        let it = &self.world.items[idx]; // [health15]
+        it.kind == "BAG" && it.container < 0 && self.container_empty(it.id) // [health15]
+    } // [health15]
+
+    /// [health15] Boulder of a GYPSUM reaction-class stone (gypsum, alabaster, selenite, satinspar).
+    pub(crate) fn rx_is_gypsum(&self, idx: usize) -> bool { // [health15]
+        let it = &self.world.items[idx]; // [health15]
+        it.kind == "BOULDER" && self.world.material(it.mat).map(|m| has_tag(m, "RC:GYPSUM")).unwrap_or(false) // [health15]
+    } // [health15]
+
     fn rx_is_empty_bucket(&self, idx: usize) -> bool {
         let it = &self.world.items[idx];
         it.kind == "BUCKET" && it.container < 0 && self.container_empty(it.id)
@@ -276,7 +300,7 @@ impl Sim {
     pub(crate) fn rx_census_item(&self, c: &mut RxCensus, idx: usize, now: u64) {
         let it = &self.world.items[idx];
         let k = it.kind.as_str();
-        if !matches!(k, "BAR" | "BOULDER" | "GLOB" | "LIQUID_MISC" | "BUCKET" | "ROUGH") || it.flags.artifact {
+        if !matches!(k, "BAR" | "BOULDER" | "GLOB" | "LIQUID_MISC" | "BUCKET" | "ROUGH" | "BAG") || it.flags.artifact { // [health15] BAG
             return;
         }
         if !self.item_free(idx, now) {
@@ -305,6 +329,8 @@ impl Sim {
                     c.flux += 1;
                 } else if fired_of(&m.token).is_some() {
                     c.clay += 1;
+                } else if has_tag(m, "RC:GYPSUM") {
+                    c.gypsum += 1; // [health15]
                 } else if m.token == "INORGANIC:COAL_BITUMINOUS" || m.token == "INORGANIC:LIGNITE" {
                     add(&mut c.stone, it.mat, 1);
                 }
@@ -318,6 +344,7 @@ impl Sim {
             }
             "LIQUID_MISC" => c.lye += self.rx_is_lye(idx) as i32 * units,
             "BUCKET" => c.buckets += self.rx_is_empty_bucket(idx) as i32,
+            "BAG" => c.bags += self.rx_is_empty_bag(idx) as i32, // [health15]
             _ => c.crystal += self.rx_is_crystal(idx) as i32,
         }
     }
@@ -356,6 +383,8 @@ impl Sim {
                 EmptyBucket => c.buckets > 0,
                 Sand => self.ind.census.sand > 0,
                 Crystal => c.crystal > 0,
+                Gypsum => c.gypsum > 0,  // [health15]
+                EmptyBag => c.bags > 0, // [health15]
             };
             if !ok {
                 return false;
@@ -371,7 +400,7 @@ impl Sim {
         let sp = self.nav.xyz(site as usize);
         let mut best: Vec<(i32, i32)> = Vec::new();
         for idx in 0..self.world.items.len() {
-            if self.imeta[idx].dead || !pred(self, idx) || !self.item_free(idx, now) {
+            if self.imeta[idx].dead || !pred(self, idx) || !self.item_free(idx, now) || self.h15_stored(idx) { // [health15]
                 continue;
             }
             let it = &self.world.items[idx];
@@ -456,6 +485,8 @@ impl Sim {
                 EmptyBucket => self.rx_pick(site, c, now, 1, wj, |sim, i| sim.rx_is_empty_bucket(i)),
                 Sand => self.rx_pick(site, c, now, 1, wj, |sim, i| sim.is_sand(i)),
                 Crystal => self.rx_pick(site, c, now, 1, wj, |sim, i| sim.rx_is_crystal(i)),
+                Gypsum => self.rx_pick(site, c, now, 1, wj, |sim, i| sim.rx_is_gypsum(i)), // [health15]
+                EmptyBag => self.rx_pick(site, c, now, 1, wj, |sim, i| sim.rx_is_empty_bag(i)), // [health15]
             };
             if !ok {
                 return false;
@@ -535,6 +566,19 @@ impl Sim {
                 self.prod.mat_plant.resize(self.world.materials.len(), u32::MAX);
                 self.rx_fill(bucket, "LIQUID_MISC", m, "lye".into());
                 self.count_made("LIQUID_MISC", 1);
+            }
+            Pr::Plaster => {
+                // [health15] The powder goes into the bag (PRESERVE_REAGENT), like lye into its bucket.
+                let Some(bi) = item(self, &|sim, i| sim.world.items[i].kind == "BAG") else { return }; // [health15]
+                let bag = self.world.items[bi].id; // [health15]
+                keep.push(bag); // [health15]
+                let m = self.ensure_mat("INORGANIC:PLASTER", "plaster", [235, 235, 225], |m| { // [health15]
+                    m.is_stone = true; // [health15]
+                    m.value = 3; // [health15] raws inorganic_other.txt
+                }); // [health15]
+                self.prod.mat_plant.resize(self.world.materials.len(), u32::MAX); // [health15]
+                self.rx_fill(bag, "POWDER_MISC", m, "plaster powder".into()); // [health15]
+                self.count_made("POWDER_MISC", 1); // [health15]
             }
             Pr::Glass(tok, name) => {
                 let m = self.ensure_mat(tok, name, [200, 230, 230], |m| m.is_glass = true);
