@@ -410,16 +410,35 @@ impl Sim {
         let ice = std::mem::take(&mut self.weather.ice);
         for f in &ice {
             let i = f.i as usize;
-            if i >= self.world.tiles.len() || self.world.tiles[i].tt != f.ice_tt {
-                continue; // mined or built over
+            if i >= self.world.tiles.len() {
+                continue;
+            }
+            let cur = self.world.tiletypes.get(self.world.tiles[i].tt);
+            if self.world.tiles[i].tt != f.ice_tt {
+                // Built over: stays. Ice dug out into an ice floor: that floor melts away too,
+                // without water (the mined ice is gone).
+                if cur.material == TtMaterial::FrozenLiquid && cur.shape == Shape::Floor {
+                    let t = &mut self.world.tiles[i];
+                    t.tt = f.tt;
+                    t.mat = f.mat;
+                    t.flags |= tile_flags::DIRTY;
+                    self.after_tile_change(i);
+                }
+                continue;
             }
             let t = &mut self.world.tiles[i];
+            // Water that flowed onto an ice floor during the frost adds to the melt water;
+            // magma on top stays (the melt water boils off).
+            let depth = t.liquid & liquid::DEPTH_MASK;
+            let magma = depth > 0 && t.liquid & liquid::MAGMA != 0;
             t.tt = f.tt;
             t.mat = f.mat;
             t.flags |= f.flags | tile_flags::DIRTY;
             self.after_tile_change(i);
-            let p = self.world.pos_of(i);
-            self.set_liquid(p, f.depth, false);
+            if !magma {
+                let p = self.world.pos_of(i);
+                self.set_liquid(p, (f.depth + depth).min(7), false);
+            }
         }
     }
 

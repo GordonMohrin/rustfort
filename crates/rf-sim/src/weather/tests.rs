@@ -68,6 +68,8 @@ fn water_freezes_in_winter_kills_swimmers_and_thaws_in_spring() {
     let victim = w.units[1].id;
     w.units[1].pos = deep;
     let mut sim = Sim::new(w, 3);
+    // The frost comes before the swimmer can climb out of the pit (it would within a few ticks).
+    sim.weather_pass(sim.ticks);
     sim.run_ticks(100);
     let info = sim.weather_summary();
     assert!(info.frozen);
@@ -171,4 +173,24 @@ fn disabled_weather_does_nothing() {
     let mut n = 0;
     sim.weather_hash(&mut |_| n += 1);
     assert_eq!(n, 0, "inactive weather mixes nothing into the hash");
+}
+
+#[test]
+fn thaw_keeps_water_on_the_ice_and_melts_dug_ice() {
+    let mut w = world(9);
+    let shallow = pit(&mut w, 40, 40, 2, "SoilFloor1");
+    let deep = pit(&mut w, 5, 5, 7, "SoilFloor1");
+    let mut sim = Sim::new(w, 17);
+    sim.weather_pass(sim.ticks);
+    assert!(sim.weather_summary().frozen);
+    // Water ran onto the shallow ice floor; the deep ice wall was dug out into an ice floor.
+    let i = sim.world.idx(shallow).unwrap();
+    sim.world.tiles[i].liquid = 3;
+    let (_, floor) = sim.ice_tiletypes();
+    let d = sim.world.idx(deep).unwrap();
+    sim.world.tiles[d].tt = floor.unwrap();
+    sim.weather_thaw();
+    assert_eq!(sim.liquid_at(shallow).0, 5, "melt water adds to the water on the ice");
+    assert_eq!(sim.liquid_at(deep).0, 0, "dug ice is gone");
+    assert_ne!(sim.world.tiletypes.get(sim.world.tile(deep).unwrap().tt).material, M::FrozenLiquid, "no ice floor in spring");
 }
