@@ -6,6 +6,54 @@ DFHack exports in date order (table in [docs/VALIDATION.md](docs/VALIDATION.md))
 87 citizens) is the main one. These exports are not distributed. Speeds are headless ticks per
 second on a 6-core desktop CPU, often measured while other builds were running.
 
+## v0.13.0 (2026-11-19): undead, vampires and werebeasts, megabeasts, diplomacy, weather
+
+- **Weather and climate** (`weather.rs`, w:Weather, w:Ice):
+  - Weather by season and region temperature: clear, clouds, rain, snow, fog.
+  - Surface water freezes in early winter and thaws in early spring. A swimmer caught in freezing water dies.
+  - Snow stays on the ground through winter, and rain refills murky pools.
+  - The rain logic moved here from `lifestyle.rs`; the "Rain" thoughts work as before.
+  - API for evil weather (blood rain, syndrome clouds).
+- **Undead and necromancy** (`undead.rs`):
+  - Corpses and severed parts rise in reanimating biomes (off unless the climate says so).
+  - Undead do not bleed, pass out, breathe or feel pain. A wound to the brain or heart does not kill them; they must lose the head or take heavy damage to the body.
+  - Necromancers raise nearby corpses. Necromancer sieges need a necromancer tower entity or `set_necromancer_sieges`.
+  - Evil weather turns victims into husks and thralls.
+- **Vampires and werebeasts** (`vampires.rs`):
+  - A migrant wave brings a vampire with chance 1/12. It has a false identity and no needs, and every 4–8 weeks it feeds on a sleeping citizen.
+  - A drained victim dies bloodless. A witness unmasks the vampire; an unseen kill becomes an unsolved murder for the justice system.
+  - Werebeasts change shape at the full moon. A wound from a were-form passes the curse on.
+  - Hidden werebeast visitors and wild werebeast attacks.
+- **Megabeasts, semi-megabeasts and titans** (`megabeasts.rs`, w:Megabeast):
+  - Arrival needs population 80, 100,000 created wealth and 10,000 exported wealth (titans ignore exported wealth).
+  - Titans come from the world's historical figures.
+  - Dragon and titan fire breath, building destroyers, cage capture.
+  - A slaying is announced, recorded in the fort's history and gives citizens thoughts.
+- **Diplomacy** (`diplomacy.rs`):
+  - Outpost liaison meetings with requests: a one-year trade agreement doubles the requested goods.
+  - Elevation to barony, county and duchy, and a land holder is appointed.
+  - Elven tree quota, human tribute.
+  - Attitudes drift with trade, deaths the fort caused and refused demands. At attitude -50 or below a civilization declares war (no more caravans, war parties instead). Peace envoys.
+- **Minecarts and speed** (`minecarts.rs`, `perf13`):
+  - Item filters per route stop, guided carts follow the track, carts collide with carts and knock creatures out.
+  - Cavern detection on a bitset (about 4.5x faster), production censuses skip items by class.
+- **UI** (`ui/round13.rs`):
+  - Diplomacy screen (F2) with meetings, demands and relations; accept or refuse in a popup.
+  - Threats screen (F3).
+  - Weather and temperature in the top bar; rain, snow, fog and evil cloud overlays.
+  - Curse markers on the unit sheet.
+- **Process:** every topic got an adversarial review after its implementation. The reviews found and fixed over 25 bugs, among them corpses rising as the wrong race, the megabeast trigger using "or" instead of "and", thawing ice overwriting magma, and anger at kills the fort did not cause.
+- **Result:**
+  - 2 years headless `--standdown` on r5: 87 -> 57 citizens, 198 deaths, about 105k ticks/s.
+  - The state hash is the same with 1 and N threads (35113c9f8acec036). It changed on purpose: water now freezes and thaws.
+  - 487 citizens: 40k ticks/s (v0.12: 38k).
+  - Save/load/continue IDENTICAL; chaos harness 8 seeds, 0 panics.
+- **Known gaps:**
+  - The importer does not fill the climate yet, so imported forts have no reanimation and no evil weather.
+  - Siege undead are spawned as humans; intelligent undead have no behaviour of their own.
+  - Fog does not limit vision.
+  - Cart hits cause no injuries.
+
 ## v0.12.1 (2026-10-10): ready for publishing
 
 No simulation changes; the 2-year bench on r5 keeps its state hash.
