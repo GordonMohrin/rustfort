@@ -655,7 +655,7 @@ Module `crates/rf-sim/src/decay15.rs` (spec: `docs/mechanics/decay15.md`). On by
 | Vermin spawning | per day: food piles 1/40 (eaters), refuse piles 1/40, rotting items 1/20 (rotters), each discovered cavern 1/10 (roamers); at most 24 alive; leave after 14 days | w:Vermin ("near food and refuse stockpiles") | ESTIMATE |
 | Vermin eating | an eater eats one unit of the nearest food within 4 tiles once a day; containers resist: wood/leather/cloth 1, stone/ceramic/glass 2, metal 3, eaten when PENETRATEPOWER > resistance | w:Stockpile, w:Using bins and barrels, w:Creature token | ESTIMATE (comparison not on the wiki) |
 | Vermin hunters | cats (HUNTS_VERMIN) and tame falcons (DIVE_HUNTS_VERMIN) kill a vermin within 2 tiles (1/2 per 100 ticks), leave "X remains"; owned cats bring them to the owner; dogs do not hunt vermin; no more remains from nothing | raws, w:Cat, w:Vermin | OK (rates ESTIMATE) |
-| Cat patrols to food piles | not simulated: cats hunt where they wander | w:Cat | MISSING |
+| Cat patrols to food piles | once a day with chance 1/4 an idle or wandering cat or tame falcon walks toward a vermin or a food-pile tile in its map component (own RNG stream) | w:Cat | ESTIMATE |
 | Vermin thoughts, starving dwarves eat vermin, animal traps | not simulated | w:Vermin, w:Food | MISSING |
 | Wear levels | 806 400 points per level, destroyed after XX; value 100/75/50/25 % (also for clothing worn out by `lifestyle`) | w:Wear | OK |
 | Refuse-pile wear | clothing and armor one level per 56 days, bones and shells per 336 days; artifacts never | w:Wear, w:Bone ("quite quickly", "much slower") | ESTIMATE |
@@ -670,3 +670,7 @@ vermin (bat, olm, cap hopper, cave swallow; no eater species, so no food eaten),
 export's 4 cats and the falcon are off the map (in cages), so the export's 35-40 remains a year
 cannot come from them. 51 refuse-pile and 2 combat wear levels. Hash with decay off equals the
 round-13 hash (`b98debc359a168d5`).
+
+Two older synthetic tests (`tests/sim.rs::dwarves_survive_two_months`,
+`tests/animals.rs::hen_lays_in_nest_box...`) keep their plump helmets loose with no food pile;
+with decay they wither within 12-15 days, as in DF, so those two tests switch decay off.

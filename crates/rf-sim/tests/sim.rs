@@ -69,6 +69,7 @@ fn deterministic_bench_world_with_parallel_paths() {
 #[test]
 fn dwarves_survive_two_months() {
     let mut sim = synth();
+    sim.set_decay_enabled(false); // [decay15] the synthetic plump helmets lie loose with no food pile and would wither in 12-15 days
     let drinks0 = count_kind(&sim, "DRINK");
     let food0 = count_kind(&sim, "PLANT");
     sim.run_ticks(2 * TICKS_PER_MONTH as u32);

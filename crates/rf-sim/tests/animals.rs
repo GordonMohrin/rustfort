@@ -297,6 +297,7 @@ fn hen_lays_in_nest_box_eggs_are_collected_or_hatch_when_forbidden() {
         w.units.push(hen);
         w.units.push(rooster);
         let mut sim = Sim::new(w, 13);
+        sim.set_decay_enabled(false); // [decay15] the loose food would rot (12 days) and hungry dwarves take the eggs; the test is about eggs
         // Forbid new eggs at once (the player clicking them), before a hauler takes them.
         for _ in 0..(8 * 3360) {
             sim.run_ticks(10);
