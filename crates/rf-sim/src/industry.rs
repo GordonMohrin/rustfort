@@ -415,7 +415,7 @@ impl Sim {
         let mut c = IndCensus::default();
         for idx in 0..self.world.items.len() {
             let p = self.imeta[idx].pc;
-            if !self.imeta[idx].dead {
+            if !self.imeta[idx].dead && crate::perf::pc_maybe_reagent(p) { // [perf13]
                 self.rx_census_item(&mut c.rx, idx, now); // [metal12]
             }
             if self.world.items[idx].flags.melt && self.is_meltable(idx) && self.item_free(idx, now) {

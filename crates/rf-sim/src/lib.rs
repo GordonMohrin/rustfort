@@ -1427,13 +1427,22 @@ impl Sim {
         }
         let tq = Instant::now(); // [perf]
         self.phase[8] += (tq - tp).as_secs_f64(); // [perf]
+        { let _p = perf::prof::Guard::new(perf::prof::X0); // [perf13]
         self.defense_tick(now); // [defense]
+        } // [perf13]
         if now % 100 == 73 {
+            let _p = perf::prof::Guard::new(perf::prof::X0 + 1); // [perf13]
             self.moods_pass(now); // [moods]
         }
+        { let _p = perf::prof::Guard::new(perf::prof::X0 + 2); // [perf13]
         self.health_tick(now); // [moods]
+        } // [perf13]
+        { let _p = perf::prof::Guard::new(perf::prof::X0 + 3); // [perf13]
         self.caverns_tick(now); // [moods]
+        } // [perf13]
+        { let _p = perf::prof::Guard::new(perf::prof::X0 + 4); // [perf13]
         self.animals_tick(now); // [animals]
+        } // [perf13]
         if now % weather::WEATHER_PERIOD == weather::WEATHER_PHASE {
             self.weather_pass(now); // [contract13] owner [weather13]; before society2 (lifestyle rain)
         }
@@ -1450,9 +1459,11 @@ impl Sim {
             self.diplomacy_day(now); // [contract13] owner [diplo13]
         }
         if now % locations::S2_PERIOD == locations::S2_PHASE {
+            let _p = perf::prof::Guard::new(perf::prof::X0 + 5); // [perf13]
             self.society2_pass(now); // [society2]
         }
         if now % rf_core::TICKS_PER_DAY as u64 == 611 {
+            let _p = perf::prof::Guard::new(perf::prof::X0 + 6); // [perf13]
             self.growth_day(now); // [skills9] saplings grow, trees seed
         }
         let t0 = Instant::now();

@@ -1231,15 +1231,27 @@ impl Sim {
             }
             self.prod.season = season;
         }
+        use crate::perf::prof::{Guard, P0}; // [perf13]
+        { let _p = Guard::new(P0); // [perf13]
         self.census_now(now);
+        } // [perf13]
+        { let _p = Guard::new(P0 + 1); // [perf13]
         self.ind_census(now); // [industry]
+        } // [perf13]
         if self.prod.orders_due || now % rf_core::TICKS_PER_DAY as u64 == 0 {
+            let _p = Guard::new(P0 + 2); // [perf13]
             self.prod.orders_due = false;
             self.run_orders();
         }
+        { let _p = Guard::new(P0 + 3); // [perf13]
         self.refresh_shops();
+        } // [perf13]
+        { let _p = Guard::new(P0 + 4); // [perf13]
         self.refresh_farm_work(now);
+        } // [perf13]
+        { let _p = Guard::new(P0 + 5); // [perf13]
         self.storage_pass(now); // [industry]
+        } // [perf13]
         if !self.prod.farm_work.is_empty() || self.prod.shops.iter().any(|s| !s.avail.is_empty() && s.busy == NONE) || self.prod.cons.iter().any(|c| !c.claimed) {
             self.prod.epoch += 1;
         }
@@ -1316,14 +1328,14 @@ impl Sim {
                     raw += units;
                 }
             }
-            if self.brewable_idx(idx) {
+            if matches!(m.pc, pc::PLANT | pc::GROWTH) && self.brewable_idx(idx) { // [perf13] false for other classes
                 if m.pc == pc::PLANT {
                     bp += units;
                 } else {
                     bf += units;
                 }
             }
-            if self.cookable_idx(idx) {
+            if matches!(m.pc, pc::PLANT | pc::GROWTH | pc::COOKABLE) && self.cookable_idx(idx) { // [perf13] false for other classes
                 cook += 1;
             }
         }
