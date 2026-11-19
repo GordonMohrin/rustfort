@@ -2657,6 +2657,9 @@ impl Sim {
                 if !self.caverns.powers.is_empty() {
                     self.syndrome_after_attack(s, t, wounds0, now); // [audit-combat] venom
                 }
+                if !self.vamp.weres.is_empty() { // [vampire13]
+                    self.were_after_attack(s, t, wounds0); // [vampire13] were-form wounds pass the curse on
+                } // [vampire13]
                 let agi = self.attr(s, "AGILITY", 1000);
                 // Estimate: prepare + recover + 4 ticks, faster with agility.
                 let base = 3 + 3 + 4;
